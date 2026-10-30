@@ -1,7 +1,7 @@
 # 2dgameskills 工作规范
 
 两个独立安装的 Claude skill：`game-sprite-animator`（横版 RPG 动作）和 `game-shooter-animator`（横版射击）。
-进度、决定和环境坑见 `HANDOVER.md`，动手前先读。
+进度、决定和环境坑见 `HANDOVER.md`，后续计划见 `docs/roadmap.md`，动手前先读。
 
 ## 代码布局
 

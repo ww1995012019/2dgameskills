@@ -6,7 +6,7 @@
 
 把下面这段发给 Claude 就能继续：
 
-> 克隆 https://github.com/ww1995012019/2dgameskills 的 `main` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」开头列出的后续工作继续。
+> 克隆 https://github.com/ww1995012019/2dgameskills 的 `main` 分支，读根目录的 `CLAUDE.md`、`HANDOVER.md` 和 `docs/roadmap.md`，从路线图第 3 节按顺序继续。
 
 ## 这两个 skill 是什么
 
@@ -86,6 +86,8 @@
 - goblin 像素版的深色枪杆、swat 的黑色冲锋枪和深色衣服颜色接近，剪影里不太显眼。属于配色，改角色文件里的颜色就行
 
 ## 接下来要做的事
+
+**完整的后续计划、验收标准和待用户确认的问题见 `docs/roadmap.md`。** 下面是摘要。
 
 第四轮之后，按优先级：
 
