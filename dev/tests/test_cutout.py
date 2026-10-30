@@ -159,6 +159,60 @@ class TestMarkingFaults(unittest.TestCase):
         self.assertEqual(bad, [])
 
 
+class TestPictureOptions(unittest.TestCase):
+    """joints.json options for art that departs from the template."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.img, _, cls.joints = cut_parts.template(read_json(HERO), 512)
+
+    def test_layers_follow_the_picture(self):
+        # Weapon in the far hand: that upper arm is behind the chest, the other arm in front.
+        j = dict(self.joints, _behind=["arm_n_up"], _front=["arm_f_up", "arm_f_lo", "hand_f"])
+        _, spec, _, _, _ = cut_parts.cut(self.img, j)
+        self.assertEqual(spec["layers"], {"behind": ["arm_n_up"], "front": ["arm_f_lo", "arm_f_up", "hand_f"]})
+        from sprite_anim.art import Cutout
+        order = Cutout({**spec, "_dir": DEMO, "parts": read_json(os.path.join(DEMO, "character.json"))["parts"]}).order
+        self.assertEqual(order[0], "arm_n_up")
+        self.assertEqual(order[-3:], ["arm_f_up", "arm_f_lo", "hand_f"])
+
+    def test_unknown_option_parts(self):
+        with self.assertRaisesRegex(ValueError, "unknown parts"):
+            cut_parts.cut(self.img, dict(self.joints, _behind=["tail"]))
+        with self.assertRaisesRegex(ValueError, "unknown parts"):
+            cut_parts.cut(self.img, dict(self.joints, _radius={"wing": 3}))
+
+    def test_radius_widens_a_part(self):
+        parts, _, _, _, _ = cut_parts.cut(self.img, self.joints)
+        wide, _, _, _, _ = cut_parts.cut(self.img, dict(self.joints, _radius={"pelvis": 13}))
+        area = lambda im: int((np.asarray(im)[..., 3] > 0).sum())
+        self.assertGreater(area(wide["pelvis"][0]), area(parts["pelvis"][0]) * 1.1)
+
+    def test_widths_fit_both_sides(self):
+        # The template's own marks must give back the rig's default widths (2.4 and 2.2): fitting
+        # one side alone once pushed the far hip 6 units back and made the far foot hover.
+        _, spec, _, _, _ = cut_parts.cut(self.img, self.joints)
+        self.assertAlmostEqual(spec["body"]["sh_w"], 2.4, delta=0.3)
+        self.assertAlmostEqual(spec["body"]["hip_w"], 2.2, delta=0.3)
+
+    def test_ankle_height_check(self):
+        j = dict(self.joints)
+        j["an_n"] = [j["an_n"][0], j["an_n"][1] + 10]      # pushed down towards the sole
+        _, _, report, _, _ = cut_parts.cut(self.img, j)
+        self.assertTrue(any("an_n is" in w and "sink" in w for w in report["warnings"]), report["warnings"])
+
+    def test_stray_specks_are_dropped(self):
+        # A speck far from every bone must not end up in any part, where it would float beside it.
+        img = self.img.copy()
+        speck = Image.new("RGBA", (6, 6), (20, 20, 20, 255))
+        img.alpha_composite(speck, (40, 40))
+        parts, _, _, _, _ = cut_parts.cut(img, self.joints)
+        dark = sum(int(((np.asarray(im)[..., :3].max(2) < 40) & (np.asarray(im)[..., 3] > 0)).sum()) for im, _ in (v for v in parts.values()))
+        base, _, _, _, _ = cut_parts.cut(self.img, self.joints)
+        dark0 = sum(int(((np.asarray(im)[..., :3].max(2) < 40) & (np.asarray(im)[..., 3] > 0)).sum()) for im, _ in (v for v in base.values()))
+        self.assertLess(abs(dark - dark0), 36, "the 6x6 speck was kept in some part")
+
+
 class TestDemo(unittest.TestCase):
     def test_demo_matches_the_tool(self):
         # The committed example must be what cut_parts.py makes of its source today.

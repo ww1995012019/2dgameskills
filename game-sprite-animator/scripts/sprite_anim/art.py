@@ -305,6 +305,15 @@ class Cutout:
                 raise ValueError(f"unknown part {name!r}, expected one of {list(CUTOUT_BONES)}")
             im = Image.open(os.path.join(base, p["image"])).convert("RGBA")
             self.parts[name] = (im, tuple(p["pivot"]))
+        # The art's own layering where it differs from the default: a weapon in the far hand puts
+        # that upper arm behind the chest and the other arm in front, and the cut-out keeps it so.
+        layers = spec.get("layers", {})
+        behind, front = layers.get("behind", []), layers.get("front", [])
+        unknown = (set(behind) | set(front)) - set(CUTOUT_BONES)
+        if unknown:
+            raise ValueError(f"layers name unknown parts {sorted(unknown)}")
+        self.order = [n for n in CUTOUT_BONES if n in behind] + \
+            [n for n in CUTOUT_BONES if n not in behind and n not in front] + [n for n in CUTOUT_BONES if n in front]
 
     def palette(self):
         cols = set()
@@ -314,7 +323,8 @@ class Cutout:
         return sorted(cols)
 
     def draw(self, cv, sk, cloth, art):
-        for name, (joint, ang) in CUTOUT_BONES.items():
+        for name in self.order:
+            joint, ang = CUTOUT_BONES[name]
             if name not in self.parts:
                 continue
             im, pivot = self.parts[name]

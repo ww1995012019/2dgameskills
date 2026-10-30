@@ -132,5 +132,8 @@ Rules for the layers:
 - `px_per_unit` is source pixels per rig unit. Standing height is 100 units, so art 400 px tall is 4.0.
 - Set `body` lengths (`thigh`, `shin`, `up_arm`, `lo_arm`, `pelvis_len`, `chest_len`, `neck_len`) to the
   art's own, in rig units, or parts hang off their neighbours. `cut_parts.py` measures them.
+- `layers` (optional): `{"behind": [...], "front": [...]}` draws those parts behind or in front of
+  everything else, for art layered differently from the default order, such as a weapon held in the
+  far hand. `cut_parts.py` writes it from the joints file's `_behind` / `_front`.
 - Paths are relative to the spec file.
 - Limit: rotated bitmaps keep the source's baked shading and resolution. Supply art at or above output size.

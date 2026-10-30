@@ -72,6 +72,7 @@ NEIGHBOURS = [("arm_f_up", "arm_f_lo"), ("arm_f_lo", "hand_f"), ("leg_f_up", "le
               ("leg_n_up", "leg_n_lo"), ("leg_n_lo", "foot_n"), ("arm_n_up", "arm_n_lo"), ("arm_n_lo", "hand_n"),
               ("pelvis", "torso"), ("torso", "head"), ("pelvis", "leg_n_up"), ("pelvis", "leg_f_up"),
               ("torso", "arm_n_up"), ("torso", "arm_f_up")]
+CAP_MAX = 4.0     # rig units: largest round cap two parts share at a joint
 FAR = {"arm_f_up": "arm_n_up", "arm_f_lo": "arm_n_lo", "hand_f": "hand_n",
        "leg_f_up": "leg_n_up", "leg_f_lo": "leg_n_lo", "foot_f": "foot_n"}
 REQUIRED = ["head_top", "head_base", "neck", "waist", "hip", "sh_n", "el_n", "wr_n", "hip_n", "kn_n", "an_n",
@@ -124,6 +125,45 @@ def colour_distance(pixels, cent):
     if cent is None:
         return np.full(len(pixels), 0.35, np.float32)
     return np.abs(pixels[:, None, :] - cent[None]).sum(2).min(1) / (3 * 255)
+
+
+def reached(mask, seeds):
+    """Pixels of mask connected to any seed pixel (4-neighbour flood, in C via PIL)."""
+    im = Image.fromarray(mask.astype(np.uint8)).copy()   # fromarray shares a read-only buffer
+    ys, xs = np.nonzero(seeds & mask)
+    for y, x in zip(ys[::97], xs[::97]):       # a sparse set of seeds is plenty for one region
+        if im.getpixel((int(x), int(y))) == 1:
+            ImageDraw.floodfill(im, (int(x), int(y)), 2)
+    return np.asarray(im) == 2
+
+
+def drop_strays(owner, stack, order, fg):
+    """A part keeps only pixels joined to its own core. Specks cut off from it (a stray outline,
+    a sliver of a sword guard beside the hand) go to the next-closest part, if they touch it, or
+    are dropped: left as they are they would float beside the limb when it moves."""
+    for _ in range(2):
+        moved = False
+        for i in range(len(order)):
+            own = owner == i
+            if not own.any():
+                continue
+            core = own & (stack[i] < 0)
+            keep = reached(own, core) if core.any() else own
+            stray = own & ~keep
+            if not stray.any():
+                continue
+            alt = stack.copy()
+            alt[i] = np.inf
+            owner[stray] = np.argmin(alt, axis=0)[stray]
+            moved = True
+        if not moved:
+            break
+    for i in range(len(order)):     # whatever still floats free after that is dropped
+        own = owner == i
+        core = own & (stack[i] < 0)
+        if own.any() and core.any():
+            owner[own & ~reached(own, core)] = -1
+    return owner
 
 
 def fill_from(rgba, own, region, steps):
@@ -219,7 +259,18 @@ def cut(img, joints, base=None):
     missing = [k for k in REQUIRED if k not in joints]
     if missing:
         raise ValueError(f"joints.json is missing {missing}")
-    J = {k: tuple(map(float, v)) for k, v in joints.items()}
+    J = {k: tuple(map(float, v)) for k, v in joints.items() if not k.startswith("_")}
+    # The picture's own layering, when it differs from the rig's. Side views often hold the weapon
+    # in the far hand: that arm is behind the chest in the picture, though the rig draws the weapon
+    # arm in front. "_behind" / "_front" list parts to treat as behind / in front of the body while
+    # cutting; the animation still layers parts the rig's way.
+    behind, front_parts = set(joints.get("_behind", [])), set(joints.get("_front", []))
+    # "_radius": a part's half-width in rig units where the art is much slimmer or bulkier than the
+    # defaults in PARTS (a wide armoured skirt, a thin staff).
+    radius = {k: float(v) for k, v in joints.get("_radius", {}).items()}
+    unknown = (behind | front_parts | set(radius)) - set(PARTS)
+    if unknown:
+        raise ValueError(f"_behind/_front/_radius name unknown parts {sorted(unknown)}")
     has_weapon = "weapon_grip" in J and "weapon_tip" in J
     rgba = foreground(img)
     h, w = rgba.shape[:2]
@@ -249,13 +300,26 @@ def cut(img, joints, base=None):
         v = np.subtract(up(J[name]), up(J["waist"])) / ppu
         return float(v @ fwd), float(v @ u)
 
+    def width(near_off, near_k, far_off, far_k):
+        """One width sets both sides (near at near_k * w, far at far_k * w): least squares over the
+        sides that are marked. Fitting the near side alone can throw the far limb far off."""
+        pairs = [(near_off, near_k)] + ([(far_off, far_k)] if far_off is not None else [])
+        w = sum(o * k for o, k in pairs) / sum(k * k for _, k in pairs)
+        return min(max(w, 0.0), 6.0)
+
     sh_x, sh_y = local("sh_n")
     measured["chest_len"] = max(sh_y + 3.0, 6.0)
     measured["neck_len"] = max(local("head_base")[1] - measured["chest_len"], 0.0)
-    measured["sh_w"] = min(max(-sh_x / 0.4, 0.0), 6.0)
+    # The rig puts the near shoulder 0.4 * sh_w behind the spine and the far one sh_w in front.
+    measured["sh_w"] = width(sh_x, -0.4, local("sh_f")[0] if "sh_f" in J else None, 1.0)
     pel = np.subtract(up(J["waist"]), up(J["hip"]))
     pfwd = np.array([pel[1], -pel[0]]) / (np.hypot(*pel) or 1)
-    measured["hip_w"] = min(max(float(np.subtract(up(J["hip_n"]), up(J["hip"])) @ pfwd) / ppu / 0.3, 0.0), 6.0)
+
+    def hip_off(name):
+        return float(np.subtract(up(J[name]), up(J["hip"])) @ pfwd) / ppu
+
+    # And the near hip joint 0.3 * hip_w in front of the hip centre, the far one hip_w behind.
+    measured["hip_w"] = width(hip_off("hip_n"), 0.3, hip_off("hip_f") if "hip_f" in J else None, -1.0)
     if "hand_n" not in J:
         J["hand_n"] = tuple(np.add(J["wr_n"], np.subtract(J["wr_n"], J["el_n"]) * 0.42))
     names = [n for n in PARTS if has_weapon or n != "weapon"]
@@ -265,14 +329,19 @@ def cut(img, joints, base=None):
         a, b, r, _ = PARTS[n]
         if a not in J or b not in J:
             continue
-        pa, pb, rad = J[a], J[b], r * body.bulk * ppu
+        pa, pb, rad = J[a], J[b], radius.get(n, r) * ppu
         if n == "head":     # a disc around the skull, not a capsule reaching down the neck
             v = np.subtract(J[b], J[a])
             pa, pb, rad = tuple(J[a] + v * 0.45), tuple(J[a] + v * 0.6), 0.55 * float(np.hypot(*v))
+        if n == "weapon":   # grip and pommel run back past the fist, along the same line
+            v = np.subtract(J[b], J[a])
+            pa = tuple(J[a] - v * 0.28)
         sd[n] = seg_dist(xx, yy, pa, pb) - rad
     order = [n for n in names if n in sd]
+    order = [n for n in order if n in behind] + [n for n in order if n not in behind and n not in front_parts] \
+        + [n for n in order if n in front_parts]
     z = {n: i for i, n in enumerate(order)}
-    rad = np.array([PARTS[n][2] * body.bulk * ppu for n in order])[:, None, None]
+    rad = np.array([radius.get(n, PARTS[n][2]) * ppu for n in order])[:, None, None]
     stack = np.stack([sd[n] for n in order])
     inside = stack < 0
     rgb = rgba[..., :3].astype(np.float32)
@@ -302,13 +371,17 @@ def cut(img, joints, base=None):
     better = (alt != cur) & (cds[alt, ys, xs] + 0.12 < own_cd)
     owner[ys[better], xs[better]] = alt[better]
 
+    owner = drop_strays(owner, stack, order, fg)
+
     report = {"px_per_unit": round(ppu, 3), "parts": {}, "warnings": []}
     masks = {n: (owner == z[n]) for n in order}
     for a_, b_ in NEIGHBOURS:     # round caps at shared joints
         if a_ not in masks or b_ not in masks:
             continue
         jx, jy = J[PIVOT.get(b_, PARTS[b_][0])]
-        cap = np.hypot(xx - jx, yy - jy) < min(PARTS[a_][2], PARTS[b_][2]) * body.bulk * ppu
+        # Enough to bridge the joint while it bends, never a big shared patch: a cap the size of
+        # the torso's would copy the face onto the chest, showing when the head turns.
+        cap = np.hypot(xx - jx, yy - jy) < min(radius.get(a_, PARTS[a_][2]), radius.get(b_, PARTS[b_][2]), CAP_MAX) * ppu
         both = cap & (masks[a_] | masks[b_])
         masks[a_] = masks[a_] | both
         masks[b_] = masks[b_] | both
@@ -319,6 +392,7 @@ def cut(img, joints, base=None):
         own = masks[n]
         capsule = (sd[n] < 0) & fg
         cover = own.sum() / max(capsule.sum(), 1)
+        r = radius.get(n, r)
         info = {"coverage": round(float(cover), 2)}
         if n in FAR and cover < 0.5:
             info["source"] = "near limb, darkened"
@@ -328,12 +402,14 @@ def cut(img, joints, base=None):
         # Fill what parts in front hide (an arm across the chest, the head over the collar):
         # when they move away, the part underneath must not show a hole.
         hidden = capsule & ~own & fg & (owner > z[n])
+        if "head" in z and n != "head":
+            hidden &= owner != z["head"]     # the head always covers its own patch; filling it would paint skin under the chin
         pivot = J[PIVOT.get(n, a)]
         region = hidden | own
         if kind in ("limb", "hand", "foot"):
             # A limb ends in a full round cap at its pivot, as cut-out puppets do: if the mark sits
             # near the body's edge, turning the limb would otherwise show its flat cut end.
-            region |= np.hypot(xx - pivot[0], yy - pivot[1]) < 0.9 * r * body.bulk * ppu
+            region |= np.hypot(xx - pivot[0], yy - pivot[1]) < 0.9 * r * ppu
         pix, have = fill_from(rgba, own, region, int(r * ppu) + 2)
         if hidden.sum() > 0.15 * max(capsule.sum(), 1):
             info["filled_px"] = int(hidden.sum())
@@ -365,6 +441,8 @@ def cut(img, joints, base=None):
                 body={**base.get("body", {}), **{k: round(v, 3) for k, v in measured.items()}})
     spec.setdefault("weapon", "sword" if has_weapon else "none")
     spec["parts"] = {n: {"image": f"parts/{n}.png", "pivot": list(pv)} for n, (_, pv) in parts.items()}
+    if behind or front_parts:     # animate with the picture's layering, as it was cut
+        spec["layers"] = {k: sorted(v) for k, v in (("behind", behind), ("front", front_parts)) if v}
     # Marking checks: a joint off the character, limbs that don't match, a foot of the wrong size.
     for k, (x, y) in J.items():
         if not (0 <= x < w and 0 <= y < h):
@@ -380,6 +458,16 @@ def cut(img, joints, base=None):
     foot = length("heel_n", "toe_n") / ppu
     if not 6 <= foot <= 18:
         report["warnings"].append(f"foot is {foot:.1f} units heel to toe, the rig expects about 11; check heel_n and toe_n")
+    for s_ in "nf":
+        if all(k in J for k in (f"an_{s_}", f"heel_{s_}", f"toe_{s_}")):
+            # The rig plants the sole 5 units under the ankle; off by much and the foot sinks or floats.
+            h, t, a_ = (np.array(up(J[f"{k}_{s_}"])) for k in ("heel", "toe", "an"))
+            line = (t - h) / (np.hypot(*(t - h)) or 1)
+            d_ = a_ - h
+            height = float(line[0] * d_[1] - line[1] * d_[0]) / ppu
+            if abs(height - 5.0) > 2.0:
+                report["warnings"].append(f"an_{s_} is {height:.1f} units above the sole, the rig expects 5; "
+                                          f"move it {'up' if height < 5 else 'down'} or the foot will {'sink' if height < 5 else 'float'}")
     return parts, spec, report, owner, order
 
 
@@ -435,7 +523,7 @@ def preview(img, joints, owner, order):
         tint[m, :3] = tint[m, :3] * 0.45 + col * 0.55
     out = Image.fromarray(tint.astype(np.uint8), "RGBA")
     d = ImageDraw.Draw(out)
-    for k, (x, y) in joints.items():
+    for k, (x, y) in ((k, v) for k, v in joints.items() if not k.startswith("_")):
         d.ellipse((x - 3, y - 3, x + 3, y + 3), fill=(255, 255, 255, 255), outline=(0, 0, 0, 255))
         d.text((x + 4, y - 6), k, fill=(0, 0, 0, 255))
     return out

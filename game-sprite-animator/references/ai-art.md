@@ -55,14 +55,34 @@ cutting; marks within about 2% of the character's height are fine, past that joi
 | `hip` | centre of the hips |
 | `sh_n` `el_n` `wr_n` | near shoulder, elbow, wrist: the centre of each joint, not its outline |
 | `hand_n` | tip of the near hand (optional) |
-| `hip_n` `kn_n` `an_n` | near hip joint, knee, ankle |
-| `heel_n` `toe_n` | where the near foot's heel and ball touch the ground |
+| `hip_n` `kn_n` `an_n` | near hip joint, knee, ankle. The rig plants the sole 5 units under the ankle and the heel 4.5 behind it, so put `an_n` there, not at the boot's outline |
+| `heel_n` `toe_n` | where the near foot's heel and ball (not the toe tip) touch the ground; read the sole's edge off the alpha if unsure |
 | `*_f` | the same on the far side; leave out what you can't see |
 | `weapon_grip` | the middle of the fist on the handle, on the weapon's centre line |
 | `weapon_tip` | the far end of the weapon on that same line |
 
 Required: `head_top head_base neck waist hip sh_n el_n wr_n hip_n kn_n an_n heel_n toe_n`. Without
 `weapon_grip` and `weapon_tip` the character is unarmed.
+
+The rig's near arm holds the weapon. If the picture has it in the far hand (common in side views:
+the arm with the big shoulder plate is nearer the camera), mark the weapon arm as `*_n` anyway and
+the other arm as `*_f`, and say how the picture is layered so both the cut and the animation follow
+it:
+
+```json
+"_behind": ["arm_n_up"],
+"_front": ["arm_f_up", "arm_f_lo", "hand_f"],
+"_radius": {"pelvis": 11.5}
+```
+
+- `_behind` / `_front`: parts that sit behind / in front of the body in this picture. The cut gives
+  overlapping pixels to the part really in front, and `character.json` gets a `layers` entry so the
+  animation draws them the same way.
+- `_radius`: a part's half-width in rig units where the art is much bulkier or slimmer than the
+  defaults (an armoured skirt, a thin staff). Raise it when a wide part's edges end up on its
+  neighbour in `bind_preview.png` (a skirt riding on the thigh).
+- Mark the hidden shoulder where it would be: about level with the other one, so both upper arms
+  come out the same length.
 
 ## 3. Cut and check
 
@@ -88,6 +108,7 @@ Warnings in the output and in `bind_report.json`:
 | `far side is N% of the near side` | near and far limb lengths disagree | one of the two sets of marks is wrong |
 | `joint … is not on the character` | the mark is on the background | move it |
 | `foot is N units` | heel and toe marks are far off | re-mark them on the sole |
+| `an_n is N units above the sole` | the ankle mark is too low or too high for the rig's foot | move it as the message says, or the foot sinks or floats |
 | `gap: clip: joint N%` | that joint shows through while moving | re-mark it on the joint centre |
 
 ## 4. Generate as usual
@@ -107,6 +128,10 @@ Then do the visual review as for any set (`references/visual-review.md`).
 - Capes, hair and scarves don't move. Paint them close to the body.
 - Light and shadow are painted into the parts and turn with them, so a part lit from the top left
   is lit from below when it swings over.
-- The motions are built for these proportions. A very different body (a giant head, very long arms)
-  still animates but needs a careful look in the visual review.
+- The motions are built for these proportions. A very different body still animates but needs a
+  careful look. A big head on low shoulders (heavy armour, chibi styles) is the usual case: overhead
+  poses lift the fist only to face height, and QA's `clip` check reports the weapon over the face in
+  `attack_3`'s wind-up.
+- Detailed art shrinks badly to the pixel presets (64 px): for a pixel-art game, ask the image model
+  for pixel art at a low resolution instead of downscaling a painted picture.
 - Side view only, one facing; mirror with the engine's flip.

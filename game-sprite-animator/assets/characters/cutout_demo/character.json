@@ -27,14 +27,14 @@
   "pelvis_len": 9.997,
   "chest_len": 18.003,
   "neck_len": 2.499,
-  "sh_w": 2.403,
-  "hip_w": 2.202
+  "sh_w": 2.401,
+  "hip_w": 2.201
  },
  "parts": {
   "hand_f": {
    "image": "parts/hand_f.png",
    "pivot": [
-    18.26,
+    20.26,
     12.34
    ]
   },
@@ -62,15 +62,15 @@
   "leg_n_up": {
    "image": "parts/leg_n_up.png",
    "pivot": [
-    24.78,
-    18.18
+    20.78,
+    9.18
    ]
   },
   "leg_n_lo": {
    "image": "parts/leg_n_lo.png",
    "pivot": [
     20.79,
-    13.87
+    12.87
    ]
   },
   "foot_n": {
@@ -91,7 +91,7 @@
    "image": "parts/torso.png",
    "pivot": [
     35.0,
-    82.24
+    67.24
    ]
   },
   "head": {
@@ -118,14 +118,14 @@
   "arm_n_lo": {
    "image": "parts/arm_n_lo.png",
    "pivot": [
-    23.95,
+    17.95,
     13.65
    ]
   },
   "hand_n": {
    "image": "parts/hand_n.png",
    "pivot": [
-    23.98,
+    13.98,
     12.0
    ]
   },
@@ -139,7 +139,7 @@
   "arm_f_lo": {
    "image": "parts/arm_f_lo.png",
    "pivot": [
-    23.95,
+    17.95,
     13.65
    ]
   }
