@@ -42,6 +42,33 @@ In WeChat mini-games, use `wx.createImage()`, `canvas.requestAnimationFrame`, an
 `require` or read it via the file system manager. Keep the atlas at or under 2048 px for low-end
 devices: render at `--size 192` or lower `--fps-override` on slow clips.
 
+## Follow-up clips and held guard
+
+`next` is a controller hint, not an automatic engine transition. `next_frame`, when present,
+is the zero-based entry frame in that next clip (default 0). `block_hit` resumes the last frame
+of `block`, keeping GUARD raised; replaying frame 0 would repeat the idle-to-guard entry.
+The generator computes the index from the actual output frame count, including FPS overrides.
+The outgoing cloth blend and motion QA use the same target pose.
+
+For the Canvas player, when the controller decides to take a finished clip's follow-up:
+
+```js
+const finished = hero.clip;
+if (hero.done && finished.next && doc.clips[finished.next]) {
+  hero.play(finished.next, { restart: true, frame: finished.next_frame ?? 0 });
+}
+```
+
+While guard is held, keep the final `block` frame displayed. In the playable preview, I holds
+guard and H simulates a hit: a fully raised guard plays `block_hit`; otherwise H plays `hurt`.
+Releasing I during the reaction returns to idle after it finishes. Repeated hits must each
+trigger exactly one `block_spark`.
+
+Godot, Phaser, PixiJS, Unity and Cocos controllers must likewise use the manifest's entry frame
+when wiring their own state transitions; the exported animation resources do not create a state
+machine. The held-guard controller path is exercised by the Node preview test. Existing engine
+smoke tests verify imported frames and playback, not this gameplay transition in each engine.
+
 ## Pure CSS for activity pages
 
 For a looping mascot on a web page with no JS. `engine/web/sprites.css` references `../../sheets/`, so

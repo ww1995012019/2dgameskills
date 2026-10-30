@@ -21,6 +21,25 @@ sprites from anywhere: `python scripts/qa_motion.py path/to/frames --loop`.
 
 Attacks allow a higher `spike`: a strike is supposed to accelerate hard, and the smear carries it.
 
+
+## Joint continuity checks
+
+Generated sets with `rig_trace.json` also check the RMS displacement of the nine recorded joints
+(wrists, ankles, knees, hip, neck and head base). Coordinates include root motion. Standing height
+is 100 rig units, or `100 * unit_px` output pixels, so HD and pixel art use the same limits.
+
+- Loops with more than two frames compare the last-to-first joint displacement with the mean
+  interior displacement. Ratios above 1.7 WARN and above 2.6 FAIL. The denominator has a 0.2%-of-height
+  floor for trace rounding and negligible movements. Zero joint displacement is valid for a still rig.
+- Transitions compare the outgoing last pose with the declared incoming entry pose (`next_frame`,
+  default 0) directly: RMS displacement
+  above 10% of standing height WARNs and above 20% FAILs. It is not divided by animation speed.
+- Pixel and joint statuses are combined using the worse result. `qa_report.json` includes
+  `joint_seam_ratio`, `joint_seam_height`, transition `joint_distance_height`, endpoint frame indices
+  and frame flags naming the loop or transition. The original pixel ratios remain available.
+- PNG-only inputs and older traces without joints keep the original pixel checks. Missing joint
+  fields do not mean joint continuity passed. Keep frames and their trace synchronized when editing.
+
 ## Skeleton constraints
 
 These run inside the rig on every pose, so they apply to custom clips too. `sprite_anim/constraints.py`

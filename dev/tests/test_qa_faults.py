@@ -20,7 +20,7 @@ from PIL import Image
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPRITE = os.path.join(ROOT, "game-sprite-animator")
 SHOOTER = os.path.join(ROOT, "game-shooter-animator")
-SPRITE_CLIPS = "idle,walk,run,jump_start,jump_rise,attack_1,death"
+SPRITE_CLIPS = "idle,walk,run,jump_start,jump_rise,attack_1,death,block,block_hit,hurt"
 TMP = None
 FIX = {}
 
@@ -37,7 +37,7 @@ def setUpModule():
     FIX["sprite"] = os.path.join(TMP, "hero")
     generate(SPRITE, "hero", SPRITE_CLIPS, FIX["sprite"])
     FIX["shooter"] = os.path.join(TMP, "commando")
-    generate(SHOOTER, "commando", "idle,rifle_aim_0,rifle_fire_0", FIX["shooter"])
+    generate(SHOOTER, "commando", "idle,walk,jump_start,death,rifle_aim_0,rifle_fire_0,shotgun_fire_0,walk_fire_0", FIX["shooter"])
 
 
 def tearDownModule():
@@ -105,15 +105,6 @@ class TestFrameFaults(Case):
         _, rep = self.qa()
         self.assertFlagged(rep, "idle", "seam")
 
-    @unittest.expectedFailure
-    def test_gait_cycle_cut_short(self):
-        # Known gap: in a walk every step already changes most of the silhouette, so the pixel
-        # seam ratio stays under 1.7 however many frames are cut. Needs a joint-space seam check.
-        for p in self.frames("walk")[-5:]:
-            os.remove(p)
-        _, rep = self.qa()
-        self.assertFlagged(rep, "walk", "seam")
-
     def test_skipped_inbetweens(self):
         for p in self.frames("idle")[8:20]:
             os.remove(p)
@@ -128,15 +119,168 @@ class TestFrameFaults(Case):
         self.assertFlagged(rep, "run", "bounds", frame=3)
         self.assertEqual(rep["clips"]["run"]["cut_frames"], [3])
 
-    @unittest.expectedFailure
+class TestJointContinuity(Case):
+    def test_gait_cycle_cut_short(self):
+        frames = self.frames("walk")
+        for p in frames[-5:]:
+            os.remove(p)
+        # Trim the trace and manifest too: detecting a stale sidecar is not sufficient.
+        def trim(t):
+            def shorten(value):
+                if isinstance(value, dict):
+                    return {k: shorten(v) for k, v in value.items()}
+                return value[:-5] if isinstance(value, list) and len(value) == len(frames) else value
+            t["traces"]["walk"] = shorten(t["traces"]["walk"])
+        self.edit_json("rig_trace.json", trim)
+        self.edit_json("animations.json", lambda d: d["clips"]["walk"].update(frames=d["clips"]["walk"]["frames"][:-5]))
+        code, rep = self.qa()
+        self.assertEqual(code, 1)
+        self.assertFlagged(rep, "walk", "seam", frame=len(frames) - 6)
+        self.assertGreater(rep["clips"]["walk"]["joint_seam_ratio"], 2.6)
+
     def test_wrong_handover_pose(self):
-        # Known gap: the transition ratio divides by the faster clip's typical step, and pixel
-        # change saturates once silhouettes stop overlapping. Handing the death pose to jump_start
-        # scores about 1.5 against a 2.5 limit. Needs the joint-space check as well.
         shutil.copyfile(self.frames("death")[-1], self.frames("jump_start")[0])
+        def replace(t):
+            for joint, pts in t["traces"]["jump_start"]["joints"].items():
+                pts[0] = t["traces"]["death"]["joints"][joint][-1]
+        self.edit_json("rig_trace.json", replace)
+        code, rep = self.qa()
+        self.assertEqual(code, 1)
+        t = next(x for x in rep["transitions"] if (x["a"], x["b"]) == ("idle", "jump_start"))
+        self.assertEqual(t["status"], "FAIL", t)
+        self.assertGreater(t["joint_distance_height"], 0.2)
+        self.assertEqual((t["a_frame"], t["b_frame"]), (len(self.frames("idle")) - 1, 0))
+        self.assertIn("0", rep["clips"]["jump_start"]["flags"])
+
+    def test_joint_fault_without_pixel_change(self):
+        # Prove the new check really reads joints, rather than succeeding on the pixel check.
+        def shift(t):
+            for pts in t["traces"]["walk"]["joints"].values():
+                pts[-1][0] += 100 * t["unit_px"]
+        self.edit_json("rig_trace.json", shift)
+        code, rep = self.qa()
+        self.assertEqual(code, 1)
+        self.assertFlagged(rep, "walk", "seam", frame=len(self.frames("walk")) - 1)
+
+    def test_joint_checks_are_scale_independent(self):
+        _, original = self.qa()
+        def scale(t):
+            t["unit_px"] *= 4
+            for tr in t["traces"].values():
+                for pts in tr["joints"].values():
+                    for p in pts:
+                        p[0] *= 4
+                        p[1] *= 4
+        self.edit_json("rig_trace.json", scale)
+        code, scaled = self.qa()
+        self.assertEqual(code, 0, scaled)
+        self.assertEqual(original["clips"]["walk"]["joint_seam_ratio"],
+                         scaled["clips"]["walk"]["joint_seam_ratio"])
+        self.assertEqual([t["joint_distance_height"] for t in original["transitions"]],
+                         [t["joint_distance_height"] for t in scaled["transitions"]])
+
+    def test_legacy_trace_without_joints(self):
+        def legacy(t):
+            for tr in t["traces"].values():
+                tr.pop("joints", None)
+        self.edit_json("rig_trace.json", legacy)
+        code, rep = self.qa()
+        self.assertEqual(code, 0, rep)
+        self.assertNotIn("joint_seam_ratio", rep["clips"]["walk"])
+        self.assertTrue(all("joint_distance_height" not in t for t in rep["transitions"]))
+
+
+class TestShooterJointContinuity(TestJointContinuity):
+    skill, fixture = SHOOTER, "shooter"
+
+    def test_firing_combo_still_checks_gait(self):
+        def shift(t):
+            for joint in ("an_n", "an_f", "kn_n", "kn_f", "hip"):
+                t["traces"]["walk_fire_0"]["joints"][joint][-1][0] += 20 * t["unit_px"]
+        self.edit_json("rig_trace.json", shift)
+        code, rep = self.qa()
+        self.assertEqual(code, 1)
+        self.assertFlagged(rep, "walk_fire_0", "seam", frame=len(self.frames("walk_fire_0")) - 1)
+        self.assertLess(rep["clips"]["walk_fire_0"]["joint_seam_height"], 0.2)
+        self.assertGreater(rep["clips"]["walk_fire_0"]["joint_gait_seam_ratio"], 2.6)
+
+    def test_recoil_wrap_still_rejects_large_pose_jump(self):
+        code, clean = self.qa()
+        self.assertEqual(code, 0, clean)
+        self.assertEqual(clean["clips"]["shotgun_fire_0"]["joint_seam_mode"], "shot_impulse")
+        def jump(t):
+            for pts in t["traces"]["shotgun_fire_0"]["joints"].values():
+                pts[-1][0] += 100 * t["unit_px"]
+        self.edit_json("rig_trace.json", jump)
+        code, rep = self.qa()
+        self.assertEqual(code, 1)
+        self.assertFlagged(rep, "shotgun_fire_0", "seam", frame=len(self.frames("shotgun_fire_0")) - 1)
+
+
+class TestGuardRecovery(Case):
+    def test_declared_resume_pose_is_continuous(self):
+        code, rep = self.qa()
+        self.assertEqual(code, 0, rep)
+        edge = next(t for t in rep["transitions"] if (t["a"], t["b"]) == ("block_hit", "block"))
+        self.assertEqual(edge["status"], "PASS", edge)
+        self.assertEqual(edge["b_frame"], len(self.frames("block")) - 1)
+        self.assertLess(edge["joint_distance_height"], 0.01)
+
+    def test_resume_frame_tracks_target_fps_override(self):
+        subprocess.run([sys.executable, os.path.join(SPRITE, "scripts", "generate.py"),
+                        "--character", os.path.join(SPRITE, "assets", "characters", "hero.json"),
+                        "--preset", "pixel", "--clips", "idle,block,block_hit,hurt",
+                        "--fps-override", "block=60", "--out", self.d], check=True, capture_output=True)
+        with open(os.path.join(self.d, "animations.json"), encoding="utf-8") as f:
+            doc = json.load(f)
+        self.assertGreater(len(doc["clips"]["block"]["frames"]), 3)
+        self.assertEqual(doc["clips"]["block_hit"]["next_frame"], len(doc["clips"]["block"]["frames"]) - 1)
+        code, rep = self.qa()
+        self.assertEqual(code, 0, rep)
+        edge = next(t for t in rep["transitions"] if (t["a"], t["b"]) == ("block_hit", "block"))
+        self.assertEqual(edge["status"], "PASS", edge)
+        self.assertLess(edge["joint_distance_height"], 0.01)
+
+    def test_replaying_entry_is_still_reported(self):
+        self.edit_json("animations.json", lambda d: d["clips"]["block_hit"].update(next_frame=0))
         _, rep = self.qa()
-        t = {(x["a"], x["b"]): x for x in rep["transitions"]}
-        self.assertEqual(t[("idle", "jump_start")]["status"], "FAIL", t)
+        edge = next(t for t in rep["transitions"] if (t["a"], t["b"]) == ("block_hit", "block"))
+        self.assertEqual(edge["status"], "WARN", edge)
+        self.assertEqual(edge["b_frame"], 0)
+        self.assertIn("0", rep["clips"]["block"]["flags"])
+
+    def test_wrong_hold_pose_is_still_rejected(self):
+        def corrupt(t):
+            for joint, points in t["traces"]["block"]["joints"].items():
+                points[-1] = t["traces"]["death"]["joints"][joint][-1]
+        self.edit_json("rig_trace.json", corrupt)
+        code, rep = self.qa()
+        self.assertEqual(code, 1)
+        edge = next(t for t in rep["transitions"] if (t["a"], t["b"]) == ("block_hit", "block"))
+        self.assertEqual(edge["status"], "FAIL", edge)
+        self.assertIn(str(len(self.frames("block")) - 1), rep["clips"]["block"]["flags"])
+
+    @unittest.skipUnless(shutil.which("node"), "needs node")
+    def test_preview_guarded_hits_and_release(self):
+        p = subprocess.run(["node", os.path.join(ROOT, "dev", "test_sprite_demo.js"),
+                            os.path.join(self.d, "preview.html")], capture_output=True, text=True, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("sprite guard recovery: OK", p.stdout)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node")
+    def test_preview_detects_replayed_guard_entry(self):
+        path = os.path.join(self.d, "preview.html")
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        import re
+        html, count = re.subn(r'"next_frame":\s*\d+', '"next_frame": 0', html)
+        self.assertEqual(count, 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
+        p = subprocess.run(["node", os.path.join(ROOT, "dev", "test_sprite_demo.js"), path],
+                           capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("without replaying entry", p.stderr)
 
 
 class TestRigFaults(Case):

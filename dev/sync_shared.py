@@ -15,7 +15,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHARED = os.path.join(ROOT, "shared")
-SKILLS = ("game-sprite-animator", "game-shooter-animator")
+SKILLS = ("game-sprite-animator", "game-shooter-animator", "game-topdown-animator", "game-quadruped-animator")
+QUADRUPED_FILES = {"scripts/sprite_anim/export.py", "scripts/sprite_anim/mathx.py", "scripts/sprite_anim/cloth.py", "scripts/sprite_anim/rig_data.py", "assets/engine/unity/SpriteSetImporter.cs"}
+TOPDOWN_FILES = {"scripts/sprite_anim/export.py", "assets/engine/unity/SpriteSetImporter.cs"}
 
 
 def shared_files():
@@ -34,6 +36,10 @@ def main():
     for rel in sorted(shared_files()):
         src = os.path.join(SHARED, rel)
         for skill in SKILLS:
+            if skill == "game-topdown-animator" and rel.replace(os.sep, "/") not in TOPDOWN_FILES:
+                continue
+            if skill == "game-quadruped-animator" and rel.replace(os.sep, "/") not in QUADRUPED_FILES:
+                continue
             dst = os.path.join(ROOT, skill, rel)
             if os.path.exists(dst) and filecmp.cmp(src, dst, shallow=False):
                 continue

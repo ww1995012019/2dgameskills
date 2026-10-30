@@ -49,6 +49,8 @@ def setUpModule():
     TMP = tempfile.mkdtemp(prefix="engines_")
     SETS["hero"] = generate("game-sprite-animator", "hero", "pixel", "idle,walk,attack_1,death")
     SETS["hero_hd"] = generate("game-sprite-animator", "hero", "hd", "idle,attack_1")
+    SETS["quadruped"] = generate("game-quadruped-animator", "wolf", "pixel", "idle,walk,trot,run")
+    SETS["topdown"] = generate("game-topdown-animator", "wanderer", "pixel", "idle,walk,attack,death")
     SETS["commando"] = generate("game-shooter-animator", "commando", "pixel", "run,rifle_aim_0,rifle_fire_0,death")
 
 
@@ -68,9 +70,13 @@ def tampered(src, fn):
 @unittest.skipUnless(GODOT, "needs Godot 4: bash dev/engines/get_godot.sh or set GODOT")
 class TestGodot(unittest.TestCase):
     def test_sets_import_and_play(self):
-        for name in ("hero", "hero_hd", "commando"):
-            ok, log = godot_smoke.run(SETS[name], GODOT)
+        for name in ("hero", "hero_hd", "commando", "topdown", "quadruped"):
+            ok, log = godot_smoke.run(SETS[name], GODOT, all_clips=name == "quadruped")
             self.assertTrue(ok, f"{name}:\n{log}")
+            if name == "quadruped":
+                for clip in ("idle", "walk", "trot", "run"):
+                    self.assertIn(f"played {clip} @60Hz", log)
+                    self.assertIn(f"played {clip} @144Hz", log)
 
     def test_default_import_settings_fringe_hd(self):
         # Without the exported .import file, Godot's fix_alpha_border recolours soft HD edges.
@@ -102,14 +108,18 @@ class TestGodot(unittest.TestCase):
 @unittest.skipUnless(WEB, "needs node and npm install --prefix dev/engines")
 class TestWeb(unittest.TestCase):
     def web(self, set_dir):
-        return subprocess.run(["node", os.path.join(ROOT, "dev", "web_engines.js"), set_dir], capture_output=True, text=True, timeout=900)
+        return subprocess.run(["node", os.path.join(ROOT, "dev", "web_engines.js"), set_dir] + (["--all-clips"] if os.path.basename(set_dir).startswith("wolf-") else []), capture_output=True, text=True, timeout=900)
 
     def test_sets_load_and_play(self):
-        for name in ("hero", "hero_hd", "commando"):
+        for name in ("hero", "hero_hd", "commando", "topdown", "quadruped"):
             p = self.web(SETS[name])
             self.assertEqual(p.returncode, 0, f"{name}:\n{p.stdout}{p.stderr}")
             self.assertIn("RESULT phaser ok", p.stdout)
             self.assertIn("RESULT pixi ok", p.stdout)
+            if name == "quadruped":
+                for clip in ("idle", "walk", "trot", "run"):
+                    for hz in (60, 144):
+                        self.assertIn(f"{clip}@{hz}", p.stdout)
 
     def test_detects_bad_trim_offset_and_missing_frame(self):
         def break_atlas(d):

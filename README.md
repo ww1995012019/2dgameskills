@@ -6,6 +6,8 @@
 |---|---|
 | [game-sprite-animator](#game-sprite-animator) | 横版 RPG、动作游戏：刀剑、法术、跳跃、翻滚 |
 | [game-shooter-animator](#game-shooter-animator) | 横版射击游戏：持枪士兵、多方向瞄准、开火、换弹 |
+| [game-topdown-animator](#game-topdown-animator) | 3/4 俯视 RPG：自由移动、八方向、人形角色 |
+| [game-quadruped-animator](#game-quadruped-animator) | 侧视四足狼：待机、走、慢跑、奔跑 |
 
 ## game-sprite-animator
 
@@ -44,13 +46,60 @@
 
 `preview.html` 里有可试玩的靶场：鼠标瞄准、开火、换弹、投弹、切枪，同时也是游戏里接入分层动作的参考实现。
 
+## game-topdown-animator
+
+![八方向的待机、走路和攻击](docs/preview-topdown.png)
+
+用于自由移动 RPG 的 **3/4 俯视八方向人形角色**，独立于两个横版 skill。
+
+- 待机、走路、奔跑、攻击、受击、死亡，每种动作烘焙八个朝向，共 48 个片段。
+- 两个角色模板：蓝衣旅行者 `wanderer`、绿兜帽守卫 `warden`，可改配色，支持高清和像素。
+- 固定相机下计算地面和肢体高度；正面、背面、侧面和斜向有不同外观和遮挡。
+- 八向自由移动，斜向速度归一化，转向和走跑切换保留步态进度。
+- 质检覆盖朝向/数据完整性、方向间时序、地面平面滑步、固定骨长、循环接缝及画面裁切。
+- 同样导出图集、序列帧、Godot、Phaser/PixiJS、CSS 等文件，附八方向图库和可键盘试玩的预览。
+
+```bash
+cd game-topdown-animator
+python scripts/generate.py --character assets/characters/wanderer.json --preset pixel --out out/wanderer
+python scripts/qa_motion.py out/wanderer
+python scripts/visual_review.py out/wanderer
+```
+
+第一版只包含持剑人形、固定 3/4 相机。左方向是已烘焙的镜像，会改变装备左右手；
+不支持独立瞄准、自定义分层 PNG、物理布料或怪物骨骼。数值通过不代表视觉完美，仍需看审查图和试玩。
+接入与验证范围见 [integration.md](game-topdown-animator/references/integration.md)。
+
+## game-quadruped-animator
+
+![狼的待机、走、慢跑和奔跑](docs/preview-quadruped.png)
+
+侧视四足狼首版，具有分段脊柱、四条三段腿和模拟尾巴：
+
+- 四个循环：idle、walk、trot、run；慢跑对角腿配对，奔跑为交错前后腿并带腾空段。
+- 四只脚分别检查落脚、滑步、抬脚高度和事件；骨长、膝肘方向、尾巴根部与地面也参与质检。
+- 高清与像素素材，同一 pivot，向左在引擎水平翻转，附键盘步态试玩。
+- 与已有 skill 共用图集导出和尾巴链模拟，关节记录接口也与侧视人形共用；各 skill 仍独立安装。
+
+```bash
+cd game-quadruped-animator
+python scripts/generate.py --character assets/characters/wolf.json --preset pixel --out out/wolf
+python scripts/qa_motion.py out/wolf
+python scripts/visual_review.py out/wolf
+```
+
+![狼的扑咬、受击和伏地死亡](docs/preview-wolf-combat.png)
+
+现已加入前探咬击、受击、伏地死亡，合计七个动作；试玩 J/H/X 触发战斗与复活，训练靶按事件帧记录命中。尚无俯视四足或接触约束的步态混合。
+使用和验证范围见 [SKILL.md](game-quadruped-animator/SKILL.md) 与 [integration.md](game-quadruped-animator/references/integration.md)。
+
 ## 安装
 
-两个 skill 互相独立，按需安装一个或两个。
+四个 skill 互相独立，按需安装。四足包为 [`game-quadruped-animator.skill`](game-quadruped-animator.skill)。俯视包为 [`game-topdown-animator.skill`](game-topdown-animator.skill)。
 
 **Claude 桌面版：** 下载 [`game-sprite-animator.skill`](game-sprite-animator.skill) 或 [`game-shooter-animator.skill`](game-shooter-animator.skill)，在 Claude 中打开文件并保存为 skill。
 
-**Claude Code：** 把 [`game-sprite-animator/`](game-sprite-animator) 或 [`game-shooter-animator/`](game-shooter-animator) 文件夹复制到 `~/.claude/skills/`。
+**Claude Code：** 把 [`game-sprite-animator/`](game-sprite-animator)、[`game-shooter-animator/`](game-shooter-animator) 、[`game-topdown-animator/`](game-topdown-animator) 或 [`game-quadruped-animator/`](game-quadruped-animator) 文件夹复制到 `~/.claude/skills/`。
 
 需要 Python 3，以及 `pillow` 和 `numpy`：
 
@@ -107,7 +156,7 @@ python scripts/visual_review.py out/hero
 
 ## 当前限制
 
-- 只支持横版人形角色，没有四足、飞行或史莱姆类骨骼，也没有俯视角和正面视角。射击 skill 也不支持载具、炮台和第一人称枪械。
+- 两个横版 skill 只支持侧视人形角色，没有四足、飞行或史莱姆类骨骼，也没有俯视角和正面视角。射击 skill 也不支持载具、炮台和第一人称枪械。
 - 角色只有一个朝向，向左时用引擎的水平翻转。
 - 射击 skill 没有分层美术模式，不能绑定自己的 PNG；分层动作里，头上的布条（如头带）在跑动时不会随风飘，烘焙组合和整身动作里会。
 - AI 视觉质检是 Claude 看静态帧的判断，看不出动作在播放时的手感，最终效果请在 `preview.html` 里播放确认。

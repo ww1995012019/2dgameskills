@@ -25,11 +25,12 @@ TAU = math.tau
 
 class Clip:
     def __init__(self, name, duration, loop, vel=None, events=None, prev=None, next=None,
-                 tags=(), speed=0.0, chain_at=None):
+                 tags=(), speed=0.0, chain_at=None, next_at=0.0):
         self.name, self.duration, self.loop = name, duration, loop
         self._vel = Curve([k[0] for k in vel], [k[1:] for k in vel]) if vel else None
         self.events = events or []       # [(time, name), ...]
         self.prev, self.next = prev, next
+        self.next_at = next_at  # normalized entry time in next (1 = hold its final pose)
         self.tags = set(tags)
         self.speed = speed               # px speed the engine should move at, in rig units/s
         self.chain_at = chain_at         # combo cancel time
@@ -439,7 +440,8 @@ def build_clips(style=None, custom=None):
                   prev="idle", tags=("ground",))
     block_hit = Keyed("block_hit", keys(
         (0, P(GUARD)), (0.05, P(GUARD, root_x=-5, root_y=-9, spine=2, head=-8, arm_n_up=48, arm_n_lo=74, squash=sq(0.97))),
-        (0.26, P(GUARD))), prev="block", next="block", tags=("ground",), events=[(0.0, "block_spark")])
+        (0.26, P(GUARD))), prev="block", next="block", next_at=1.0,
+        tags=("ground",), events=[(0.0, "block_spark")])
 
     # ---- reactions ----------------------------------------------------------------------
     hurt = Keyed("hurt", keys(

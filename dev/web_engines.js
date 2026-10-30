@@ -22,15 +22,18 @@ const PAGE = fs.readFileSync(path.join(__dirname, "web_engines_page.js"), "utf8"
 (async () => {
   const [setArg, ...which] = process.argv.slice(2);
   const setDir = path.resolve(setArg);
-  const engines = which.length ? which : ["phaser", "pixi"];
-  const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+  const allClips = which.includes("--all-clips");
+  const selected = which.filter(x => x !== "--all-clips");
+  const engines = selected.length ? selected : ["phaser", "pixi"];
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
   let ok = true;
   for (const eng of engines) {
     const page = await browser.newPage({ deviceScaleFactor: 1 });
     await page.route("http://engines.test/**", (route) => {
       const url = new URL(route.request().url()).pathname;
       let file;
-      if (url === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><body style="margin:0"><script src="/lib/${SCRIPTS[eng]}"></script><script>${PAGE}</script>` });
+      if (url === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><body style="margin:0"><script src="/lib/${SCRIPTS[eng]}"></script><script>window.SMOKE_ALL_CLIPS=${allClips};${PAGE}</script>` });
       if (url.startsWith("/set/")) file = path.join(setDir, decodeURIComponent(url.slice(5)));
       else if (url.startsWith("/lib/")) file = path.join(LIBS, url.slice(5));
       if (!file || !fs.existsSync(file)) return route.fulfill({ status: 404, body: "" });

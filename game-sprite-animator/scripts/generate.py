@@ -15,6 +15,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim import export  # noqa: E402
+from sprite_anim.rig_data import JointRecorder  # noqa: E402
 from sprite_anim.constraints import frame_metrics  # noqa: E402
 from sprite_anim.fx import build_fx  # noqa: E402
 from sprite_anim.motions import SEAMS, build_clips  # noqa: E402
@@ -37,15 +38,15 @@ def parse_overrides(text):
 def rig_trace(clip, n, fps, art, unit_px):
     """Per-frame joint positions (in output pixels) for the QA pass."""
     body = art.body
-    tr = {j: [] for j in TRACE_JOINTS}
+    recorder = JointRecorder(TRACE_JOINTS, unit_px)
+    tr = recorder.joints
     metrics = []
     feet = {"n": dict(heel=[], ball=[]), "f": dict(heel=[], ball=[])}
     contacts = {"n": [], "f": []}
     for i in range(n):
         t = frame_time(clip, i, n, fps)
         sk = solve(full_pose(clip.sample(t)), body)
-        for j in TRACE_JOINTS:
-            tr[j].append([round(sk[j][0] * unit_px, 3), round(sk[j][1] * unit_px, 3)])
+        recorder.append(sk)
         metrics.append(frame_metrics(sk, body, art.weapon_span(sk)))
         c = clip.contacts(t)
         for s in "nf":
@@ -122,6 +123,11 @@ def main():
             tags=sorted(c.tags))
         traces[nm] = rig_trace(c, n, cfps, r.art, unit_px)
         print(f"[clip] {nm:<14} {n:>3}f @ {cfps}fps {'loop' if c.loop else 'once'}")
+
+    for nm in names:
+        c = clips[nm]
+        if c.next_at and c.next in rendered:
+            meta[nm]["next_frame"] = int(round(c.next_at * (len(rendered[c.next]["frames"]) - 1)))
 
     sprites, refs, files = export.build_atlas(root, rendered, size)
     export.texturepacker_json(root, sprites, refs, files, size, pivot)

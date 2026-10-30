@@ -16,6 +16,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim import export  # noqa: E402
+from sprite_anim.rig_data import JointRecorder  # noqa: E402
 from sprite_anim.constraints import frame_metrics  # noqa: E402
 from sprite_anim.fx import build_fx  # noqa: E402
 from sprite_anim.motions import AIMS_9, DEFAULT_COMBOS, SEAMS, aim_tag, build_clips  # noqa: E402
@@ -24,6 +25,7 @@ from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E40
 from sprite_anim.weapons import WEAPONS  # noqa: E402
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TRACE_JOINTS = ["wr_n", "wr_f", "an_n", "an_f", "kn_n", "kn_f", "hip", "neck", "head_base"]
 
 
 def parse_overrides(text):
@@ -40,12 +42,15 @@ def trace_clip(clip, n, fps, art, unit_px, rest_waist, pixel):
     feet = {"n": dict(heel=[], ball=[]), "f": dict(heel=[], ball=[])}
     contacts = {"n": [], "f": []}
     anchors, muzzle, gaps, flash, metrics = [], [], [], [], []
+    recorder = JointRecorder(TRACE_JOINTS, unit_px)
+    joints = recorder.joints
     art.active = clip.weapon or art.spec["weapons"][0]
     round_px = (lambda v: int(round(v))) if pixel else (lambda v: round(v, 2))
     for i in range(n):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t))
         sk = solve(pose, art.body)
+        recorder.append(sk)
         metrics.append(frame_metrics(sk, art.body, art.weapon_span(sk)))
         c = clip.contacts(t)
         for s in "nf":
@@ -60,7 +65,7 @@ def trace_clip(clip, n, fps, art, unit_px, rest_waist, pixel):
         flash.append(pose["flash"])
     step = clip.duration / n if clip.loop else clip.duration / (n - 1)
     shots = sorted(int(round(t / step)) for t, e in clip.events if e == "shot")
-    return dict(feet=feet, contacts=contacts, gaps=gaps, flash=flash, shots=shots, metrics=metrics, frame_dt=step), anchors, muzzle
+    return dict(joints=joints, feet=feet, contacts=contacts, gaps=gaps, flash=flash, shots=shots, metrics=metrics, frame_dt=step), anchors, muzzle
 
 
 def main():

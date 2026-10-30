@@ -15,9 +15,17 @@ const { chromium } = require("playwright");
   fs.writeFileSync(page, `<!doctype html><link rel="stylesheet" href="engine/web/sprites.css">
 <style>body{margin:0;background:transparent}</style>
 ${clips.map((n) => `<div class="sprite ${n}" id="c_${n}"></div>`).join("\n")}`);
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined });
   const tab = await browser.newPage({ deviceScaleFactor: 1 });
-  await tab.goto("file://" + page);
+  // Fulfill local assets in memory, as web_engines.js does. Managed browsers may forbid file://.
+  await tab.route("http://localhost/**", (route) => {
+    const file = path.resolve(setDir, "." + decodeURIComponent(new URL(route.request().url()).pathname));
+    if (!file.startsWith(setDir + path.sep) || !fs.existsSync(file))
+      return route.fulfill({ status: 404, body: "" });
+    const mime = { ".html": "text/html", ".css": "text/css", ".png": "image/png" };
+    return route.fulfill({ contentType: mime[path.extname(file)] || "application/octet-stream", body: fs.readFileSync(file) });
+  });
+  await tab.goto("http://localhost/_css_playback.html");
   await tab.evaluate(() => Promise.all([...document.images].map((i) => i.decode())));
   for (const name of clips) {
     const c = doc.clips[name];

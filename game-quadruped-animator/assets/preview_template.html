@@ -1,0 +1,35 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>__TITLE__ · 四足动画</title>
+<style>*{box-sizing:border-box}body{background:#111d29;color:#e3ece9;font:15px system-ui;margin:0}main{max-width:1100px;margin:auto;padding:28px}p{color:#b2c3cb;line-height:1.7}.panel{background:#1c2d38;border:1px solid #354f5d;border-radius:12px;padding:16px;margin:22px 0}button{background:#2d4855;color:#e3ece9;border:1px solid #53727e;border-radius:6px;padding:9px 18px;margin:4px;cursor:pointer}button.on{background:#397f74}#game{width:100%;border-radius:8px;outline:none}#gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:#283e49;padding:12px;border-radius:9px}.card canvas{width:100%;image-rendering:pixelated}.label{font-size:12px;color:#bbcad0}@media(max-width:650px){main{padding:12px}#gallery{grid-template-columns:1fr}}</style>
+<main><h1>__TITLE__ · 四足动作</h1><p>侧视狼 · 待机 / 走 / 慢跑 / 奔跑 / 扑咬 / 受击 / 死亡</p><section class="panel"><div id="gaits"></div><canvas id="game" width="1024" height="420" tabindex="0"></canvas><p>A / D 或 ← / → 移动，1 / 2 / 3 选择走、慢跑、奔跑，按住 Shift 临时奔跑；J 扑咬，H 受击，X 死亡/复活。左右方向使用同一套骨骼镜像。</p><div class="label" id="status"></div></section><section class="panel"><h2>动作与落脚节奏</h2><div id="gallery"></div></section></main>
+<script>
+/*__PLAYER__*/
+const DATA=/*__DATA__*/null,doc=DATA.doc;
+const load=src=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=no;i.src=src;});
+Promise.all(DATA.images.map(load)).then(images=>{
+ const game=document.getElementById('game'),g=game.getContext('2d'),groundY=340;
+ const controller=new QuadrupedController(doc,images,doc.frame_size<=96?4:1.4);controller.x=game.width/2;
+ const keys={},press={};let hits=0,flash=0;const targetX=790;let gait='walk';const cards=[];
+ for(const name of ['walk','trot','run']){if(!doc.clips[name])continue;const b=document.createElement('button');b.textContent={walk:'走路',trot:'慢跑',run:'奔跑'}[name];b.dataset.gait=name;b.onclick=()=>{gait=name;mark();};document.getElementById('gaits').append(b);}
+ function mark(){document.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.gait===gait));}mark();
+ for(const [name,c]of Object.entries(doc.clips)){
+  const box=document.createElement('div');box.className='card';const cv=document.createElement('canvas');cv.width=cv.height=doc.frame_size;
+  const text=document.createElement('div');text.className='label';text.textContent=name+' · '+c.frames.length+'f · '+c.speed_px_s.toFixed(1)+' px/s';box.append(cv,text);document.getElementById('gallery').append(box);
+  const p=new SpritePlayer(doc,images);p.play(name);cards.push({p,cv});
+ }
+ addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(!e.repeat)press[e.code]=true;keys[e.code]=true;const n={Digit1:'walk',Digit2:'trot',Digit3:'run'}[e.code];if(n&&doc.clips[n]){gait=n;mark();}});
+ addEventListener('keyup',e=>keys[e.code]=false);addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
+ let last=performance.now();
+ function frame(now){const dt=Math.min(50,now-last);last=now;const direction=Number(!!(keys.KeyD||keys.ArrowRight))-Number(!!(keys.KeyA||keys.ArrowLeft));
+  const events=controller.update(dt,{direction,gait:keys.ShiftLeft||keys.ShiftRight?'run':gait,attack:press.KeyJ,hurt:press.KeyH,death:press.KeyX&&controller.player.name!=='death',revive:press.KeyX&&controller.player.name==='death'});if(events.includes('hit_on')&&Math.abs(targetX-controller.x)<135&&(targetX-controller.x)*(controller.flip?-1:1)>0){hits++;flash=.25;}flash=Math.max(0,flash-dt/1000);for(const k in press)press[k]=false;controller.x=Math.max(130,Math.min(game.width-130,controller.x));
+  const sky=g.createLinearGradient(0,0,0,groundY);sky.addColorStop(0,'#172c42');sky.addColorStop(1,'#688782');g.fillStyle=sky;g.fillRect(0,0,game.width,game.height);
+  for(let x=-20;x<game.width;x+=90){g.fillStyle='#274a48';g.beginPath();g.moveTo(x,groundY);g.lineTo(x+45,110+(x%3)*12);g.lineTo(x+90,groundY);g.fill();}
+  g.fillStyle='#334a3c';g.fillRect(0,groundY,game.width,80);g.fillStyle='#73917b';g.fillRect(0,groundY,game.width,3);
+  g.fillStyle=flash?'#efc174':'#a68361';g.fillRect(targetX-7,groundY-75,14,75);g.beginPath();g.arc(targetX,groundY-65,22,0,Math.PI*2);g.fill();
+  g.imageSmoothingEnabled=doc.frame_size>96;controller.player.draw(g,controller.x,groundY,{flip:controller.flip,scale:controller.scale});
+  document.getElementById('status').textContent=controller.player.name+' · 命中 '+hits+' · '+(controller.flip?'向左':'向右')+' · '+Math.round(controller.x)+(events.length?' · '+events.join(', '):'');
+  for(const card of cards){card.p.update(dt);const ctx=card.cv.getContext('2d');ctx.clearRect(0,0,card.cv.width,card.cv.height);ctx.strokeStyle='#8ca879';ctx.beginPath();ctx.moveTo(0,doc.pivot[1]);ctx.lineTo(doc.frame_size,doc.pivot[1]);ctx.stroke();card.p.draw(ctx,doc.pivot[0],doc.pivot[1]);}
+  requestAnimationFrame(frame);
+ }
+ window.__demo={controller,doc,images,get hits(){return hits;}};requestAnimationFrame(frame);
+}).catch(e=>{document.getElementById('status').textContent=e.message;throw e;});
+</script></html>

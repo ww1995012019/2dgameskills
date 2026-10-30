@@ -17,7 +17,7 @@ import sys
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKILLS = ("game-sprite-animator", "game-shooter-animator")
+SKILLS = ("game-sprite-animator", "game-shooter-animator", "game-topdown-animator", "game-quadruped-animator")
 STAMP = (2026, 1, 1, 0, 0, 0)
 
 
@@ -40,6 +40,8 @@ def check_frontmatter(skill):
 
 
 def build(skill):
+    if not tracked(skill):
+        sys.exit(f"{skill}: no tracked files; register new source files with git add -N first")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for p in tracked(skill):

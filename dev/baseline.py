@@ -26,8 +26,8 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASELINE = os.path.join(HERE, "baseline.json")
-STATUS = ("hold", "seam", "spike", "slide", "jitter", "grip", "cadence", "limits", "clip", "bounds")
-NUMBERS = ("seam_ratio", "spike_ratio", "slide_px", "hover_px", "foot_wobble_px", "excess_deg",
+STATUS = ("integrity", "tail", "gait", "structure", "direction", "phase", "hold", "seam", "spike", "slide", "jitter", "grip", "cadence", "limits", "clip", "bounds")
+NUMBERS = ("tail_length_error", "seam_ratio", "joint_seam_ratio", "joint_seam_height", "joint_gait_seam_ratio", "spike_ratio", "slide_px", "hover_px", "foot_wobble_px", "excess_deg",
            "bone_err", "weapon_head", "weapon_ground", "body_ground", "grip_px", "shots")
 RANK = {"PASS": 0, "WARN": 1, "FAIL": 2}
 
@@ -49,7 +49,7 @@ def snapshot_set(d):
         c.update({k: r[k] for k in STATUS if k in r})
         c.update({k: r[k] for k in NUMBERS if k in r})
         clips[name] = c
-    trans = {f"{t['a']}->{t['b']}": [t["status"], t["ratio"]] for t in qa.get("transitions", [])}
+    trans = {f"{t['a']}->{t['b']}" + (f"[{t['group']}]" if "group" in t else ""): [t["status"], t["ratio"]] for t in qa.get("transitions", [])}
     return {"clips": clips, "transitions": trans}
 
 

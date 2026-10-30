@@ -5,15 +5,14 @@ Loop clips: run the cycle long enough to shed the start-up transient, then close
 cross-fading the last cycle into the one before it. Damped chains would converge on their own,
 but a chain near force balance (wall slide: wind about equal to gravity) responds chaotically
 and has no periodic solution to converge to, so the closure can't rely on physics.
-Non-loop clips: start from the end state of `prev`, and in the tail blend toward the first
-state of `next`, so the cloth is continuous through the whole jump chain too.
+Non-loop clips: start from the end state of `prev`, and blend the tail toward the declared
+entry state of `next` (normally its first frame), so the cloth is continuous through handovers.
 """
 import math
 
 import numpy as np
 
 from .mathx import rot, smooth
-from .rig import full_pose, solve
 
 SIM_HZ = 180
 DT = 1.0 / SIM_HZ
@@ -70,7 +69,13 @@ def _settle(defn, anchor0, frame_rot):
     return np.array([anchor0 + np.array(d) * defn.seg * i for i in range(defn.n)])
 
 
-def simulate(defn, clip, body, start=None, settle_seconds=6.0):
+def simulate(defn, clip, body, start=None, settle_seconds=6.0, state_at=None):
+    """Bake a chain. Optional state_at(t) -> (anchor_xy, angle_degrees) supports other rigs.
+
+    The default path retains the original humanoid sampler and numerical operations.
+    """
+    if state_at is None:
+        from .rig import full_pose, solve
     anchor = _anchor_fn(defn.attach)
     dur = clip.duration
     steps_clip = max(2, int(round(dur * SIM_HZ)))
@@ -82,6 +87,8 @@ def simulate(defn, clip, body, start=None, settle_seconds=6.0):
         keep_from = 0
 
     def state(t):
+        if state_at is not None:
+            return state_at(t)
         sk = solve(full_pose(clip.sample(t)), body)
         return anchor(sk), sk[defn.rest_frame]
 
@@ -216,7 +223,7 @@ def _limit_bend(p, seg, max_bend, max_curl=360.0):
 
 
 def blend_to(bake, target, seg, frac=0.55):
-    """Ease the tail of a non-loop bake into `target` (first state of the next clip)."""
+    """Ease the tail of a non-loop bake into the next clip's declared entry state."""
     n = len(bake.pos)
     start = int(n * (1 - frac))
     for i in range(start, n):
@@ -255,5 +262,7 @@ def bake_all(clips, body, defs):
         if clip.loop or clip.next not in clips:
             continue
         for d in defs:
-            blend_to(bakes[clip.name][d.name], bakes[clip.next][d.name].first(), d.seg)
+            target = bakes[clip.next][d.name]
+            entry = getattr(clip, "next_at", 0.0)
+            blend_to(bakes[clip.name][d.name], target.at(clips[clip.next].duration * entry), d.seg)
     return bakes

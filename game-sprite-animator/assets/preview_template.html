@@ -170,7 +170,7 @@ function start(imgs, fxImgs) {
     const p = new SpritePlayer(fxDoc, fxImgs); p.play(name);
     fxList.push({ p, x, y, dir });
   }
-  const set = (s, restart) => { if (!has(s)) s = "idle"; P.state = s; hero.play(s, { restart: !!restart }); };
+  const set = (s, restart, frame = 0) => { if (!has(s)) s = "idle"; P.state = s; hero.play(s, { restart: !!restart, frame }); };
   let shake = 0;
   function onEvent(e) {
     const m = { footstep: "dust_step", land_dust: "dust_land", skid_dust: "dust_skid", dash_burst: "dust_dash", air_puff: "puff_air", block_spark: "block_spark" }[e];
@@ -196,9 +196,14 @@ function start(imgs, fxImgs) {
     if (s === "death") {
       if (take("KeyX")) { P.dead = false; set("idle", true); }
     } else {
-      if (take("KeyX")) { P.vx = 0; set("death", true); P.dead = true; }
-      else if (!locked && take("KeyH")) { set("hurt", true); P.vx = -P.dir * 120; spawn("hit_spark", P.x, P.y - 30, false); }
-      if (!locked && !P.air) {
+      let reacted = false;
+      if (take("KeyX")) { P.vx = 0; set("death", true); P.dead = true; reacted = true; }
+      else if (!locked && take("KeyH")) {
+        reacted = true;
+        if (s === "block" && keys.KeyI && hero.frame === hero.clip.frames.length - 1 && has("block_hit")) { set("block_hit", true); P.vx = 0; }
+        else { set("hurt", true); P.vx = -P.dir * 120; spawn("hit_spark", P.x, P.y - 30, false); }
+      }
+      if (!locked && !P.air && !reacted) {
         if (take("KeyK")) { set("dash", true); P.vx = 0; }
         else if (take("KeyL")) { set("roll", true); P.vx = P.dir * doc.clips.roll.speed_px_s * Z; }
         else if (take("KeyU")) { set("cast", true); P.vx = 0; }
@@ -238,10 +243,13 @@ function start(imgs, fxImgs) {
       if (hero.done) {
         if (s === "jump_start") set("jump_rise");
         else if (s === "jump_apex" || s === "double_jump" || s === "air_attack") set(P.air ? "fall" : "land", true);
-        else if (s === "block_hit") set("block");
+        else if (s === "block_hit") {
+          const next = doc.clips[s].next || "block";
+          set(next, true, doc.clips[s].next_frame || 0);
+        }
         else if (s !== "death") { if (s === "land" || s === "skid" || s === "roll" || s === "dash" || s.startsWith("attack") || s === "cast" || s === "hurt" || s === "crouch_exit" || s === "block" || s === "idle_look") { if (!(s === "block" && keys.KeyI)) { set("idle"); P.vx = 0; } } }
       }
-      if (s === "block" && !keys.KeyI && !locked) set("idle");
+      if (s === "block" && !keys.KeyI && !locked && !reacted) set("idle");
       if (s === "jump_rise" && P.vy > -180) set("jump_apex", true);
       if (P.air && s !== "fall" && P.vy > 500 && !LOCK.has(s) && s !== "jump_apex") set("fall");
     }

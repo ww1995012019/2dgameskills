@@ -46,7 +46,7 @@ func _initialize() -> void:
 	for name in doc.clips:
 		var c: Dictionary = doc.clips[name]
 		var key := "%s_%s" % [c.fps, c.loop]
-		if not picked.has(key):
+		if (args.size() > 2 and args[2] == "all") or not picked.has(key):
 			picked[key] = name
 			queue.append(name)
 	start_next()

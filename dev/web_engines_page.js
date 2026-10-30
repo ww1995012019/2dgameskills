@@ -17,6 +17,7 @@ function frameError(a, b, size) {
 }
 const pad = (i) => String(i).padStart(3, "0");
 function pickClips(doc) {
+  if (window.SMOKE_ALL_CLIPS) return Object.keys(doc.clips);
   const seen = {}, out = [];
   for (const [n, c] of Object.entries(doc.clips)) { const k = c.fps + "_" + c.loop; if (!seen[k]) { seen[k] = 1; out.push(n); } }
   return out;

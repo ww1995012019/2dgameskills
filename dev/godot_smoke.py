@@ -26,7 +26,7 @@ def find_godot(explicit=None):
             or shutil.which("godot") or shutil.which("godot4"))
 
 
-def run(set_dir, godot, rates=(60, 144), keep=None, import_settings=True):
+def run(set_dir, godot, rates=(60, 144), keep=None, import_settings=True, all_clips=False):
     set_dir = os.path.abspath(set_dir)
     with open(os.path.join(set_dir, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -47,7 +47,7 @@ def run(set_dir, godot, rates=(60, 144), keep=None, import_settings=True):
         log, ok = [], True
         for hz in rates:
             p = subprocess.run([godot, "--headless", "--path", proj, "--script", "res://smoke_test.gd",
-                                "--fixed-fps", str(hz), "--", set_dir, str(hz)], capture_output=True, text=True, timeout=600)
+                                "--fixed-fps", str(hz), "--", set_dir, str(hz), "all" if all_clips else "representative"], capture_output=True, text=True, timeout=600)
             out = "\n".join(l for l in p.stdout.splitlines() if l.startswith(("FAIL", "RESULT", "played", "frames checked")))
             errs = "\n".join(l for l in p.stderr.splitlines() if "ERROR" in l or "SCRIPT" in l)
             ok &= p.returncode == 0 and "RESULT ok" in out and not errs
@@ -65,13 +65,14 @@ def main():
     ap.add_argument("--hz", default="60,144", help="tick rates to play at")
     ap.add_argument("--keep", help="build the project in this folder and keep it")
     ap.add_argument("--default-import", action="store_true", help="leave out the exported .import files")
+    ap.add_argument("--all-clips", action="store_true", help="play every clip at each tick rate")
     a = ap.parse_args()
     godot = find_godot(a.godot)
     if not godot:
         sys.exit("no Godot binary: pass --godot or set GODOT")
     if a.keep:
         os.makedirs(a.keep, exist_ok=True)
-    ok, log = run(a.set_dir, godot, [int(x) for x in a.hz.split(",")], a.keep, not a.default_import)
+    ok, log = run(a.set_dir, godot, [int(x) for x in a.hz.split(",")], a.keep, not a.default_import, a.all_clips)
     print(log)
     sys.exit(0 if ok else 1)
 

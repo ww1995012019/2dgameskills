@@ -1,6 +1,6 @@
 # 交接文档
 
-更新于 2026-10-30。前三轮在分支 `claude/elegant-brown-0q6iwm` 上完成（从 `wip/shooter-and-qa` 接着做），分两次合并到 `main`。第四轮（工程基础：共用代码、基准回归、故障注入、CSS 回放）在 `claude/wizardly-wright-kwbjaj` 上。工作规范见根目录 `CLAUDE.md`。
+更新于 2026-10-31。前三轮在分支 `claude/elegant-brown-0q6iwm` 上完成（从 `wip/shooter-and-qa` 接着做），分两次合并到 `main`。第四轮（工程基础：共用代码、基准回归、故障注入、CSS 回放）在 `claude/wizardly-wright-kwbjaj` 上。工作规范见根目录 `CLAUDE.md`。
 
 ## 接手时直接说
 
@@ -63,7 +63,141 @@
 - 安装：`bash dev/engines/get_godot.sh`（Linux，官方 4.3），`npm install --prefix dev/engines`（版本固定在 `dev/engines/package.json`）。都不进 git。
 - 还没测：Cocos、Unity（需要图形界面和授权，容器里装不了）；射击 skill 的分层挂点在引擎里的对齐（只测了逐帧画面和播放）。
 
-## 最后一次回归结果
+## 第六轮：关节连续性质检
+
+- 两个 `qa_motion.py` 增加关节 RMS 接缝和动作衔接检查，保留原有像素检查，取较差状态。
+  循环检查相对帧间位移；衔接用站立身高归一化，不再依赖较快动作的速度。
+- 射击生成器原先没有 `joints`，现已记录与普通角色相同的九个关节。仅增加 trace 数据，未改动作或绘制。
+- 两个 `expectedFailure` 已改成正常测试，故障同时修改 PNG 和 trace；两种 skill 都覆盖截短循环、
+  错误衔接、纯关节故障、缩放不变性和旧 trace 兼容。射击另有后坐力和移动开火故障测试。
+- 开火循环的起点本来就有后坐力脉冲，不能用普通步态速度作判断：用与衔接相同的绝对位移限值；
+  整身开火组合仍检查下半身步态。规则和误报原因写在 `references/motion-qa.md`。
+- 浏览器测试补上 `CHROMIUM_EXECUTABLE_PATH`，CSS 测试使用 Playwright 内存资源路由，兼容禁止 file:// 的环境。
+  本次使用系统 Chromium 154、Godot 4.3、Phaser 3.80.1、PixiJS 8.6.6。
+- **本轮新发现的动作问题（第七轮已修复）：** `block_hit` 在 GUARD 结束，而 `block` 第一帧是 idle0。
+  关节位移约身高的 12%，所以新增 WARN。没有放宽阈值，也没有更新基准掩盖该问题。
+  下一步应修正格挡恢复的动作/播放衔接，再进入俯视角色工作。
+
+验证记录：
+- 故障注入测试：29 个全部通过，没有 expectedFailure；CSS 播放及其故障注入：3 个通过。
+- Godot、Phaser、PixiJS 引擎测试：6 个通过；包同步和打包检查：2 个通过。
+- 初次完整测试因缺少 Playwright 自带 Chromium、file:// 策略而有 3 个 CSS 失败；
+  配置系统 Chromium 并调整 CSS 资源加载后，受影响的 3 个测试已全部重跑通过。
+- 18 套、864 个动作全量生成后，用最终版 QA 逐套重新检查：0 FAIL、10 WARN。
+  10 个 WARN 全是 5 个普通角色 × 高清/像素的 `block_hit -> block`，射击 8 套全部无警告。
+- `python3 dev/baseline.py /workspace/onboarding-results/qa-update/spr/all --strict`：
+  10 regressions、0 changed、0 drifted，退出码 1。10 项都是上述 PASS -> WARN，
+  没有像素或帧数变化；不能将这次基准比较称为通过。`dev/baseline.json` 未更新。
+- 两个 `.skill` 已重新打包且 `--check` 通过；共用文件 `--check` 通过。
+
+## 第七轮：格挡受击恢复
+
+- 保留 `block` 的 idle → GUARD 入场段；`block_hit` 的 `next_at=1` 声明接回最后的 GUARD 保持姿势。
+  生成器按目标动作的实际帧数写入 `animations.json` 的零基 `next_frame`，兼容 FPS override。
+- 两边 QA 用真实的入口帧同时比较像素和关节，并在报告中记录目标帧号；没有改阈值。
+  将入口故意改回 0 仍得到原来的 WARN，将保持姿势改成死亡姿势会 FAIL。
+- 共用布料在 `shared/scripts/sprite_anim/cloth.py` 修改并同步：收尾形状同样指向目标保持帧，
+  不再向待机首帧的布料形状收敛。预期画面变化只在普通角色的 `block_hit`。
+- 试玩里按住 I、按 H 会触发格挡受击并恢复保持帧；恢复后能立即再次受击，火花每次只触发一次。
+  释放 I 后受击按普通 `hurt` 处理；反应不会被同一模拟步的普通输入覆盖。
+- 新增 `dev/test_sprite_demo.js`，以手动时钟运行真实预览脚本并断言状态和帧号。
+  Python 故障注入测试也覆盖播放路径、错误入口、错误目标姿势和目标帧率覆盖。
+- 集成文档明确 `next`/`next_frame` 是控制器提示；Canvas 示例按入口帧播放。
+  各游戏引擎仍需自行连接状态；未声称所有引擎都实测了这条游戏状态转换。
+- 已看过 5 角色 × 高清/像素的 `block_hit` 条形图，没有发现明显新增视觉问题；这是人工观感检查。
+
+验证结果：
+- `CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium python3 -m unittest discover -s dev/tests -v`：46 项全部通过，无跳过、无 expectedFailure。
+- `TEMP=/workspace/onboarding-results/block-fix-regression JOBS=4 bash dev/regress_all.sh`：
+  18 套、864 个动作全部完成，逐套报告确认 0 FAIL、0 WARN。
+- 更新基准前比较：0 regressions、10 changed、3 drifted。10 个像素变化全部是普通角色的
+  `block_hit` 布料收尾，3 项 QA 数值变化也在 `block_hit`，且仍为 PASS；其他 854 个动作帧数和像素相同。
+- 10 套普通角色的最终预览均通过 `node dev/test_sprite_demo.js <结果目录>/preview.html`，
+  包括立即再次受击、反应中释放格挡、释放与受击同一步发生、每次只触发一次火花。
+- 人工检查后执行 `python3 dev/baseline.py <完整结果目录> --update`，保留这次有意变化，
+  并记录新增关节检查数值；更新后的 `--strict` 比较为 0 regressions、0 changed、0 drifted。
+- 两份 `.skill` 已重新打包，共用文件和包检查通过。下一项是路线图 3.2 的俯视 4 方向人形，开始前确认产品选择。
+
+
+## 第八轮：俯视八方向自由移动
+
+用户选择自由移动、八方向；采用此前建议的 3/4 相机、独立 `game-topdown-animator`、六种动作。
+
+- 新 skill 的 `topdown.py` 用地面坐标与高度计算人形姿势和两段 IK，`art.py` 按深度绘制正/背/侧/斜向。
+  没有旋转原侧视位图。腿/臂及武器长度固定，死亡降低身体并闭眼。
+- 五基础方向加三种烘焙镜像，全方向共用 pivot；镜像装备换手的限制写入 manifest 和文档。
+- wanderer / warden × hd / pixel，四套、192 个片段；每套 48 个，高清 1248 帧、像素 632 帧。
+- 独立 QA 检查方向与帧数据绑定、时序、双分量滑步、关节与武器长度、循环、衔接、裁切。
+  帧哈希可以发现方向帧错换，但不能理解朝向语义；不能宣称它能自动理解错误生成的图画。
+- `TopDownController` 归一化斜向速度，转向/走跑保留相位和子帧时间，避免重复脚步事件；
+  动作期间锁定移动、死亡等待复活。真实浏览器使用相同代码。
+- 仅复用 `shared/` 的 exporter 和 Unity importer，通过 sync_shared 的选择列表同步。
+  三个包均独立，新的包也做了隔离解压后的生成/QA 测试。新路径用 `git add -N` 登记，未提交。
+- `regress_all.sh` 加入新四套，并保留底层失败退出码；PowerShell 旧脚本仍仅覆盖原 18 套。
+- 基准扩充前：0 regressions、4 new sets、0 drift，原 18 套逐像素、帧数与 QA 数值完全不变。
+  扩充后 22 套、1056 片段，严格比较 0 regressions、0 changed、0 drifted；全量 0 FAIL、0 WARN。
+- 四套完整新素材分别通过逐帧导出还原、Godot 4.3、Phaser 3.80.1、PixiJS 8.6.6 的导入/播放检查；
+  四套都通过 controller 和真实 Chromium 键盘试玩检查。日志 `/tmp/topdown-native-<套>-<检查>.log`。
+- 所有 24 张颜色/剪影审查图已查看，结论存在结果目录的 `review/verdict.json`。
+  没发现明显阻断问题；简洁的插腰待机姿势、细剑轮廓和背面倒地的透视压缩属于观感复核项。
+- 第一版不含独立瞄准、枪械、怪物、自定义 PNG 或物理布料；Unity 未编译，Cocos 仅结构验证。
+  引擎原生逐帧播放检查不代表各引擎中的完整八方向游戏状态机已实测。
+
+完整测试：`CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium python3 -m unittest discover -s dev/tests -v`，
+62 项通过，无跳过/expectedFailure，含独立解包安装和故障注入。新增 Python 源码格式整理前后 AST 相同。
+
+完整结果：`/workspace/onboarding-results/topdown-regression/spr/all/`。
+示例：`wanderer-pixel/preview.html`；新包 `game-topdown-animator.skill`；使用见新 SKILL.md 和 README。
+
+## 第九轮：侧视四足狼
+
+用户确认继续四足方向，首版为独立 `game-quadruped-animator`，狼的 idle、walk、trot、run 四个循环。
+
+- `rig.py`：三段脊柱、颈/头、四条三段腿；每条腿上/下段 18/20 单位，脚腕/跗骨到爪固定。
+  前肘向后、后膝向前，IK 超出范围直接报错，不拉伸。走路四相位，慢跑对角腿配对，奔跑含腾空。
+- `art.py`：长嘴、尖耳、胸毛、后腿跗骨和近远腿分层。高清/像素分别 116/60 帧，每套 4 个动作。
+- 尾巴复用 `shared/cloth.py`，新增可选 `state_at(t) -> (anchor, angle)`；原人形默认路径不改变数值运算。
+  分数模拟采样时，把插值尾巴整体平移到精确身体根部，避免非 180Hz 整数采样时根部微小脱离。
+- `shared/rig_data.py` 的 `JointRecorder` 从两种真实解剖实现提炼，接收命名二维关节映射。
+  两个侧视人形生成器和四足使用它记录原有格式；没有把它描述成通用骨骼/约束求解器。
+- QA 分别检查四脚滑步/接触高度，固定骨长及保持骨长的膝肘反折，步态/事件一致性，
+  尾巴根部/长度/地面，循环/跳帧/重复帧、裁切及非有限值。
+- 新增 17 项故障/行为测试，包含逐脚故障、24fps 分数采样、独立解包和实际播放器。
+  开始时安装包尚未生成导致隔离包测试失败；打包后该组 17 项已全部重跑通过。
+- 原生测试工具新增 `--all-clips`，避免四足全为循环时只测试 idle。
+  高清和像素的每个动作都在 Godot 4.3、Phaser 3.80.1、PixiJS 8.6.6 以 60/144Hz 播放通过。
+  导入后逐帧还原也一致；两套真实 Chromium 键盘试玩测试均通过走/慢跑/奔跑、方向切换和停止。
+- 8 张颜色/剪影审查图全部看过，结论在 `/workspace/onboarding-results/quadruped-final/wolf-<预设>/review/verdict.json`。
+  没发现明显阻断问题；远近腿在待机剪影中会重叠、毛发为棱角风、尾巴偏细，仍需按游戏风格复核。
+- 全量回归扩到 24 套、1064 片段，全套 0 FAIL、0 WARN。
+  更新基准前严格核对：旧 22 套逐像素、帧数和 QA 数值完全不变，仅新增 wolf-hd / wolf-pixel。
+- `CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium python3 -m unittest discover -s dev/tests -v`：79 项通过，无跳过/expectedFailure。
+  回归基准扩充到 24 套后，`baseline.py --strict` 为 0 regressions、0 changed、0 drifted。
+- 共用文件与四个 `.skill` 包同步；新 Python 文件格式整理前后 AST 相同。用户文件与前几轮改动保留，未提交。
+
+结果：`/workspace/onboarding-results/quadruped-final/wolf-pixel/preview.html`；完整回归位于
+`/workspace/onboarding-results/quadruped-regression/spr/all/`；日志 `/tmp/quadruped-<预设>-<检查>.log`。
+
+当前限制：只有侧视狼、四个循环，无攻击/受击/死亡、俯视四足、其他犬种/马骨骼或自定义部件图。
+步态切换保留相位，但不做接触约束混合；Unity 未编译，Cocos 仅结构检查。
+下一步先按游戏需要补四足攻击、受击、死亡，再考虑俯视或其他动物。
+
+## 第十轮：狼的战斗动作
+
+- 新增 attack、hurt、death 三个非循环，分别输出 hit_on/hit_off、恢复待机、body_thud 与终止姿势。
+  攻击是四爪着地的前探咬击，没有宣称空中跃扑或自动追击 AI。死亡为伏地闭眼，不是侧翻。
+- 骨长与爪接触保持约束；新增胸腹/下颚地面检查。attack/hurt 的尾巴末段向 idle 首帧收敛，
+  身体和尾巴分别检查恢复衔接。非循环保留最后一帧，不做循环接缝判断。
+- 试玩 J 攻击、H 受击、X 死亡/复活，动作期间锁定移动；训练靶只在面向目标且足够近的 hit_on 记录一次命中。
+- 增加事件缺失、恢复姿势破坏、下颚穿地和战斗状态测试；原有四个循环的生成逻辑保留。
+- 高清/像素的七动作已分别完成导出还原、Godot/Phaser/PixiJS 60/144Hz 全动作播放和真实浏览器战斗键盘测试。
+- 完整测试 83 项通过，无跳过；格式整理后的四足 21 项亦重跑通过。
+- 全量回归 24 套、1070 片段，0 FAIL、0 WARN；基准扩充前确认原有 1064 片段的像素、帧数、QA 数值不变，仅新增六个战斗片段。
+- 基准分别保存身体/尾巴恢复边的 group，避免同名边覆盖；扩充后严格比较无回退、无变化。
+- 六张新增动作颜色/剪影图已经查看，记录在 `/workspace/onboarding-results/wolf-combat-final/wolf-<预设>/review/verdict.json`。
+  没发现明显穿地或断肢；简洁伏地造型和无接触混合的状态切换仍需在目标游戏里复核手感。
+
+## 第三轮回归结果（历史）
 
 2026-10-30 第三轮，最新代码，18 套全部跑完：**0 FAIL、0 WARN**。导出校验 18 套 OK，多页图集两边 OK，射击试玩页 8 套全部通过（包括两个按键缓冲用例）。
 
@@ -92,8 +226,8 @@
 第四轮之后，按优先级：
 
 1. ~~引擎实测~~ 第五轮完成了 Godot、Phaser、PixiJS。
-2. 补上两个 QA 缺口：基于关节位置的循环接缝和动作衔接检查。加上后先跑全量回归，看会不会冒出新的 FAIL。
-3. 新方向：用户的游戏横版、俯视都有，也需要怪物。建议顺序：俯视 4 方向人形 → 8 方向 → 四足。一次只推进一类。
+2. 关节位置循环接缝和动作衔接检查已在第六轮补齐；该警告已在第七轮通过恢复 GUARD 保持帧修复。
+3. 八方向俯视人形首版已在第八轮完成；下一步按游戏需求补动作/装备，或继续四足攻击/受击/死亡；狼的四个循环已在第九轮完成。
 4. 「视觉质检记录」里留下的观感问题；Unity、Cocos 实测。
 
 以下是前三轮的记录。1～9 都已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README、比例、合并）。第三轮把剩下的视觉质检做完了，修了 2 个观感问题，见「视觉质检记录」。
