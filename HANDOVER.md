@@ -6,7 +6,7 @@
 
 把下面这段发给 Claude 就能继续：
 
-> 克隆 https://github.com/ww1995012019/2dgameskills 的 `claude/elegant-brown-0q6iwm` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」第 8 步继续。
+> 克隆 https://github.com/ww1995012019/2dgameskills 的 `claude/elegant-brown-0q6iwm` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」第 9 步继续。
 
 ## 这两个 skill 是什么
 
@@ -53,15 +53,16 @@
 已修的 bug 级问题：死亡时披风和头发穿地（见上）。
 
 留下的观感问题，没修：
+- goblin `attack_3` 第 4、7 帧：起手时枪杆横过脸，在检测容忍的 0.22 秒内
 - hero `skid` 第 4 帧：急停时披风卷成半圆
 - commando `rifle_aim_m90`：枪朝正下方时和腿叠在一起，剪影看不到枪，彩色能看清
 - commando `rifle_fire_m90`、`shotgun_fire_m90`：站着朝正下方开火，枪口火光画到地面以下。这个角度主要在空中用
 
-没看的：其他 7 个角色、像素版。
+没看的：goblin 只看了攻击那张（sheet_00，改了长枪握法之后），其他 6 个角色和像素版没看。
 
 ## 接下来要做的事
 
-1～7 已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README）。
+1～8 已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README、比例）。
 
 第 6 步打包：根目录的 `game-sprite-animator.skill` 和 `game-shooter-animator.skill` 都是本分支的最新代码，包内文件和 git 跟踪的文件一一对应。解压到全新目录后，按 SKILL.md 的流程跑通了预览图、生成（像素）、数值检测（0 FAIL）、审查图，射击的试玩页测试也通过了。试运行时发现 `contact_sheet.py` 遇到角色没有的动作名会直接抛 `KeyError`（SKILL.md 示例里的 `rifle_reload`，swat 拿的是冲锋枪），已改成和 `generate.py` 一样列出可用动作名，SKILL.md 也补了说明。改了 skill 里的文件之后要重新打包：
 
@@ -69,7 +70,7 @@
 cd <skill-creator 目录> && PYTHONUTF8=1 python -m scripts.package_skill <仓库>/game-sprite-animator <仓库>
 ```
 7. ~~更新 README~~ 已完成：加入射击 skill、约束、穿模检测和视觉质检；`docs/preview.png` 用最新代码重新生成，新增 `docs/preview-shooter.png`（commando 的跑动射击、跳跃射击、翻滚、炸飞）。
-8. **检查自动适配的缩放比例。** goblin 0.787 最小，比 hero 小约 15%；mage 0.849 和 ghost 0.848 次之。goblin 和 mage 最宽的动作是 `attack_3`，长兵器（长枪、法杖）加上下劈。可以考虑按武器长度调整挥舞幅度。ghost 是狙击枪太长。
+8. ~~检查自动适配的缩放比例~~ 已完成。量出来的武器尖原来比画出来的短 4～9 个单位（从手腕量，长度表是旧的：长枪 62 实际画到 66，斧 40 实际 47），一直靠 `fit_scale` 留的 6 个单位余量撑着。现在 `art.py` 的 `WEAPON_REACH` 记录每种武器实际画出的长度，`blade_points`、武器绘制和地面约束共用同一个起点（`weapon_origin`），余量降到 4。长枪和法杖改成握在更靠中间的位置（`WEAPON_GRIP`，总长不变）。比例：hero 0.929（不变）、knight 0.939、mage 0.905（原 0.849）、ninja 0.891、goblin 0.852（原 0.787），最大和最小的差距从 27% 缩到 10%。地面约束改成绕武器的真实起点算（`rig.py` 的 `pivot_y`），否则 goblin `attack_3` 落地时枪尖会插进地面 1 个单位。
 9. **询问用户后再合并到 `main`。** 这是公开仓库，合并和发布要用户确认。
 
 ## 常用命令

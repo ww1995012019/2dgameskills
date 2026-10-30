@@ -352,8 +352,8 @@ class CharacterArt:
         self.bulk = self.body.bulk
         front, back = WEAPON_REACH.get(self.spec["weapon"], (0, 0))
         grip = WEAPON_GRIP.get(self.spec["weapon"], 0)
-        # Measured from the wrist; the drawing starts ~2 units further out (see weapon_origin).
-        self.body.weapon_front = front - grip + 2.0 if front else 0
+        # Measured from the unshifted origin just past the wrist, as the rig's ground clamp pivots.
+        self.body.weapon_front = front - grip if front else 0
         self.body.weapon_back = back + grip
         self.cutout = Cutout(self.spec) if self.spec.get("parts") else None
 

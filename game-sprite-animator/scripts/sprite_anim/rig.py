@@ -45,7 +45,7 @@ class Body:
     hip_w: float = 2.2
     sh_w: float = 2.4
     bulk: float = 1.0           # limb thickness multiplier
-    weapon_front: float = 0.0   # reach past / behind the hand, for the ground clamp
+    weapon_front: float = 0.0   # reach past / behind the weapon origin, for the ground clamp
     weapon_back: float = 0.0
     weapon_margin: float = 2.8  # weapon half-thickness plus clearance
 
@@ -162,7 +162,10 @@ def solve(pose, b: Body):
     kn_n, an_n, fr_n = leg(hip_n, g("foot_n_x"), g("foot_n_y"), g("foot_n_p"))
     kn_f, an_f, fr_f = leg(hip_f, g("foot_f_x"), g("foot_f_y"), g("foot_f_p"))
 
-    wep_a = ground_clamp(fa_n + g("wep"), wr_n[1], b.weapon_front, b.weapon_back, b.weapon_margin)
+    # The weapon's line passes through its drawing origin just past the wrist (art.weapon_origin),
+    # and that point's height depends only on the forearm, so clamp about it.
+    pivot_y = wr_n[1] + (wr_n[1] - el_n[1]) * 0.14
+    wep_a = ground_clamp(fa_n + g("wep"), pivot_y, b.weapon_front, b.weapon_back, b.weapon_margin)
     return dict(
         hip=hip, waist=waist, neck=neck, head_base=head_base,
         body_rot=body_rot, chest_rot=chest_rot, head_rot=head_rot,
