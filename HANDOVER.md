@@ -6,7 +6,7 @@
 
 把下面这段发给 Claude 就能继续：
 
-> 克隆 https://github.com/ww1995012019/2dgameskills 的 `main` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」末尾列出的后续工作继续。
+> 克隆 https://github.com/ww1995012019/2dgameskills 的 `main` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」开头列出的后续工作继续。
 
 ## 这两个 skill 是什么
 
