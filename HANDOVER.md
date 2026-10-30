@@ -6,7 +6,7 @@
 
 把下面这段发给 Claude 就能继续：
 
-> 克隆 https://github.com/ww1995012019/2dgameskills 的 `claude/elegant-brown-0q6iwm` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」第 6 步继续。
+> 克隆 https://github.com/ww1995012019/2dgameskills 的 `claude/elegant-brown-0q6iwm` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」第 8 步继续。
 
 ## 这两个 skill 是什么
 
@@ -61,14 +61,14 @@
 
 ## 接下来要做的事
 
-1～6 已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包）。
+1～7 已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README）。
 
 第 6 步打包：根目录的 `game-sprite-animator.skill` 和 `game-shooter-animator.skill` 都是本分支的最新代码，包内文件和 git 跟踪的文件一一对应。解压到全新目录后，按 SKILL.md 的流程跑通了预览图、生成（像素）、数值检测（0 FAIL）、审查图，射击的试玩页测试也通过了。试运行时发现 `contact_sheet.py` 遇到角色没有的动作名会直接抛 `KeyError`（SKILL.md 示例里的 `rifle_reload`，swat 拿的是冲锋枪），已改成和 `generate.py` 一样列出可用动作名，SKILL.md 也补了说明。改了 skill 里的文件之后要重新打包：
 
 ```bash
 cd <skill-creator 目录> && PYTHONUTF8=1 python -m scripts.package_skill <仓库>/game-sprite-animator <仓库>
 ```
-7. **更新 README**：加入射击 skill、约束和视觉质检，换预览图。
+7. ~~更新 README~~ 已完成：加入射击 skill、约束、穿模检测和视觉质检；`docs/preview.png` 用最新代码重新生成，新增 `docs/preview-shooter.png`（commando 的跑动射击、跳跃射击、翻滚、炸飞）。
 8. **检查自动适配的缩放比例。** goblin 0.787 最小，比 hero 小约 15%；mage 0.849 和 ghost 0.848 次之。goblin 和 mage 最宽的动作是 `attack_3`，长兵器（长枪、法杖）加上下劈。可以考虑按武器长度调整挥舞幅度。ghost 是狙击枪太长。
 9. **询问用户后再合并到 `main`。** 这是公开仓库，合并和发布要用户确认。
 
