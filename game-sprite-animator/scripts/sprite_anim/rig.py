@@ -6,6 +6,7 @@ Rotations are clockwise degrees for the body (lean forward > 0). Limb swing > 0 
 import math
 from dataclasses import dataclass
 
+from .constraints import ANKLE_SOFT, ankle_angle, ground_clamp, limited
 from .mathx import add, rot, scale
 
 # Every channel a pose can set. Poses are sparse dicts layered over these defaults.
@@ -44,6 +45,9 @@ class Body:
     hip_w: float = 2.2
     sh_w: float = 2.4
     bulk: float = 1.0           # limb thickness multiplier
+    weapon_front: float = 0.0   # reach past / behind the hand, for the ground clamp
+    weapon_back: float = 0.0
+    weapon_margin: float = 2.8  # weapon half-thickness plus clearance
 
     @classmethod
     def from_spec(cls, spec):
@@ -99,9 +103,10 @@ def solve(pose, b: Body):
     hip = (g("root_x"), b.hip_h + g("root_y"))
     body_rot = g("root_rot") + g("pelvis")
     waist = add(hip, rot((0, b.pelvis_len), body_rot))
-    chest_rot = body_rot + g("spine")
+    excess = []
+    chest_rot = body_rot + limited("spine", g("spine"), excess)
     neck = add(waist, rot((0, b.chest_len), chest_rot))
-    head_rot = chest_rot + g("neck") + g("head")
+    head_rot = chest_rot + limited("head", g("neck") + g("head"), excess)
     head_base = add(neck, rot((0, b.neck_len), chest_rot + g("neck")))
 
     sh_axis = rot((1, 0), chest_rot)
@@ -111,7 +116,7 @@ def solve(pose, b: Body):
 
     def arm(s, up, lo):
         a1 = up - chest_rot
-        a2 = a1 + lo
+        a2 = a1 + limited("elbow", lo, excess)
         el = add(s, (math.sin(math.radians(a1)) * b.up_arm, -math.cos(math.radians(a1)) * b.up_arm))
         wr = add(el, (math.sin(math.radians(a2)) * b.lo_arm, -math.cos(math.radians(a2)) * b.lo_arm))
         return el, wr, a2
@@ -126,26 +131,38 @@ def solve(pose, b: Body):
     k = g("ik_body")
 
     def leg(hj, fx, fy, fp):
-        rest_x = fx
-        flat = (rest_x, b.ankle_h + fy)
-        ground = ankle_with_roll(flat, fp)
+        flat = (fx, b.ankle_h + fy)
+
+        def reach(pitch, lift=0.0):
+            ground = ankle_with_roll(flat, pitch)
+            ground = (ground[0], ground[1] + lift)
+            if k > 0:
+                # Body-space target: same stance, carried by hip motion and root spin.
+                local = (ground[0], ground[1] - b.hip_h)
+                carried = add(hip, rot(local, g("root_rot")))
+                ground = (ground[0] * (1 - k) + carried[0] * k, ground[1] * (1 - k) + carried[1] * k)
+            knee, ank = two_bone(hj, ground, b.thigh, b.shin, 1.0)
+            return knee, ank, -pitch + g("root_rot") * k
+
+        knee, ank, foot_rot = reach(fp)
+        # An ankle only closes so far: past that a real heel lifts and the ball stays planted.
+        for _ in range(2):
+            tight = ANKLE_SOFT - ankle_angle(knee, ank, foot_rot)
+            if tight <= 0:
+                break
+            fp -= tight * 1.15
+            knee, ank, foot_rot = reach(fp)
         if k > 0:
-            # Body-space target: same stance, carried by hip motion and root spin.
-            local = (ground[0], ground[1] - b.hip_h)
-            carried = add(hip, rot(local, g("root_rot")))
-            tgt = (ground[0] * (1 - k) + carried[0] * k, ground[1] * (1 - k) + carried[1] * k)
-        else:
-            tgt = ground
-        # Knee side follows body rotation so a spinning body doesn't flip its knees.
-        c = math.cos(math.radians(g("root_rot") * k))
-        knee, ank = two_bone(hj, tgt, b.thigh, b.shin, 1.0 if c >= 0 else -1.0)
-        foot_rot = -fp + (g("root_rot") * k)
+            # A foot turning with the body would swing its heel or ball under the floor.
+            sole = min(ank[1] + rot(p, foot_rot)[1] for p in (FOOT_HEEL, FOOT_BALL))
+            if sole < 0.3:
+                knee, ank, foot_rot = reach(fp, 0.3 - sole)
         return knee, ank, foot_rot
 
     kn_n, an_n, fr_n = leg(hip_n, g("foot_n_x"), g("foot_n_y"), g("foot_n_p"))
     kn_f, an_f, fr_f = leg(hip_f, g("foot_f_x"), g("foot_f_y"), g("foot_f_p"))
 
-    wep_a = fa_n + g("wep")
+    wep_a = ground_clamp(fa_n + g("wep"), wr_n[1], b.weapon_front, b.weapon_back, b.weapon_margin)
     return dict(
         hip=hip, waist=waist, neck=neck, head_base=head_base,
         body_rot=body_rot, chest_rot=chest_rot, head_rot=head_rot,
@@ -153,7 +170,7 @@ def solve(pose, b: Body):
         sh_f=sh_f, el_f=el_f, wr_f=wr_f, fa_f=fa_f,
         hip_n=hip_n, kn_n=kn_n, an_n=an_n, fr_n=fr_n,
         hip_f=hip_f, kn_f=kn_f, an_f=an_f, fr_f=fr_f,
-        wep_a=wep_a,
+        wep_a=wep_a, excess=excess,
         wep_dir=(math.sin(math.radians(wep_a)), -math.cos(math.radians(wep_a))),
     )
 

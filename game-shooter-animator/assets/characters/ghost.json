@@ -1,0 +1,15 @@
+{
+  "name": "ghost",
+  "head": "balaclava",
+  "weapons": ["sniper", "pistol"],
+  "cloth": [],
+  "long_sleeves": true,
+  "backpack": true,
+  "body": { "bulk": 1.02, "head_size": 0.92 },
+  "style": { "speed": 1.05, "bounce": 0.95 },
+  "colors": {
+    "skin": "#d9ab86", "hair": "#39402f", "tunic": "#59603f", "tunic2": "#454b31",
+    "pants": "#4b5236", "boots": "#2f2a22", "belt": "#2a2720", "vest": "#6e6a48",
+    "helmet": "#4b5236", "cape": "#7b7a52", "accent": "#a89a64", "glove": "#34302a", "ink": "#15150f"
+  }
+}

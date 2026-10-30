@@ -40,12 +40,35 @@ class Renderer:
         self.defs = chain_defs(self.art.spec)
         self.clips = clips
         self.bakes = bake_all(clips, self.art.body, self.defs)
+        self.fit = self.fit_scale()
+        self.unit = size * UNIT_PX * self.fit
         self.pal = np.array(self.art.palette(), dtype=np.float32) if pixel else None
         self.ss = 4 if size >= 128 else 5
         if pixel:
             self.stroke = 0.62
         else:
             self.stroke = max(1.0, size / 256 * 1.5)
+
+    def fit_scale(self):
+        """Shrink the character just enough that its widest action fits the frame, measured
+        from every pose. Cropped art is a bug at any size, and raising --size can't fix it
+        because the character scales with the frame."""
+        half, up = 0.0, 0.0
+        for clip in self.clips.values():
+            n = max(8, int(clip.duration * 30))
+            for i in range(n + 1):
+                t = clip.duration * i / n
+                pose = full_pose(clip.sample(t))
+                sk = solve(pose, self.art.body)
+                wide = 1.0 / pose["squash"] ** 0.6     # squash widens the body as it flattens
+                for p in self.art.extent_points(sk, pose):
+                    half, up = max(half, abs(p[0]) * wide), max(up, p[1] * pose["squash"])
+        for by_chain in self.bakes.values():
+            for bake in by_chain.values():
+                half = max(half, float(np.abs(bake.pos[..., 0]).max()) + 8.0)
+                up = max(up, float(bake.pos[..., 1].max()) + 8.0)
+        frame_half, frame_up = 0.5 / UNIT_PX, GROUND_FRAC / UNIT_PX
+        return min(1.0, (frame_half - 3) / max(half + 6, 1), (frame_up - 3) / max(up + 6, 1))
 
     def cloth_at(self, clip, t):
         return {d.name: self.bakes[clip.name][d.name].at(t) for d in self.defs}
@@ -66,7 +89,7 @@ class Renderer:
     def _render_once(self, clip, t, dt=0.0):
         pose = full_pose(clip.sample(t))
         sk = solve(pose, self.art.body)
-        cv = Canvas(self.size, self.ss, self.size * UNIT_PX, GROUND_FRAC, self.stroke,
+        cv = Canvas(self.size, self.ss, self.unit, GROUND_FRAC, self.stroke,
                     self.pixel, self.art.ink)
         self.art.draw(cv, sk, pose, self.cloth_at(clip, t), self.smear_history(clip, t, pose, dt))
         return cv.resolve()

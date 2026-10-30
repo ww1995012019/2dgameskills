@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ 动作预览</title>
+<style>
+:root{--bg:#14161d;--panel:#1d2029;--panel2:#262a36;--line:#343a4a;--text:#e9ebf1;--mute:#9aa1b3;--acc:#f0b84a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Microsoft YaHei",sans-serif}
+header{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
+h1{font-size:16px;margin:0}
+.tabs{display:flex;gap:4px}
+.tabs button{background:none;border:1px solid transparent;color:var(--mute);padding:6px 14px;border-radius:6px;cursor:pointer;font:inherit}
+.tabs button.on{background:var(--panel2);border-color:var(--line);color:var(--text)}
+main{padding:16px;max-width:1280px;margin:0 auto}
+.hidden{display:none!important}
+h2{font-size:14px;color:var(--mute);font-weight:500;margin:18px 0 8px}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.cell{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;text-align:center}
+.cell.on{border-color:var(--acc)}
+.cell canvas{width:100%;height:auto;display:block}
+.cell span{color:var(--mute);font-size:12px;word-break:break-all}
+.inspect{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px}
+@media (max-width:800px){.inspect{grid-template-columns:1fr}}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;justify-content:center;align-items:center;min-height:300px}
+.stage canvas{max-width:100%;height:auto}
+.side{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row label{color:var(--mute)}
+.btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:5px 10px;border-radius:6px;cursor:pointer;font:inherit}
+.btn:hover{border-color:var(--acc)}
+select{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px;font:inherit;max-width:100%}
+input[type=range]{flex:1;min-width:100px;accent-color:var(--acc)}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--mute);word-break:break-all}
+#game{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#222838;outline:none;cursor:crosshair}
+.keys{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;color:var(--mute)}
+kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 6px;color:var(--text);font:12px ui-monospace,Consolas,monospace}
+</style>
+</head>
+<body>
+<header>
+  <h1>__TITLE__</h1>
+  <div class="tabs"><button id="tabA" class="on">动作库</button><button id="tabB">试玩</button></div>
+  <span class="mono" id="stat"></span>
+</header>
+<main>
+  <section id="paneA">
+    <div class="inspect">
+      <div class="stage"><canvas id="big"></canvas></div>
+      <div class="side">
+        <div><b id="cname"></b></div>
+        <div class="mono" id="cinfo"></div>
+        <div class="row"><label>下半身</label><select id="pickL"></select></div>
+        <div class="row"><label>上半身</label><select id="pickU"></select></div>
+        <div class="row"><label>速度</label><input id="spd" type="range" min="0.05" max="1.5" step="0.05" value="1"><span id="spdv" class="mono">1.00x</span></div>
+        <div class="row"><button class="btn" id="pp">暂停</button><button class="btn" id="prev">上一帧</button><button class="btn" id="next">下一帧</button></div>
+        <div class="row"><label><input type="checkbox" id="onion"> 洋葱皮</label><label><input type="checkbox" id="flip"> 翻转</label><label><input type="checkbox" id="grid"> 地面线</label></div>
+        <div class="row"><label>背景</label><button class="btn" data-bg="#1d2029">深</button><button class="btn" data-bg="#8fb7d9">天空</button><button class="btn" data-bg="#ffffff">白</button></div>
+        <div class="mono" id="cevents"></div>
+      </div>
+    </div>
+    <div id="groups"></div>
+  </section>
+  <section id="paneB" class="hidden">
+    <canvas id="game" width="960" height="440" tabindex="0"></canvas>
+    <div class="keys">
+      <span><kbd>A</kbd><kbd>D</kbd> 移动</span><span>按住 <kbd>Shift</kbd> 跑</span><span><kbd>空格</kbd> 跳</span><span><kbd>S</kbd> 蹲</span>
+      <span>鼠标瞄准，左键或 <kbd>J</kbd> 开火</span><span><kbd>↑</kbd><kbd>↓</kbd> 键盘瞄准</span><span><kbd>R</kbd> 换弹</span><span><kbd>Q</kbd> 换枪</span>
+      <span><kbd>G</kbd> 手雷</span><span><kbd>F</kbd> 枪托</span><span><kbd>L</kbd> 翻滚</span><span><kbd>C</kbd> 滑铲</span><span><kbd>X</kbd> 死亡 / 复活</span>
+    </div>
+  </section>
+</main>
+<script>
+/*__PLAYER__*/
+const DATA = /*__DATA__*/null;
+const $ = (id) => document.getElementById(id);
+const doc = DATA.doc, fxDoc = DATA.fx;
+const SIZE = doc.frame_size, PIXEL = SIZE < 128;
+const loadAll = (urls) => Promise.all(urls.map((u) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i); i.src = u; })));
+const names = Object.keys(doc.clips);
+const layerOf = (n) => doc.clips[n].layer;
+const weapons = Object.keys(doc.weapons);
+const AIMS = Object.keys(doc.aims).map(Number).sort((a, b) => b - a);
+const CN = { pistol: "手枪", smg: "冲锋枪", rifle: "步枪", shotgun: "霰弹枪", sniper: "狙击枪", rocket: "火箭筒" };
+
+loadAll(DATA.images).then((imgs) => loadAll(DATA.fx_images).then((fxImgs) => start(imgs, fxImgs)));
+
+function start(imgs, fxImgs) {
+  const total = names.reduce((s, n) => s + doc.clips[n].frames.length, 0);
+  $("stat").textContent = `${names.length} 段动作 · ${total} 帧 · ${SIZE}px · ${weapons.map((w) => CN[w]).join("、")}`;
+  const scale = PIXEL ? Math.floor(192 / SIZE) : 1;
+  const lowers = names.filter((n) => layerOf(n) === "lower");
+  const uppers = names.filter((n) => layerOf(n) === "upper");
+  const fulls = names.filter((n) => layerOf(n) === "full");
+  const primary = weapons[0];
+  const defaultUpper = `${primary}_aim_0`;
+
+  // ---- gallery: lower and upper clips always preview as a pair ------------------------
+  const pickL = $("pickL"), pickU = $("pickU");
+  for (const [sel, list] of [[pickL, lowers], [pickU, uppers]]) list.forEach((n) => sel.add(new Option(n, n)));
+  const cells = [];
+  const groups = [["组合（烘焙好的整张）", fulls.filter((n) => doc.clips[n].weapon)], ["全身", fulls.filter((n) => !doc.clips[n].weapon)], ["下半身", lowers],
+    ...weapons.map((w) => [`上半身 · ${CN[w]}`, uppers.filter((n) => n.startsWith(w + "_"))])];
+  for (const [title, list] of groups) {
+    if (!list.length) continue;
+    const h = document.createElement("h2"); h.textContent = title; $("groups").append(h);
+    const box = document.createElement("div"); box.className = "gallery"; $("groups").append(box);
+    for (const n of list) {
+      const el = document.createElement("div"); el.className = "cell";
+      const cv = document.createElement("canvas"); cv.width = cv.height = SIZE * scale;
+      const s = document.createElement("span"); s.textContent = `${n} · ${doc.clips[n].frames.length}f`;
+      el.append(cv, s); el.onclick = () => select(n); box.append(el);
+      const ctx = cv.getContext("2d"); ctx.imageSmoothingEnabled = !PIXEL;
+      const p = new SpritePlayer(doc, imgs); p.play(n);
+      cells.push({ n, el, cv, ctx, p, hold: 0 });
+    }
+  }
+  const big = $("big");
+  big.width = big.height = Math.max(SIZE * scale, 420);
+  const bctx = big.getContext("2d"), bscale = big.width / SIZE;
+  const bp = new SpritePlayer(doc, imgs), mate = new SpritePlayer(doc, imgs);
+  let paused = false, bg = "#1d2029", bigHold = 0, solo = null;
+  function select(n) {
+    const L = layerOf(n);
+    if (L === "lower") pickL.value = n; else if (L === "upper") pickU.value = n;
+    solo = L === "full" ? n : null;
+    syncPair(n);
+  }
+  function syncPair(n) {
+    if (solo) { bp.play(solo, { restart: true }); }
+    else { bp.play(pickL.value, { restart: true }); mate.play(pickU.value, { restart: true }); }
+    cells.forEach((c) => c.el.classList.toggle("on", c.n === n));
+    const c = doc.clips[n];
+    $("cname").textContent = n;
+    const lines = [`${c.frames.length} 帧 · ${c.fps} fps · ${c.duration}s · ${c.loop ? "循环" : "单次"} · ${c.layer}`];
+    if (c.speed_px_s) lines.push(`移动速度 ${c.speed_px_s} px/s`);
+    if (c.events.length) lines.push("事件 " + c.events.map((e) => `${e.frame}:${e.name}`).join(" "));
+    $("cevents").innerHTML = lines.join("<br>");
+  }
+  pickL.onchange = () => { solo = null; syncPair(pickL.value); };
+  pickU.onchange = () => { solo = null; syncPair(pickU.value); };
+  $("pp").onclick = () => { paused = !paused; $("pp").textContent = paused ? "播放" : "暂停"; };
+  const stepBy = (d) => { paused = true; $("pp").textContent = "播放"; const n = bp.clip.frames.length; bp.frame = (bp.frame + d + n) % n; bp.done = false; };
+  $("prev").onclick = () => stepBy(-1); $("next").onclick = () => stepBy(1);
+  $("spd").oninput = (e) => { $("spdv").textContent = (+e.target.value).toFixed(2) + "x"; };
+  document.querySelectorAll("[data-bg]").forEach((b) => b.onclick = () => bg = b.dataset.bg);
+
+  function drawBig() {
+    const w = big.width, x = w / 2, y = doc.pivot[1] * bscale, flip = $("flip").checked;
+    bctx.imageSmoothingEnabled = !PIXEL;
+    bctx.fillStyle = bg; bctx.fillRect(0, 0, w, w);
+    if ($("grid").checked) { bctx.strokeStyle = "#f0b84a"; bctx.beginPath(); bctx.moveTo(0, y + .5); bctx.lineTo(w, y + .5); bctx.stroke(); }
+    if (solo) {
+      if ($("onion").checked) for (const [d, a] of [[-2, .12], [-1, .25], [1, .25], [2, .12]]) { const f = bp.frame + d, n = bp.clip.frames.length; if (f >= 0 && f < n) bp.draw(bctx, x, y, { flip, scale: bscale, frame: f, alpha: a }); }
+      bp.draw(bctx, x, y, { flip, scale: bscale });
+    } else drawLayered(bctx, bp, mate, x, y, { flip, scale: bscale });
+  }
+
+  // ---- playable demo ------------------------------------------------------------------
+  const game = $("game"), g = game.getContext("2d");
+  const Z = PIXEL ? Math.max(2, Math.round(170 / SIZE)) : 1.1;
+  const groundY = 372, GRAV = 2300, JUMP = 880;
+  const low = new SpritePlayer(doc, imgs), up = new SpritePlayer(doc, imgs), whole = new SpritePlayer(doc, imgs);
+  const P = { x: 200, y: groundY, vx: 0, vy: 0, face: 1, air: false, st: "idle", upper: "aim", aim: 0, aimGoal: 0, wi: 0, full: null, dead: false, ammo: {}, shots: 0 };
+  weapons.forEach((w) => P.ammo[w] = { rifle: 30, smg: 40, pistol: 12, shotgun: 6, sniper: 5, rocket: 1 }[w]);
+  const MAG = { ...P.ammo };
+  const keys = {}, press = {}, pressAge = {}, take = (k) => { if (!press[k]) return false; press[k] = false; return true; };
+  const speed = (n) => Math.abs(doc.clips[n] ? doc.clips[n].speed_px_s : 0) * Z;
+  const has = (n) => !!doc.clips[n];
+  const fxList = [], bullets = [], targets = [], grenades = [];
+  for (let i = 0; i < 6; i++) targets.push({ x: 560 + i * 300, hp: 4, t: 0 });
+  let shake = 0, mouse = null, firing = false;
+  const spawn = (name, x, y, opts = {}) => { if (!fxDoc || !fxDoc.clips[name]) return; const p = new SpritePlayer(fxDoc, fxImgs); p.play(name); fxList.push({ p, x, y, ...opts }); };
+  const weapon = () => weapons[P.wi];
+  const nearestAim = (a) => AIMS.reduce((b, v) => Math.abs(v - a) < Math.abs(b - a) ? v : b, AIMS[0]);
+  const upName = (kind) => `${weapon()}_${kind}`;
+  function setLow(n, restart) { if (!has(n)) n = "idle"; P.st = n; low.play(n, { restart: !!restart }); }
+  function setUp(mode) { P.upper = mode; }
+  function fullClip(n) { if (!has(n)) return; P.full = n; whole.play(n, { restart: true }); }
+  function explode(x, y) {
+    spawn("explosion", x, y + 40 * Z); shake = 14;
+    for (const t of targets) if (t.hp > 0 && Math.abs(t.x - x) < 170) t.hp = 0, t.t = 3;
+  }
+  function fireShot() {
+    const w = weapon(), c = doc.clips[up.name], m = c.muzzle[up.frame], a = low.clip.anchors ? low.clip.anchors[low.frame] : [0, 0];
+    const mx = P.x + (m[0] + a[0]) * Z * P.face, my = P.y + (m[1] + a[1]) * Z;
+    const rad = P.aim * Math.PI / 180;
+    const pellets = w === "shotgun" ? 7 : 1;
+    for (let i = 0; i < pellets; i++) {
+      const sp = pellets > 1 ? (Math.random() - .5) * .26 : (Math.random() - .5) * .02;
+      const v = w === "rocket" ? 720 : 1700;
+      bullets.push({ x: mx, y: my, vx: Math.cos(rad + sp) * v * P.face, vy: -Math.sin(rad + sp) * v, rocket: w === "rocket", life: .9 });
+    }
+    shake = Math.max(shake, { rifle: 1.5, smg: 1, pistol: 1, shotgun: 6, sniper: 6, rocket: 9 }[w]);
+    P.ammo[w]--; P.shots++;
+  }
+  function step(dt) {
+    const left = keys.KeyA || keys.ArrowLeft, right = keys.KeyD || keys.ArrowRight, down = keys.KeyS, run = keys.ShiftLeft || keys.ShiftRight;
+    const mv = (right ? 1 : 0) - (left ? 1 : 0);
+    if (take("KeyX")) { if (P.dead) { P.dead = false; P.full = null; setLow("idle", true); } else { P.dead = true; P.vx = 0; fullClip(Math.random() < .5 ? "death" : "death_blast"); } }
+    if (P.dead) { whole.update(dt * 1000); P.x += P.vx * dt; afterStep(dt); return; }
+    // aim: mouse, or keyboard up/down. The angle eases, stepping through the aim sprites.
+    if (mouse) {
+      const dx = mouse.x - P.x, dy = (P.y - 62 * Z) - mouse.y;
+      if (Math.abs(dx) > 8) P.face = Math.sign(dx);
+      P.aimGoal = Math.atan2(dy, Math.abs(dx)) * 180 / Math.PI;
+    }
+    if (keys.ArrowUp) { P.aimGoal = 67; mouse = null; } else if (keys.ArrowDown) { P.aimGoal = P.air ? -67 : -22; mouse = null; } else if (!mouse) { P.aimGoal = 0; if (mv) P.face = mv; }
+    const maxTurn = 720 * dt, da = P.aimGoal - P.aim;
+    P.aim += Math.max(-maxTurn, Math.min(maxTurn, da));
+
+    const locked = !!P.full;
+    if (P.full) {
+      whole.update(dt * 1000);
+      if (P.full === "roll" || P.full === "slide") { const f = whole.frame / whole.clip.frames.length; P.vx = f < .75 ? P.face * speed(P.full) : P.vx * .8; }
+      if (whole.done) { P.full = null; setLow("idle", true); }
+    }
+    if (!locked) {
+      const busy = P.upper !== "aim" && P.upper !== "fire";
+      if (!P.air) {
+        if (take("KeyL")) { fullClip("roll"); }
+        else if (take("KeyC") && mv) { P.face = mv; fullClip("slide"); }
+        else if (take("Space")) setLow("jump_start", true);
+      }
+      if (P.st !== "jump_start" && !P.air && !P.full) {
+        if (down) { if (mv) { setLow("crouch_walk"); P.vx = mv * speed("crouch_walk"); } else { setLow("crouch_idle"); P.vx = 0; } }
+        else if (mv) {
+          const back = mv !== P.face;
+          const n = back ? "backpedal" : run ? "run" : "walk";
+          setLow(n); P.vx = mv * speed(n);
+        } else if (P.st !== "land") { setLow("idle"); P.vx = 0; }
+        else P.vx *= Math.pow(.002, dt);
+      }
+      if (P.air && mv) P.vx = mv * Math.max(speed("run") * .8, 170);
+      if (!busy) {
+        if (take("KeyR") && P.ammo[weapon()] < MAG[weapon()]) setUp("reload");
+        else if (take("KeyQ") && weapons.length > 1) { P.wi = (P.wi + 1) % weapons.length; setUp("draw"); }
+        else if (take("KeyG")) setUp("throw");
+        else if (take("KeyF")) setUp("melee");
+      }
+      firing = (keys.Mouse0 || keys.KeyJ) && !["reload", "draw", "throw", "melee"].includes(P.upper) && P.ammo[weapon()] > 0;
+      if (P.ammo[weapon()] <= 0 && (keys.Mouse0 || keys.KeyJ) && P.upper === "aim") setUp("reload");
+      if (P.upper === "aim" || P.upper === "fire") setUp(firing ? "fire" : "aim");
+    }
+    const tag = doc.aims[nearestAim(P.aim)];
+    let name;
+    if (P.upper === "fire") name = upName(`fire_${tag}`);
+    else if (P.upper === "aim") name = upName(`aim_${tag}`);
+    else name = upName(P.upper);
+    if (up.name !== name || up.done) {
+      const swap = up.name && up.name.includes("_fire_") && name.includes("_fire_");
+      const keep = up.frame, kept = up.acc;
+      up.play(name, { restart: true });
+      if (swap) { up.frame = keep % up.clip.frames.length; up.acc = kept; up._pending = []; }
+    }
+    for (const e of up.update(dt * 1000)) {
+      if (e === "shot") fireShot();
+      if (e === "reload_done") P.ammo[weapon()] = MAG[weapon()];
+      if (e === "grenade") grenades.push({ x: P.x + P.face * 20, y: P.y - 80 * Z, vx: P.face * 520, vy: -520, t: 0, p: (() => { const q = new SpritePlayer(fxDoc, fxImgs); q.play("grenade"); return q; })() });
+      if (e === "hit_on") { spawn("hit_spark", P.x + P.face * 70 * Z, P.y - 10); for (const t of targets) if (t.hp > 0 && Math.abs(t.x - P.x) < 110) t.hp--; }
+    }
+    if (up.done) setUp("aim");
+    for (const e of low.update(dt * 1000)) {
+      if (e === "footstep" && P.st === "run") spawn("dust_step", P.x, groundY, { flip: P.face < 0 });
+      if (e === "land_dust") spawn("dust_land", P.x, groundY);
+      if (e === "takeoff") { P.vy = -JUMP; P.air = true; }
+    }
+    if (low.done) { if (P.st === "jump_start") setLow("jump_rise", true); else if (P.st === "jump_apex") setLow("fall", true); else if (P.st === "land") setLow("idle", true); }
+    if (P.st === "jump_rise" && P.vy > -150) setLow("jump_apex", true);
+    afterStep(dt);
+  }
+  function afterStep(dt) {
+    if (P.air) P.vy += GRAV * dt;
+    P.x += P.vx * dt; P.y += P.vy * dt;
+    if (P.air && P.y >= groundY) { P.y = groundY; P.vy = 0; P.air = false; if (!P.dead && !P.full) setLow("land", true); P.vx *= .3; }
+    P.x = Math.max(40, P.x);
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+      if (b.rocket) spawn("dust_step", b.x, b.y + 30, { small: 1 }), fxList.length > 80 && fxList.shift();
+      let hit = null;
+      for (const t of targets) if (t.hp > 0 && Math.abs(b.x - t.x) < 26 && b.y > groundY - 120 && b.y < groundY) hit = t;
+      if (hit) { hit.hp--; if (hit.hp <= 0) hit.t = 3; spawn("hit_spark", b.x, b.y + 50 * Z * .3); if (b.rocket) explode(b.x, b.y); bullets.splice(i, 1); continue; }
+      if (b.y >= groundY) { if (b.rocket) explode(b.x, groundY - 40); else spawn("bullet_impact", b.x, groundY - 8); bullets.splice(i, 1); continue; }
+      if (b.life <= 0) { bullets.splice(i, 1); }
+    }
+    for (let i = grenades.length - 1; i >= 0; i--) {
+      const q = grenades[i]; q.t += dt; q.vy += 1500 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.p.update(dt * 1000);
+      if (q.y > groundY - 6) { q.y = groundY - 6; q.vy *= -.4; q.vx *= .6; }
+      if (q.t > 1.2) { explode(q.x, q.y - 40); grenades.splice(i, 1); }
+    }
+    for (const t of targets) if (t.hp <= 0) { t.t -= dt; if (t.t <= 0) { t.hp = 4; } }
+    for (const f of fxList) f.p.update(dt * 1000);
+    for (let i = fxList.length - 1; i >= 0; i--) if (fxList[i].p.done) fxList.splice(i, 1);
+    shake = Math.max(0, shake - dt * 44);
+    for (const k in press) { pressAge[k] = (pressAge[k] || 0) + dt; if (pressAge[k] > .13) press[k] = false; }
+  }
+  function drawGame() {
+    const W = game.width, H = game.height, cam = Math.max(0, P.x - W * .4);
+    g.imageSmoothingEnabled = !PIXEL;
+    const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, "#2e3550"); sky.addColorStop(.75, "#8c7f72"); sky.addColorStop(1, "#c2a27e");
+    g.fillStyle = sky; g.fillRect(0, 0, W, H);
+    g.save();
+    if (shake > 0) g.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+    for (const [k, col, h, a] of [[.2, "#4a4e62", 130, .007], [.45, "#3a3d4e", 80, .013]]) {
+      g.fillStyle = col; g.beginPath(); g.moveTo(0, H);
+      for (let x = 0; x <= W; x += 8) { const wx = x + cam * k; g.lineTo(x, groundY - h * (.55 + .45 * Math.sin(wx * a) * Math.sin(wx * a * 2.3 + 1))); }
+      g.lineTo(W, H); g.fill();
+    }
+    g.fillStyle = "#3b3a3f"; g.fillRect(0, groundY, W, H - groundY);
+    g.fillStyle = "#57555a"; g.fillRect(0, groundY, W, 4);
+    for (const t of targets) {
+      const x = t.x - cam;
+      g.fillStyle = "#3a2d24"; g.fillRect(x - 4, groundY - 40, 8, 40);
+      if (t.hp > 0) { g.fillStyle = "#c9c2b4"; g.fillRect(x - 24, groundY - 120, 48, 84); g.fillStyle = "#b5392f"; g.beginPath(); g.arc(x, groundY - 84, 18, 0, 7); g.fill(); g.fillStyle = "#c9c2b4"; g.beginPath(); g.arc(x, groundY - 84, 10, 0, 7); g.fill(); g.fillStyle = "#b5392f"; g.beginPath(); g.arc(x, groundY - 84, 4, 0, 7); g.fill(); }
+    }
+    g.fillStyle = "rgba(0,0,0,.28)";
+    const hgt = Math.max(0, groundY - P.y), sw = 44 * Z * (1 - Math.min(.6, hgt / 400));
+    g.beginPath(); g.ellipse(P.x - cam, groundY + 3, sw, 6, 0, 0, 7); g.fill();
+    const opts = { flip: P.face < 0, scale: Z };
+    if (P.full) whole.draw(g, P.x - cam, P.y, opts); else drawLayered(g, low, up, P.x - cam, P.y, opts);
+    for (const f of fxList) f.p.draw(g, f.x - cam, f.y, { flip: f.flip, scale: Z * (f.small ? .5 : 1) });
+    for (const b of bullets) {
+      if (b.rocket) { g.fillStyle = "#222"; g.beginPath(); g.arc(b.x - cam, b.y, 6, 0, 7); g.fill(); continue; }
+      g.strokeStyle = "#ffe278"; g.lineWidth = 2; g.beginPath(); g.moveTo(b.x - cam, b.y); g.lineTo(b.x - cam - b.vx * .018, b.y - b.vy * .018); g.stroke();
+    }
+    for (const q of grenades) q.p.draw(g, q.x - cam, q.y + 40 * Z * .6, { scale: Z });
+    g.restore();
+    g.fillStyle = "#fff"; g.font = "14px system-ui,'Microsoft YaHei'";
+    g.fillText(`${CN[weapon()] || weapon()}  弹药 ${P.ammo[weapon()]}/${MAG[weapon()]}  瞄准 ${Math.round(P.aim)}°`, 12, 24);
+    g.font = "12px ui-monospace,Consolas,monospace"; g.fillStyle = "#cfd3dd";
+    g.fillText(P.full ? P.full : `${low.name} + ${up.name || ""}`, 12, 42);
+  }
+  low.play("idle"); up.play(defaultUpper);
+  window.__demo = { P, low, up, whole, bullets, fxList, targets };
+  const swallow = new Set(["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
+  addEventListener("keydown", (e) => {
+    if ($("paneB").classList.contains("hidden")) return;
+    if (swallow.has(e.code)) e.preventDefault();
+    if (!e.repeat) { press[e.code] = true; pressAge[e.code] = 0; }
+    keys[e.code] = true;
+  });
+  addEventListener("keyup", (e) => { keys[e.code] = false; });
+  const toWorld = (e) => { const r = game.getBoundingClientRect(), cam = Math.max(0, P.x - game.width * .4); return { x: (e.clientX - r.left) / r.width * game.width + cam, y: (e.clientY - r.top) / r.height * game.height }; };
+  game.onmousemove = (e) => { mouse = toWorld(e); };
+  game.onmousedown = (e) => { keys.Mouse0 = true; mouse = toWorld(e); game.focus(); };
+  addEventListener("mouseup", () => { keys.Mouse0 = false; });
+
+  let mode = "a";
+  $("tabA").onclick = () => { mode = "a"; $("tabA").classList.add("on"); $("tabB").classList.remove("on"); $("paneA").classList.remove("hidden"); $("paneB").classList.add("hidden"); };
+  $("tabB").onclick = () => { mode = "b"; $("tabB").classList.add("on"); $("tabA").classList.remove("on"); $("paneB").classList.remove("hidden"); $("paneA").classList.add("hidden"); game.focus(); };
+
+  select(has("run_fire_0") ? "run_fire_0" : names[0]);
+  let last = performance.now(), simAcc = 0;
+  const SIM = 1 / 120;
+  function frame(now) {
+    const dt = Math.min(.1, (now - last) / 1000); last = now;
+    if (mode === "a") {
+      for (const c of cells) {
+        if (c.p.done) { c.hold += dt; if (c.hold > .7) { c.p.play(c.n, { restart: true }); c.hold = 0; } }
+        c.p.update(dt * 1000);
+        c.ctx.clearRect(0, 0, c.cv.width, c.cv.height);
+        c.p.draw(c.ctx, c.cv.width / 2, doc.pivot[1] * scale, { scale });
+      }
+      if (!paused) {
+        const sp = +$("spd").value;
+        if (bp.done) { bigHold += dt; if (bigHold > .7) { bp.play(bp.name, { restart: true }); if (!solo) mate.play(mate.name, { restart: true }); bigHold = 0; } }
+        bp.update(dt * 1000, sp); if (!solo) { if (mate.done) mate.play(mate.name, { restart: true }); mate.update(dt * 1000, sp); }
+      }
+      drawBig();
+    } else {
+      simAcc += dt;
+      while (simAcc >= SIM) { step(SIM); simAcc -= SIM; }
+      drawGame();
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>

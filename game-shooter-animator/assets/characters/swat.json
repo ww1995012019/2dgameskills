@@ -1,0 +1,15 @@
+{
+  "name": "swat",
+  "head": "helmet",
+  "goggles": true,
+  "weapons": ["smg", "pistol"],
+  "long_sleeves": true,
+  "armor": true,
+  "body": { "bulk": 1.12, "head_size": 0.94 },
+  "style": { "speed": 0.95, "bounce": 0.85 },
+  "colors": {
+    "skin": "#e4b791", "hair": "#20222a", "tunic": "#2f3440", "tunic2": "#232731",
+    "pants": "#2b303b", "boots": "#1f2127", "belt": "#191b20", "vest": "#3b4150",
+    "helmet": "#2c313c", "metal": "#8d97a6", "accent": "#d7dbe2", "glove": "#1f2127", "ink": "#0f1014"
+  }
+}

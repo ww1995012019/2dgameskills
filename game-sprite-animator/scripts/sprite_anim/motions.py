@@ -13,8 +13,9 @@ across those same seams.
 """
 import math
 
+from .constraints import low_points
 from .mathx import Curve, hermite, lerp, rot
-from .rig import LAG, REST
+from .rig import LAG, REST, Body, full_pose, solve
 
 CH = list(REST)
 HIP_H = 40.5
@@ -166,9 +167,9 @@ def build_clips(style=None, custom=None):
     APEX = dict(root_y=3, pelvis=6, spine=9, head=2, arm_n_up=52, arm_n_lo=52, arm_f_up=128,
                 arm_f_lo=34, foot_n_x=11, foot_n_y=21, foot_n_p=-4, foot_f_x=-2, foot_f_y=14,
                 foot_f_p=-22, squash=sq(0.985), wep=64)
-    FALL = dict(root_y=3, pelvis=-3, spine=-3, head=8, arm_n_up=118, arm_n_lo=30, arm_f_up=148,
+    FALL = dict(root_y=3, pelvis=-3, spine=-3, head=8, arm_n_up=100, arm_n_lo=12, arm_f_up=148,
                 arm_f_lo=22, foot_n_x=8, foot_n_y=6, foot_n_p=-20, foot_f_x=-8, foot_f_y=13,
-                foot_f_p=-40, squash=sq(1.03), wep=60, mouth=0.2)
+                foot_f_p=-40, squash=sq(1.03), wep=46, mouth=0.2)
     TOUCH = dict(FALL, root_y=-1, foot_n_y=0, foot_f_y=0, foot_n_x=7, foot_f_x=-7, foot_n_p=-6,
                  foot_f_p=-6, arm_n_up=96, arm_f_up=126, head=4, squash=1.0)
     IMPACT = dict(root_y=-16, root_x=0.5, pelvis=22, spine=22, head=-28, arm_n_up=-24, arm_n_lo=58,
@@ -192,13 +193,13 @@ def build_clips(style=None, custom=None):
                   foot_f_p=-30, brow=1, mouth=0.7, squash=sq(1.05))
     A2_FOLLOW = dict(A2_HIT, root_y=-3, root_x=17, spine=-13, head=4, arm_n_up=152, arm_n_lo=24,
                      wep=48, mouth=0.2)
-    A3_LEAP = dict(root_y=11, root_x=18, pelvis=-8, spine=-14, head=-2, arm_n_up=150, arm_n_lo=46,
-                   wep=44, arm_f_up=120, arm_f_lo=50, foot_n_x=30, foot_n_y=18, foot_n_p=-8,
-                   foot_f_x=10, foot_f_y=24, foot_f_p=-32, squash=sq(1.05), brow=1, mouth=0.4)
-    A3_HIT = dict(root_y=-12, root_x=26, pelvis=24, spine=26, head=-30, arm_n_up=86, arm_n_lo=10,
-                  wep=-6, arm_f_up=-50, arm_f_lo=34, foot_n_x=38, foot_f_x=10, foot_f_p=-16,
+    A3_LEAP = dict(root_y=11, root_x=8, pelvis=-8, spine=-14, head=-2, arm_n_up=150, arm_n_lo=46,
+                   wep=44, arm_f_up=120, arm_f_lo=50, foot_n_x=20, foot_n_y=18, foot_n_p=-8,
+                   foot_f_x=0, foot_f_y=24, foot_f_p=-32, squash=sq(1.05), brow=1, mouth=0.4)
+    A3_HIT = dict(root_y=-12, root_x=9, pelvis=24, spine=26, head=-30, arm_n_up=86, arm_n_lo=10,
+                  wep=-6, arm_f_up=-50, arm_f_lo=34, foot_n_x=23, foot_f_x=-5, foot_f_p=-16,
                   brow=1, mouth=1, squash=sq(0.88))
-    A3_FOLLOW = dict(A3_HIT, root_y=-14, root_x=26, pelvis=26, spine=30, head=-32, arm_n_up=62,
+    A3_FOLLOW = dict(A3_HIT, root_y=-14, root_x=9, pelvis=26, spine=30, head=-32, arm_n_up=62,
                      arm_n_lo=8, wep=28, mouth=0.4, squash=sq(0.93))
 
     # ---- idle --------------------------------------------------------------------------
@@ -293,7 +294,17 @@ def build_clips(style=None, custom=None):
         vel=[(0, 20, -320), (0.06 * tm, 0, 0), (0.44 * tm, 0, 0)], prev="fall", next="idle",
         tags=("ground",), events=[(0.0, "land_dust")])
 
-    def spin_about(center, height):
+    body = Body()
+
+    def stay_above_floor(t, p):
+        """A collapsing body can't sink: lift the whole thing when any part would go under."""
+        for _ in range(2):
+            low = min(low_points(solve(full_pose(p), body), body).values())
+            if low >= 0.5:
+                break
+            p["root_y"] += 0.5 - low
+
+    def spin_about(center, height, floor=False):
         """Tucked spins pivot on the ball's centre: pivoting on the hip would swing the head
         through the floor. ik_body doubles as the blend weight."""
         def fn(t, p):
@@ -301,6 +312,11 @@ def build_clips(style=None, custom=None):
             w = p["ik_body"]
             p["root_x"] = lerp(p["root_x"], -off[0], w)
             p["root_y"] = lerp(p["root_y"], height - off[1] - HIP_H, w)
+            if floor:
+                # Contact constraint: a tucked body changes shape as it turns, so no fixed height
+                # works. The lowest part rests on the ground on every frame.
+                low = min(low_points(solve(full_pose(p), body), body).values())
+                p["root_y"] += (0.5 - low) * min(1.0, w * 3.0)
         return fn
 
     def tuck(rot_deg, **kw):
@@ -311,9 +327,9 @@ def build_clips(style=None, custom=None):
     double_jump = Keyed("double_jump", keys(
         (0, P(FALL)), (0.06, tuck(50, ik_body=0.7)), (0.12, tuck(135)), (0.18, tuck(215)),
         (0.24, tuck(290)), (0.31, tuck(340, ik_body=0.8)), (0.4, P(FALL, root_rot=360))),
-        add=spin_about((7, 14), 62),
+        add=spin_about((8, 20), 62),
         vel=[(0, 40, 300), (0.2 * tm, 40, 120), (0.4 * tm, 40, -200)],
-        prev="fall", next="fall", events=[(0.0, "air_puff")])
+        prev="fall", next="fall", tags=("tumble",), events=[(0.0, "air_puff")])
 
     # ---- crouch -------------------------------------------------------------------------
     crouch_enter = Keyed("crouch_enter", keys(
@@ -348,9 +364,9 @@ def build_clips(style=None, custom=None):
         (0.32, ball(270)), (0.4, ball(330, ik_body=0.7, root_y=-12)),
         (0.5, P(CROUCH_HOLD, root_y=-12, root_rot=360, spine=18, head=-22)),
         (0.62, P(idle0, root_rot=360))),
-        add=spin_about((7, 14), 27),
+        add=spin_about((8, 20), 39, floor=True),
         vel=[(0, 200, 0), (0.42 * tm, 200, 0), (0.62 * tm, 0, 0)], prev="run", next="idle",
-        tags=("ground",), speed=200, events=[(0.08 * tm, "invincible_on"), (0.42 * tm, "invincible_off")])
+        tags=("ground", "tumble"), speed=200, events=[(0.08 * tm, "invincible_on"), (0.42 * tm, "invincible_off")])
 
     DASH = dict(root_y=-11, root_x=6, pelvis=26, spine=24, head=-40, arm_n_up=-66, arm_n_lo=14,
                 wep=8, arm_f_up=-40, arm_f_lo=26, foot_n_x=19, foot_n_y=3, foot_n_p=6, foot_f_x=-26,
@@ -436,9 +452,9 @@ def build_clips(style=None, custom=None):
         (0.42, idle0)),
         prev="idle", next="idle", tags=("ground",), events=[(0.0, "hit_flash")])
 
-    DOWN = dict(root_y=-31, root_x=-8, root_rot=-90, pelvis=0, spine=0, head=8, ik_body=1, arm_n_up=16,
-                arm_n_lo=12, wep=-28, arm_f_up=32, arm_f_lo=14, foot_n_x=7, foot_n_y=0, foot_n_p=8,
-                foot_f_x=-6, foot_f_y=4, foot_f_p=10, eye=0, mouth=0.25)
+    DOWN = dict(root_y=-27.5, root_x=-8, root_rot=-90, pelvis=0, spine=0, head=8, ik_body=1, arm_n_up=16,
+                arm_n_lo=12, wep=-28, arm_f_up=32, arm_f_lo=14, foot_n_x=10, foot_n_p=8,
+                foot_f_x=3, foot_f_y=4, foot_f_p=10, eye=0, mouth=0.25)
     death = Keyed("death", keys(
         (0, idle0),
         (0.08, P(STANCE, root_x=-7, root_y=-5, pelvis=-9, spine=-22, head=20, arm_n_up=38, arm_f_up=66,
@@ -449,10 +465,10 @@ def build_clips(style=None, custom=None):
                  arm_f_up=8, arm_f_lo=12, wep=78, eye=0.1, mouth=0.4, foot_n_x=10, foot_f_x=-8)),
         (0.7, P(DOWN, root_rot=-46, root_y=-24, root_x=-7, ik_body=0.55, arm_n_up=62, arm_f_up=74, head=-8)),
         (0.84, P(DOWN, squash=sq(0.97))),
-        (0.92, P(DOWN, root_y=-29.5, head=2, arm_n_up=26, arm_f_up=40)),
+        (0.92, P(DOWN, root_y=-26, head=2, arm_n_up=26, arm_f_up=40)),
         (1.02, P(DOWN, squash=sq(0.985))),
         (1.3, P(DOWN))),
-        prev="idle", tags=("ground",), events=[(0.84 * tm, "body_thud")])
+        add=stay_above_floor, prev="idle", tags=("ground",), events=[(0.84 * tm, "body_thud")])
 
     clips = [idle, idle_look, walk, run, skid, jump_start, jump_rise, jump_apex, fall, land,
              double_jump, crouch_enter, crouch_idle, crouch_exit, crouch_walk, roll, dash,

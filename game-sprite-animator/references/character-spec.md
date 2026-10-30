@@ -63,6 +63,8 @@ idle pose, and the first and last keys should stay close to idle so the clip joi
 ```
 
 Optional keys: `prev` and `next` (cloth hand-over, default `idle`), `period` (loop length), `tags`.
+Add `ground` to `tags` for a clip on the floor, so clipping checks run on it. The rig's joint limits
+apply automatically, so an extreme key may render less extreme than written: QA's `limits` reports it.
 
 ### Pose channels
 

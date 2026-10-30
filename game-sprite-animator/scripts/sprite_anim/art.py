@@ -144,6 +144,8 @@ class Canvas:
         def shifted(a, dx, dy):
             r = np.zeros_like(a)
             dx, dy = int(round(dx)), int(round(dy))
+            if abs(dx) >= a.shape[1] or abs(dy) >= a.shape[0]:
+                return r        # sliver clipped at the frame edge: shifted fully out of its box
             ys0, ys1 = max(0, dy), a.shape[0] + min(0, dy)
             xs0, xs1 = max(0, dx), a.shape[1] + min(0, dx)
             r[ys0:ys1, xs0:xs1] = a[ys0 - dy:ys1 - dy, xs0 - dx:xs1 - dx]
@@ -341,6 +343,8 @@ class CharacterArt:
         self.c = {k: ramp(v) for k, v in col.items()}
         self.ink = hex_rgb(col["ink"])
         self.bulk = self.body.bulk
+        self.body.weapon_front = {"sword": 47, "axe": 40, "staff": 54, "spear": 62}.get(self.spec["weapon"], 0)
+        self.body.weapon_back = {"sword": 7, "axe": 10, "staff": 22, "spear": 20}.get(self.spec["weapon"], 0)
         self.cutout = Cutout(self.spec) if self.spec.get("parts") else None
 
     def palette(self):
@@ -582,6 +586,24 @@ class CharacterArt:
         kind = self.spec["weapon"]
         length = {"sword": 47, "axe": 40, "staff": 54, "spear": 62}.get(kind, 0)
         return sk["wr_n"], add(sk["wr_n"], scale(sk["wep_dir"], length))
+
+    primary = None
+
+    def extent_points(self, sk, pose):
+        """Every point that must stay inside the frame on this pose."""
+        pts = [sk[j] for j in ("wr_n", "wr_f", "an_n", "an_f", "kn_n", "kn_f", "hip", "neck", "head_base")]
+        pts.append(add(sk["head_base"], rot((0, 36 * self.body.head_size), sk["head_rot"])))
+        span = self.weapon_span(sk)
+        if span:
+            pts += [span[0], span[1]]
+        return pts
+
+    def weapon_span(self, sk):
+        """Blade as (start, end, radius) for clipping checks."""
+        if self.spec["weapon"] == "none":
+            return None
+        h, t = self.blade_points(sk)
+        return h, t, 2.5
 
     def weapon(self, cv, sk, pose):
         kind = self.spec["weapon"]

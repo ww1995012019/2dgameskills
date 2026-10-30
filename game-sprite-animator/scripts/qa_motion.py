@@ -11,6 +11,9 @@ Checks
   jitter    feet that should be planted wobbling in the frame (pivot/trim drift)
   slide     stance foot speed vs the ground speed the engine will use
   transition  pose jump where one clip hands over to the next
+  limits    joints past their range, bones changing length, knees flipping direction
+  clip      weapon through the head, weapon or body through the ground
+  bounds    art cut off by the frame edge
 Exit code 1 when anything FAILs.
 """
 import argparse
@@ -21,6 +24,10 @@ import sys
 
 import numpy as np
 from PIL import Image
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from sprite_anim.constraints import summarize  # noqa: E402
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 RANK = {PASS: 0, WARN: 1, FAIL: 2}
@@ -47,6 +54,9 @@ def analyse(frames, loop, attack=False):
     d = [diff(frames[i], frames[i + 1]) for i in range(n - 1)]
     typical = float(np.median(d)) if d else 0.0
     res = {"frames": n, "typical_step": round(typical, 5)}
+    cut = [i for i, f in enumerate(frames) if (f[0, :, 3].max() > 0 or f[-1, :, 3].max() > 0 or f[:, 0, 3].max() > 0 or f[:, -1, 3].max() > 0)]
+    res["bounds"] = PASS if not cut else FAIL
+    res["cut_frames"] = cut
 
     holds = sum(1 for x in d if x < 1e-5)
     run, longest = 0, 0
@@ -104,9 +114,9 @@ def analyse_rig(clip, tr, speed, tags):
     if "hold_feet" in tags:
         wob = 0.0
         for s in "nf":
-            for key in ("heel", "ball"):
-                f = np.array(tr["feet"][s][key])
-                wob = max(wob, float(np.ptp(f[:, 0])), float(np.ptp(f[:, 1])))
+            # A foot is planted if either end stays put: lifting the heel is not sliding.
+            ends = [np.array(tr["feet"][s][key]) for key in ("heel", "ball")]
+            wob = max(wob, min(max(float(np.ptp(f[:, 0])), float(np.ptp(f[:, 1]))) for f in ends))
         res["foot_wobble_px"] = round(wob, 3)
         res["jitter"] = PASS if wob <= 0.25 else WARN if wob <= 0.75 else FAIL
     return res
@@ -129,6 +139,11 @@ def run_set(root):
         r = analyse(seqs[name], c["loop"], "attack" in c["tags"])
         if trace:
             r.update(analyse_rig(name, trace["traces"][name], trace["speeds"][name], c["tags"]))
+            geo, flags = summarize(trace["traces"][name]["metrics"], c["tags"], trace["traces"][name]["frame_dt"])
+            r.update(geo)
+            for i in r["cut_frames"]:
+                flags.setdefault(i, []).append("cut off by the frame edge")
+            r["flags"] = {str(k): v for k, v in sorted(flags.items())}
         report[name] = r
     trans = []
     if trace:
@@ -139,13 +154,13 @@ def run_set(root):
             st = PASS if ratio <= 2.5 else WARN if ratio <= 4.0 else FAIL
             trans.append(dict(a=a, b=b, ratio=round(ratio, 2), status=st))
     out = dict(clips=report, transitions=trans)
-    cols = ["hold", "seam", "spike", "slide", "jitter"]
+    cols = ["hold", "seam", "spike", "slide", "jitter", "limits", "clip", "bounds"]
     print(f"{'clip':<14}{'frm':>4}  " + "".join(f"{c:<7}" for c in cols) + "detail")
     failed = 0
     for name, r in report.items():
         st = [r.get(c, PASS) for c in cols]
         failed += sum(1 for s in st if s == FAIL)
-        detail = " ".join(f"{k}={r[k]}" for k in ("seam_ratio", "spike_ratio", "slide_px", "hover_px", "foot_wobble_px") if k in r)
+        detail = " ".join(f"{k}={r[k]}" for k in ("seam_ratio", "spike_ratio", "slide_px", "hover_px", "foot_wobble_px", "excess_deg", "weapon_head", "weapon_ground", "body_ground") if k in r)
         print(f"{name:<14}{r['frames']:>4}  " + "".join(f"{s:<7}" for s in st) + detail)
     if trans:
         print("\ntransitions")

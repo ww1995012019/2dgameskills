@@ -20,12 +20,13 @@ DT = 1.0 / SIM_HZ
 
 class ChainDef:
     def __init__(self, name, attach, n, seg, gravity=520.0, drag=5.0, stiff=0.0, rest=(-0.3, -1.0),
-                 flutter=0.0, ground=True, follow=0.0, rest_frame="chest_rot"):
+                 flutter=0.0, ground=True, follow=0.0, rest_frame="chest_rot", max_bend=62.0):
         self.name, self.attach, self.n, self.seg = name, attach, n, seg
         self.gravity, self.drag, self.stiff = gravity, drag, stiff
         self.rest = np.array(rest, dtype=float) / (math.hypot(*rest) or 1)
         self.flutter, self.ground, self.follow = flutter, ground, follow
         self.rest_frame = rest_frame
+        self.max_bend = max_bend    # degrees between neighbouring segments; stops knots
 
 
 def _anchor_fn(attach):
@@ -173,6 +174,18 @@ def _constrain(p, defn, frame_rot):
             else:
                 p[i] += delta * diff * 0.5
                 p[i + 1] -= delta * diff * 0.5
+    _limit_bend(p, defn.seg, defn.max_bend)
+
+
+def _limit_bend(p, seg, max_bend):
+    limit = math.radians(max_bend)
+    for i in range(1, len(p) - 1):
+        a = p[i] - p[i - 1]
+        b = p[i + 1] - p[i]
+        turn = math.atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1])
+        if abs(turn) > limit:
+            base = math.atan2(a[1], a[0]) + math.copysign(limit, turn)
+            p[i + 1] = p[i] + np.array((math.cos(base), math.sin(base))) * seg
 
 
 def blend_to(bake, target, seg, frac=0.55):
