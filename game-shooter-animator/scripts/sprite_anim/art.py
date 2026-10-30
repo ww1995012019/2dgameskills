@@ -241,18 +241,18 @@ def chain_defs(spec):
     cloth = spec["cloth"]
     if "cape" in cloth:
         out.append(ChainDef("cape", ("neck", "chest_rot", (-6.0, -1.0)), 8, 6.6, gravity=620, drag=5.0,
-                            flutter=900, stiff=0.0025, rest=(-0.22, -1.0), follow=1.0))
+                            flutter=900, stiff=0.0025, rest=(-0.22, -1.0), follow=1.0, width=(11, 19)))
     if "scarf" in cloth:
         out.append(ChainDef("scarf", ("neck", "chest_rot", (-7.0, 0.5)), 9, 5.0, gravity=420, drag=4.5,
-                            flutter=1400, stiff=0.006, rest=(-0.8, -0.6), follow=0.3))
+                            flutter=1400, stiff=0.006, rest=(-0.8, -0.6), follow=0.3, width=(6.5, 5.0)))
     if "hair" in cloth:
         out.append(ChainDef("hair", ("head_base", "head_rot", (-11.0 * hs, 20.0 * hs)), 6, 4.2 * hs,
                             gravity=300, drag=6.5, stiff=0.03, rest=(-0.75, -0.8), follow=1.0,
-                            flutter=260, ground=False, rest_frame="head_rot"))
+                            flutter=260, rest_frame="head_rot", width=(7.0, 1.4)))
     if "headband" in cloth or spec["head"] == "headband":
         out.append(ChainDef("headband", ("head_base", "head_rot", (-13.0 * hs, 21.0 * hs)), 6, 3.6 * hs,
                             gravity=300, drag=6.0, stiff=0.02, rest=(-0.9, -0.6), follow=1.0,
-                            flutter=420, ground=False, rest_frame="head_rot"))
+                            flutter=420, rest_frame="head_rot", width=(4.2, 1.6)))
     return out
 
 

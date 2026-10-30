@@ -237,26 +237,26 @@ def chain_defs(spec):
     cloth = spec["cloth"]
     if "cape" in cloth:
         out.append(ChainDef("cape", ("neck", "chest_rot", (-6.0, -1.0)), 8, 6.6, gravity=620, drag=5.0,
-                            flutter=900, stiff=0.0025, rest=(-0.22, -1.0), follow=1.0))
+                            flutter=900, stiff=0.0025, rest=(-0.22, -1.0), follow=1.0, width=(11, 19)))
     if "scarf" in cloth:
         out.append(ChainDef("scarf", ("neck", "chest_rot", (-7.0, 0.5)), 9, 5.0, gravity=420, drag=4.5,
-                            flutter=1400, stiff=0.006, rest=(-0.8, -0.6), follow=0.3))
+                            flutter=1400, stiff=0.006, rest=(-0.8, -0.6), follow=0.3, width=(6.5, 5.0)))
     if "hair" in cloth:
         out.append(ChainDef("hair", ("head_base", "head_rot", (-11.0 * hs, 20.0 * hs)), 6, 4.2 * hs,
                             gravity=300, drag=6.5, stiff=0.03, rest=(-0.75, -0.8), follow=1.0,
-                            flutter=260, ground=False, rest_frame="head_rot"))
+                            flutter=260, rest_frame="head_rot", width=(7.0, 1.4)))
     if "plume" in cloth:
         out.append(ChainDef("plume", ("head_base", "head_rot", (-2.0 * hs, 31.0 * hs)), 6, 4.0 * hs,
                             gravity=240, drag=7.0, stiff=0.05, rest=(-0.9, -0.2), follow=1.0,
-                            flutter=320, ground=False, rest_frame="head_rot"))
+                            flutter=320, rest_frame="head_rot", width=(7.5, 2.2)))
     if "hat_tip" in cloth or spec["head"] == "wizard":
         out.append(ChainDef("hat_tip", ("head_base", "head_rot", (-7.0 * hs, 44.0 * hs)), 4, 4.5 * hs,
                             gravity=340, drag=7.5, stiff=0.09, rest=(-1.0, -0.25), follow=1.0,
-                            flutter=160, ground=False, rest_frame="head_rot"))
+                            flutter=160, rest_frame="head_rot", width=(2.0, 1.0)))
     if "tassel" in cloth or spec["head"] == "hood":
         out.append(ChainDef("tassel", ("head_base", "head_rot", (-13.0 * hs, 12.0 * hs)), 5, 4.0 * hs,
                             gravity=340, drag=6.0, stiff=0.04, rest=(-0.9, -0.7), follow=1.0,
-                            flutter=300, ground=False, rest_frame="head_rot"))
+                            flutter=300, rest_frame="head_rot", width=(7.0, 2.0)))
     return out
 
 

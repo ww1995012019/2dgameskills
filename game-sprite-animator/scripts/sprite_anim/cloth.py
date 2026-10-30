@@ -20,13 +20,15 @@ DT = 1.0 / SIM_HZ
 
 class ChainDef:
     def __init__(self, name, attach, n, seg, gravity=520.0, drag=5.0, stiff=0.0, rest=(-0.3, -1.0),
-                 flutter=0.0, ground=True, follow=0.0, rest_frame="chest_rot", max_bend=62.0):
+                 flutter=0.0, ground=True, follow=0.0, rest_frame="chest_rot", max_bend=62.0,
+                 width=(0.0, 0.0)):
         self.name, self.attach, self.n, self.seg = name, attach, n, seg
         self.gravity, self.drag, self.stiff = gravity, drag, stiff
         self.rest = np.array(rest, dtype=float) / (math.hypot(*rest) or 1)
         self.flutter, self.ground, self.follow = flutter, ground, follow
         self.rest_frame = rest_frame
         self.max_bend = max_bend    # degrees between neighbouring segments; stops knots
+        self.width = np.linspace(width[0], width[1], n)     # drawn strip width, root to tip
 
 
 def _anchor_fn(attach):
@@ -126,16 +128,33 @@ def simulate(defn, clip, body, start=None, settle_seconds=6.0):
         p[0] = a
         _constrain(p, defn, r)
         if defn.ground:
-            below = p[:, 1] < 0.8
-            p[below, 1] = 0.8
-            # ground friction
+            below = _ground(p, defn)
+            # Inelastic floor: moving p alone would leave Verlet an upward velocity and bounce
+            # the cloth. Then ground friction.
+            q[below, 1] = p[below, 1]
             p[below, 0] = q[below, 0] * 0.6 + p[below, 0] * 0.4
         if i >= keep_from:
             out[k] = p
             k += 1
     if clip.loop:
         out = _close_loop(out[:steps_clip], out[steps_clip:], defn.seg)
+        if defn.ground:
+            for f in out:
+                _ground(f, defn)
     return ClothBake(out, dur, clip.loop)
+
+
+def _ground(p, defn):
+    """Keep the drawn strip, not just its centreline, above the floor. A strip lying flat needs
+    half its width of clearance; one hanging straight down needs almost none. The anchor is
+    left alone. Returns the mask of points that were pushed up."""
+    tan = np.gradient(p, axis=0)
+    flat = np.abs(tan[:, 0]) / (np.hypot(tan[:, 0], tan[:, 1]) + 1e-6)
+    floor = 0.8 + np.where(defn.width > 0, defn.width * 0.5 * flat + 1.0, 0.0)
+    below = p[:, 1] < floor
+    below[0] = False
+    p[below, 1] = floor[below]
+    return below
 
 
 def _close_loop(before, last, seg):
