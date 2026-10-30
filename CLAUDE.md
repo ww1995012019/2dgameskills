@@ -3,6 +3,8 @@
 四个独立安装的 Claude skill：`game-sprite-animator`（横版 RPG）、`game-shooter-animator`（横版射击）、`game-topdown-animator`（3/4 俯视八方向自由移动）、`game-quadruped-animator`（侧视狼）。
 进度、决定和环境坑见 `HANDOVER.md`，后续计划见 `docs/roadmap.md`，动手前先读。
 
+**方向（2026-10-31）：** 外观用 AI 生图，我们负责绑定、动作、质检、导出；四个 skill 要合并成一个；生物用配置描述，动作按运动方式写。不要再为单个物种新开 skill 或写专门代码。每个阶段要用户看过效果、认可后再往下做。详见 `docs/roadmap.md` 第 3 节。
+
 ## 代码布局
 
 - 每个 skill 文件夹必须能单独复制、单独打包使用，所以两边共用的文件在两个 skill 里各存一份。

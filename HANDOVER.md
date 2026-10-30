@@ -6,7 +6,9 @@
 
 把下面这段发给 Claude 就能继续：
 
-> 克隆 https://github.com/ww1995012019/2dgameskills 的 `main` 分支，读根目录的 `CLAUDE.md`、`HANDOVER.md` 和 `docs/roadmap.md`，从路线图第 3 节按顺序继续。
+> 克隆 https://github.com/ww1995012019/2dgameskills 的 `claude/wizardly-wright-kwbjaj` 分支（合并到 `main` 之后改用 `main`），读根目录的 `CLAUDE.md`、`HANDOVER.md` 和 `docs/roadmap.md`，从路线图第 3 节按顺序继续。
+
+**2026-10-31 方向调整：** 角色外观改用 AI 生图，skill 合并成一个，生物改用配置描述。详见 `docs/roadmap.md` 第 3 节。
 
 ## 这两个 skill 是什么
 
