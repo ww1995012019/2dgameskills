@@ -15,9 +15,10 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim import export  # noqa: E402
+from sprite_anim.constraints import frame_metrics  # noqa: E402
 from sprite_anim.fx import build_fx  # noqa: E402
 from sprite_anim.motions import SEAMS, build_clips  # noqa: E402
-from sprite_anim.render import GROUND_FRAC, PRESETS, UNIT_PX, Renderer, frame_time, to_u8  # noqa: E402
+from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_time, to_u8  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,9 +34,11 @@ def parse_overrides(text):
     return out
 
 
-def rig_trace(clip, n, fps, body, unit_px):
+def rig_trace(clip, n, fps, art, unit_px):
     """Per-frame joint positions (in output pixels) for the QA pass."""
+    body = art.body
     tr = {j: [] for j in TRACE_JOINTS}
+    metrics = []
     feet = {"n": dict(heel=[], ball=[]), "f": dict(heel=[], ball=[])}
     contacts = {"n": [], "f": []}
     for i in range(n):
@@ -43,12 +46,13 @@ def rig_trace(clip, n, fps, body, unit_px):
         sk = solve(full_pose(clip.sample(t)), body)
         for j in TRACE_JOINTS:
             tr[j].append([round(sk[j][0] * unit_px, 3), round(sk[j][1] * unit_px, 3)])
+        metrics.append(frame_metrics(sk, body, art.weapon_span(sk)))
         c = clip.contacts(t)
         for s in "nf":
             for key, pt in (("heel", heel_world(sk, s)), ("ball", toe_world(sk, s))):
                 feet[s][key].append([round(pt[0] * unit_px, 3), round(pt[1] * unit_px, 3)])
             contacts[s].append(bool(c.get(s, False)))
-    return dict(joints=tr, feet=feet, contacts=contacts, frame_dt=clip.duration / (n if clip.loop else n - 1))
+    return dict(joints=tr, feet=feet, contacts=contacts, metrics=metrics, frame_dt=clip.duration / (n if clip.loop else n - 1))
 
 
 def main():
@@ -94,7 +98,8 @@ def main():
     t0 = time.time()
     r = Renderer(spec, size, pixel, motion_blur=a.motion_blur, clips=clips)
     print(f"[bake] cloth chains {[d.name for d in r.defs]} in {time.time() - t0:.1f}s")
-    unit_px = size * UNIT_PX
+    unit_px = r.unit
+    print(f"[fit] character scale {r.fit:.3f} to keep every action inside the frame")
     pivot = (size // 2, int(size * GROUND_FRAC))
 
     rendered, meta, sheets, traces = {}, {}, {}, {}
@@ -115,7 +120,7 @@ def main():
             next=c.next if not c.loop else None, prev=c.prev,
             chain_frame=int(round(c.chain_at / step)) if c.chain_at else None,
             tags=sorted(c.tags))
-        traces[nm] = rig_trace(c, n, cfps, r.art.body, unit_px)
+        traces[nm] = rig_trace(c, n, cfps, r.art, unit_px)
         print(f"[clip] {nm:<14} {n:>3}f @ {cfps}fps {'loop' if c.loop else 'once'}")
 
     sprites, refs, files = export.build_atlas(root, rendered, size)

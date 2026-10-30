@@ -17,7 +17,8 @@ description: >
 
 Every frame is computed from a skeleton, not drawn by an image model. That is what makes the output
 smooth: poses come from continuous curves, so any frame rate is available, loops close exactly, and
-feet stay planted. Reference images can't be traced; a look is described through a character spec or
+feet stay planted. Joint limits, floor contact and clipping checks keep poses physically believable,
+and you review the frames by eye before delivery. Reference images can't be traced; a look is described through a character spec or
 supplied as layered art.
 
 Requires Python 3 with `pillow` and `numpy`. Scripts are in `scripts/`, run from the skill root.
@@ -59,7 +60,16 @@ Requires Python 3 with `pillow` and `numpy`. Scripts are in `scripts/`, run from
    python scripts/qa_motion.py out/c
    ```
 
-6. **Show the result.** Give the user `out/c/preview.html`. It is a self-contained page with every clip
+6. **Do the visual review.** Numbers can't see a body hovering above the floor. Build the review sheets, look
+   at every one yourself, and record a verdict. Follow `references/visual-review.md`. Blockers get
+   fixed before delivery.
+
+   ```bash
+   python scripts/visual_review.py out/c
+   python scripts/visual_review.py out/c --record verdict.json
+   ```
+
+7. **Show the result.** Give the user `out/c/preview.html`. It is a self-contained page with every clip
    (speed control, frame stepping, onion skin) and a playable demo, which is the real test of whether
    the set feels smooth. Then state which engine files apply to their project
    (`references/engine-integration.md`).
@@ -75,6 +85,8 @@ out/c/
 ├── sheets/<clip>.png   one sheet per clip, wrapped to a grid
 ├── fx.png/.json        dust, hit spark, block spark, projectile
 ├── engine/             godot/, cocos/, unity/, web/ (player + CSS)
+├── review/             sheets for the visual review
+├── visual_report.json  recorded verdict
 └── qa_report.json
 ```
 
@@ -101,7 +113,8 @@ These are the rules behind the numbers. `references/smoothness.md` has the reaso
 Read these when the task reaches them:
 
 - `references/character-spec.md`: every spec field, cut-out mode for the user's own layered art, custom clips
-- `references/smoothness.md`: QA checks, causes and fixes; diagnosing stutter in existing animation
+- `references/smoothness.md`: QA checks, skeleton constraints, causes and fixes; diagnosing stutter
+- `references/visual-review.md`: how to do the AI visual review, the checklist and the verdict format
 - `references/animation-principles.md`: timing tables and how to author new poses
 - `references/engine-integration.md`: Unity, Godot, Cocos, Phaser, PixiJS, CSS, mini-games
 

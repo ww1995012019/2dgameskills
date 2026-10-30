@@ -15,8 +15,30 @@ sprites from anywhere: `python scripts/qa_motion.py path/to/frames --loop`.
 | `slide` | Stance foot travel vs `speed_px_s`, and foot height during stance | Speed that doesn't match the stride, or a foot past leg reach | Derive speed from `L / (duty * T)`; shorten stride or lower hip |
 | `jitter` | Movement of feet meant to be planted | Different `foot_*_x` between poses of a `hold_feet` clip | Share the stance values between those poses |
 | transitions | Pose jump at a clip hand-over | Clips that don't share a seam pose | Start the next clip from the pose the previous ends on |
+| `limits` | Joints asked past their range, bones changing length, knees flipping direction | A pose beyond anatomy. The rig eases it into the limit, so a large excess means the pose isn't what was authored | Re-pose it. Limits are in `sprite_anim/constraints.py` |
+| `clip` | Weapon held over the face, weapon or body through the ground | Reach or angle wrong for that pose | Move the pose. Crossing the face during a swing is fine; holding there isn't |
+| `bounds` | Art cut off by the frame edge | Art wider than the frame | The generator auto-fits the character to its widest pose and prints `[fit]`. This fires only for what fit can't see, mainly dust or bake-time cloth |
 
 Attacks allow a higher `spike`: a strike is supposed to accelerate hard, and the smear carries it.
+
+## Skeleton constraints
+
+These run inside the rig on every pose, so they apply to custom clips too. `sprite_anim/constraints.py`
+holds the numbers.
+
+- **Joint limits:** spine, head and elbow ease into their range along a smooth curve. A hard clamp would stop
+  a joint dead on one frame, which is itself a hitch.
+- **Heel lift:** an ankle only closes so far. Past that the heel rises and the ball stays planted, as in a
+  real deep crouch, so feet don't slide and shins don't fold onto the foot.
+- **Weapon ground clamp:** a held weapon rotates about the wrist rather than entering the floor.
+- **Floor contact:** in a roll the lowest body part rests on the ground on every frame, because a tucked
+  body changes shape as it turns and no fixed height works. A collapsing body is lifted rather than sinking.
+- **Auto-fit:** before rendering, the generator measures every pose and scales the character just enough
+  to fit, printing `[fit]`. A very long weapon means a slightly smaller character.
+- **Cloth bend limit:** neighbouring cape or scarf segments can't fold past 62 degrees, which stops knots.
+
+Clip tags adjust the checks: `ground` enables floor tests, and `tumble` relaxes the face and ankle rules
+for spins and falls, where the body isn't posed. Use it only for those.
 
 ## Causes QA can't see
 

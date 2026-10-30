@@ -144,6 +144,8 @@ class Canvas:
         def shifted(a, dx, dy):
             r = np.zeros_like(a)
             dx, dy = int(round(dx)), int(round(dy))
+            if abs(dx) >= a.shape[1] or abs(dy) >= a.shape[0]:
+                return r        # sliver clipped at the frame edge: shifted fully out of its box
             ys0, ys1 = max(0, dy), a.shape[0] + min(0, dy)
             xs0, xs1 = max(0, dx), a.shape[1] + min(0, dx)
             r[ys0:ys1, xs0:xs1] = a[ys0 - dy:ys1 - dy, xs0 - dx:xs1 - dx]
@@ -235,26 +237,26 @@ def chain_defs(spec):
     cloth = spec["cloth"]
     if "cape" in cloth:
         out.append(ChainDef("cape", ("neck", "chest_rot", (-6.0, -1.0)), 8, 6.6, gravity=620, drag=5.0,
-                            flutter=900, stiff=0.0025, rest=(-0.22, -1.0), follow=1.0))
+                            flutter=900, stiff=0.0025, rest=(-0.22, -1.0), follow=1.0, width=(11, 19)))
     if "scarf" in cloth:
         out.append(ChainDef("scarf", ("neck", "chest_rot", (-7.0, 0.5)), 9, 5.0, gravity=420, drag=4.5,
-                            flutter=1400, stiff=0.006, rest=(-0.8, -0.6), follow=0.3))
+                            flutter=1400, stiff=0.006, rest=(-0.8, -0.6), follow=0.3, width=(6.5, 5.0)))
     if "hair" in cloth:
         out.append(ChainDef("hair", ("head_base", "head_rot", (-11.0 * hs, 20.0 * hs)), 6, 4.2 * hs,
                             gravity=300, drag=6.5, stiff=0.03, rest=(-0.75, -0.8), follow=1.0,
-                            flutter=260, ground=False, rest_frame="head_rot"))
+                            flutter=260, rest_frame="head_rot", width=(7.0, 1.4)))
     if "plume" in cloth:
         out.append(ChainDef("plume", ("head_base", "head_rot", (-2.0 * hs, 31.0 * hs)), 6, 4.0 * hs,
                             gravity=240, drag=7.0, stiff=0.05, rest=(-0.9, -0.2), follow=1.0,
-                            flutter=320, ground=False, rest_frame="head_rot"))
+                            flutter=320, rest_frame="head_rot", width=(7.5, 2.2)))
     if "hat_tip" in cloth or spec["head"] == "wizard":
         out.append(ChainDef("hat_tip", ("head_base", "head_rot", (-7.0 * hs, 44.0 * hs)), 4, 4.5 * hs,
                             gravity=340, drag=7.5, stiff=0.09, rest=(-1.0, -0.25), follow=1.0,
-                            flutter=160, ground=False, rest_frame="head_rot"))
+                            flutter=160, rest_frame="head_rot", width=(2.0, 1.0)))
     if "tassel" in cloth or spec["head"] == "hood":
         out.append(ChainDef("tassel", ("head_base", "head_rot", (-13.0 * hs, 12.0 * hs)), 5, 4.0 * hs,
                             gravity=340, drag=6.0, stiff=0.04, rest=(-0.9, -0.7), follow=1.0,
-                            flutter=300, ground=False, rest_frame="head_rot"))
+                            flutter=300, rest_frame="head_rot", width=(7.0, 2.0)))
     return out
 
 
@@ -333,6 +335,13 @@ class Cutout:
             cv.buf[y0:y1, x0:x1] = np.asarray(base)
 
 
+# Drawn extent of each weapon from its local origin: (tip, butt). Keep in step with weapon().
+WEAPON_REACH = {"sword": (47, 7.4), "axe": (47, 10), "staff": (54, 22), "spear": (66, 20)}
+# Long hafts are held further up the shaft, as a fighter chokes up, so the reach past the hand
+# doesn't dwarf the character once the frame is fitted to it. The overall length is unchanged.
+WEAPON_GRIP = {"staff": 6, "spear": 12}
+
+
 class CharacterArt:
     def __init__(self, spec):
         self.spec = merged_spec(spec)
@@ -341,6 +350,11 @@ class CharacterArt:
         self.c = {k: ramp(v) for k, v in col.items()}
         self.ink = hex_rgb(col["ink"])
         self.bulk = self.body.bulk
+        front, back = WEAPON_REACH.get(self.spec["weapon"], (0, 0))
+        grip = WEAPON_GRIP.get(self.spec["weapon"], 0)
+        # Measured from the unshifted origin just past the wrist, as the rig's ground clamp pivots.
+        self.body.weapon_front = front - grip if front else 0
+        self.body.weapon_back = back + grip
         self.cutout = Cutout(self.spec) if self.spec.get("parts") else None
 
     def palette(self):
@@ -577,18 +591,40 @@ class CharacterArt:
 
     # -- weapon -----------------------------------------------------------------------
 
+    def weapon_origin(self, sk):
+        """Where the weapon's local y=0 sits: just past the wrist, slid back by the grip."""
+        o = add(sk["wr_n"], scale((sk["wr_n"][0] - sk["el_n"][0], sk["wr_n"][1] - sk["el_n"][1]), 0.14))
+        return add(o, scale(sk["wep_dir"], -WEAPON_GRIP.get(self.spec["weapon"], 0)))
+
     def blade_points(self, sk):
-        """(hilt, tip) for smears."""
-        kind = self.spec["weapon"]
-        length = {"sword": 47, "axe": 40, "staff": 54, "spear": 62}.get(kind, 0)
-        return sk["wr_n"], add(sk["wr_n"], scale(sk["wep_dir"], length))
+        """(hilt, tip) for smears, framing and clipping; the tip is the drawn one."""
+        front = WEAPON_REACH.get(self.spec["weapon"], (0, 0))[0]
+        return sk["wr_n"], add(self.weapon_origin(sk), scale(sk["wep_dir"], front))
+
+    primary = None
+
+    def extent_points(self, sk, pose):
+        """Every point that must stay inside the frame on this pose."""
+        pts = [sk[j] for j in ("wr_n", "wr_f", "an_n", "an_f", "kn_n", "kn_f", "hip", "neck", "head_base")]
+        pts.append(add(sk["head_base"], rot((0, 36 * self.body.head_size), sk["head_rot"])))
+        span = self.weapon_span(sk)
+        if span:
+            pts += [span[0], span[1]]
+        return pts
+
+    def weapon_span(self, sk):
+        """Blade as (start, end, radius) for clipping checks."""
+        if self.spec["weapon"] == "none":
+            return None
+        h, t = self.blade_points(sk)
+        return h, t, 2.5
 
     def weapon(self, cv, sk, pose):
         kind = self.spec["weapon"]
         if kind == "none":
             return
         c = self.c
-        o = add(sk["wr_n"], scale((sk["wr_n"][0] - sk["el_n"][0], sk["wr_n"][1] - sk["el_n"][1]), 0.14))
+        o = self.weapon_origin(sk)
         a = sk["wep_a"]
         # Local frame: +y along the blade; rot(angle=180-a) maps +y to the blade direction.
         ang = 180 - a
