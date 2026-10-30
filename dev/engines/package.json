@@ -1,0 +1,9 @@
+{
+  "name": "sprite-engine-smoke-tests",
+  "private": true,
+  "description": "Engines the dev smoke tests load. npm install --prefix dev/engines",
+  "dependencies": {
+    "phaser": "3.80.1",
+    "pixi.js": "8.6.6"
+  }
+}

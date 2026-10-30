@@ -16,7 +16,8 @@
 ## 改完要跑的
 
 ```bash
-python3 -m unittest discover -s dev/tests -v      # 故障注入、CSS 浏览器回放、同步和打包检查，约 3 分钟
+python3 -m unittest discover -s dev/tests -v      # 故障注入、CSS 回放、引擎实测、同步和打包检查
+bash dev/engines/get_godot.sh && npm install --prefix dev/engines   # 引擎测试要的 Godot、Phaser、PixiJS，装一次
 bash dev/regress_all.sh                          # 18 套全量回归，4 核约 9 分钟，放后台
 python3 dev/baseline.py                          # 和 dev/baseline.json 比较：状态变差就失败
 python3 dev/baseline.py --strict                 # 重构时用：任何像素变化都算失败

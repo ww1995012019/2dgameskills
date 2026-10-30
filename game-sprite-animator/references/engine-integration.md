@@ -12,9 +12,10 @@ Verification status, so you can tell the user what is proven:
 | Export | Checked how |
 |---|---|
 | `atlas.png`, `animations.json`, `sprite-player.js` | Frames rebuilt from the atlas match the source; player run in a browser and at 30-240 Hz |
-| `atlas.json` (JSON-hash) | Structure and bounds only; not loaded in Phaser or PixiJS |
+| `atlas.json` (JSON-hash) | Loaded in Phaser 3.80 and PixiJS 8.6 in Chromium as shown below: every frame matches its source frame, playback order and timing checked at 60 and 144 Hz |
 | `sprites.css` | Played in Chromium: every frame matches its source frame; not checked in Safari or on phones |
-| Godot `.tres`, Cocos `.plist` | Parsed and cross-referenced; not imported into the editors |
+| Godot `.tres` + `.import` | Imported into Godot 4.3: every frame matches its source frame, `AnimatedSprite2D` playback order, timing and loop checked at 60 and 144 Hz |
+| Cocos `.plist` | Parsed and cross-referenced; not imported into the editor |
 | Unity `SpriteSetImporter.cs` | Never compiled or run |
 
 ## H5, Canvas, WeChat mini-games
@@ -57,37 +58,50 @@ Swap the second class to change clip. For a page with several clips, Canvas cost
 ## Phaser 3
 
 ```js
-this.load.atlas("hero", "atlas.png", "atlas.json");
+// preload(): the manifest, then every atlas page it lists (big sets split into atlas_0, atlas_1...)
 this.load.json("hero_anims", "animations.json");
+this.load.once("filecomplete-json-hero_anims", (key, type, doc) => {
+  doc.pages.forEach((p, i) => this.load.atlas(`hero${i}`, p.file, p.file.replace(".png", ".json")));
+});
 // create():
 const doc = this.cache.json.get("hero_anims");
+const pageOf = {};
+doc.pages.forEach((p, i) => this.textures.get(`hero${i}`).getFrameNames().forEach((f) => { pageOf[f] = `hero${i}`; }));
+const frameName = (clip, i) => `${clip}_${String(i).padStart(3, "0")}`;
 for (const [key, c] of Object.entries(doc.clips)) {
   this.anims.create({
-    key,
-    frames: c.frames.map((_, i) => ({ key: "hero", frame: `${key}_${String(i).padStart(3, "0")}` })),
-    frameRate: c.fps,
-    repeat: c.loop ? -1 : 0,
+    key, frameRate: c.fps, repeat: c.loop ? -1 : 0,
+    frames: c.frames.map((_, i) => ({ key: pageOf[frameName(key, i)], frame: frameName(key, i) })),
   });
 }
-const hero = this.add.sprite(x, y, "hero").setOrigin(doc.pivot[0] / doc.frame_size, doc.pivot[1] / doc.frame_size);
+const hero = this.add.sprite(x, y, "hero0").setOrigin(doc.pivot[0] / doc.frame_size, doc.pivot[1] / doc.frame_size);
+hero.play("run");
 ```
 
 ## PixiJS
 
 ```js
-const sheet = await PIXI.Assets.load("atlas.json");
-const hero = new PIXI.AnimatedSprite(sheet.animations.run);
-hero.animationSpeed = 30 / 60;   // clip fps / ticker fps
+const doc = await (await fetch("animations.json")).json();
+// One sheet per atlas page; frames are looked up by name, so a clip may span pages.
+const sheets = await Promise.all(doc.pages.map((p) => PIXI.Assets.load(p.file.replace(".png", ".json"))));
+const textures = Object.assign({}, ...sheets.map((s) => s.textures));
+const clipTextures = (name) => doc.clips[name].frames.map((_, i) => textures[`${name}_${String(i).padStart(3, "0")}`]);
+const hero = new PIXI.AnimatedSprite(clipTextures("run"));
+hero.animationSpeed = doc.clips.run.fps / 60;   // clip fps / ticker fps
+hero.loop = doc.clips.run.loop;
 hero.anchor.set(doc.pivot[0] / doc.frame_size, doc.pivot[1] / doc.frame_size);
 hero.play();
 ```
 
 ## Godot 4
 
-Copy `atlas.png` and `engine/godot/sprite_frames.tres` to the project root (the `.tres` expects
-`res://atlas.png`; edit that path otherwise). On an `AnimatedSprite2D`, set `sprite_frames` to the
+Copy the atlas pages (`atlas.png`, or `atlas_0.png`, `atlas_1.png`... for big sets), their `.import` files from
+`engine/godot/`, and `engine/godot/sprite_frames.tres` to the project root (the `.tres` expects
+`res://atlas.png` and so on; edit the paths otherwise). On an `AnimatedSprite2D`, set `sprite_frames` to the
 resource. Set `offset` so the feet sit on the node origin: `offset = (frame_size/2 - pivot.x, frame_size/2 - pivot.y)`.
-In import settings, use Lossless compression and, for pixel art, `Nearest` filtering on the node.
+The `.import` file sets Lossless compression and turns off Fix Alpha Border: that default recolours pixels
+under about 7% alpha and gives soft HD edges a faint dark fringe; the atlas is already edge-bled. For pixel
+art, set `Nearest` filtering on the node.
 
 ## Cocos Creator
 

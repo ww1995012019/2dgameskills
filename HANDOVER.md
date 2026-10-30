@@ -50,7 +50,18 @@
   - 衔接姿势错误（把死亡最后一帧接到起跳）查不出：衔接比例除以较快动作的典型步长，像素差又会饱和，只有约 1.5，阈值是 2.5。
   - 两者都要改成基于 `rig_trace.json` 关节位置的检查。
 - **CSS 实际播放过了。** `dev/css_playback.js` 在 Chromium 里播放 `sprites.css`，每帧暂停在时间段中点截图，和原始帧逐像素比较（`dev/tests/test_css_playback.py`，含一个故意把关键帧错一位的用例）。验证表已更新。
-- **Godot、Phaser、PixiJS 没测成。** 下载 Godot 和 npm 包要运行外部程序，这次会话的权限没批准，需要用户同意后再做。
+- **Godot、Phaser、PixiJS** 在用户同意下载后做了实测，见下一节。
+
+## 第五轮：引擎实测
+
+- **Godot 4.3**（无界面运行，`dev/godot_smoke.py` + `dev/godot/smoke_test.gd`）：按文档把图集和 `.tres` 放进新项目，让编辑器导入；加载 SpriteFrames，核对每个动作的帧数、帧率、循环；用导入后的贴图按 region + margin 还原每一帧，和原图比较；在 `AnimatedSprite2D` 上以 60 Hz 和 144 Hz 播放，检查帧序、每帧停留时长、循环和 `animation_finished`。
+- **发现并修了一个问题：** Godot 默认导入开着 Fix Alpha Border，会把透明度 7% 以下的像素重新上色。像素版没影响，但高清版柔和的边缘会出现一圈很淡的深色描边（例如淡蓝光晕变成深灰）。图集本来就做了边缘渗色，不需要它。现在导出时附带 `engine/godot/atlas.png.import`（无损、关掉 Fix Alpha Border），Godot 会自动补全 uid 和路径。用了这个文件，导入后和原图逐像素相同。
+- **Phaser 3.80、PixiJS 8.6**（Chromium，`dev/web_engines.js` + `web_engines_page.js`）：完全照文档里的代码加载，逐帧按 pivot 画出来和原图比较；手动推进时钟，在 60 Hz 和 144 Hz 下检查帧序、停留时长、循环和完成事件。
+- **发现并修了一个文档 bug：** 图集超过 4096 像素会拆成 `atlas_0`、`atlas_1`（mercenary-hd 就是），但文档里的 Phaser、PixiJS 示例只加载单个 `atlas.json`，大套直接报错。示例改成从 `animations.json` 的 `pages` 加载每一页、按帧名找贴图，单页多页都适用；Godot 一节也写明要复制每一页。
+- PixiJS 的 `renderer.extract.canvas` 读回来的半透明像素被多乘了一次透明度，但屏幕上的画面是对的，所以测试读页面上显示的画布。
+- 测试用例在 `dev/tests/test_engines.py`，含故障注入（错误的 margin、帧率、裁切偏移、少一帧，以及不带 `.import` 文件时的高清描边）。引擎没装就自动跳过。
+- 安装：`bash dev/engines/get_godot.sh`（Linux，官方 4.3），`npm install --prefix dev/engines`（版本固定在 `dev/engines/package.json`）。都不进 git。
+- 还没测：Cocos、Unity（需要图形界面和授权，容器里装不了）；射击 skill 的分层挂点在引擎里的对齐（只测了逐帧画面和播放）。
 
 ## 最后一次回归结果
 
@@ -78,9 +89,9 @@
 
 第四轮之后，按优先级：
 
-1. 引擎实测：Godot 4 可以无界面运行，在 Linux 容器里导入 `sprite_frames.tres` 并播放；Phaser、PixiJS 可以用 Playwright 在 Chromium 里加载 `atlas.json`。需要先得到用户同意下载这些外部程序。
+1. ~~引擎实测~~ 第五轮完成了 Godot、Phaser、PixiJS。
 2. 补上两个 QA 缺口：基于关节位置的循环接缝和动作衔接检查。加上后先跑全量回归，看会不会冒出新的 FAIL。
-3. 选一个新方向（俯视 4 方向人形或四足动物），等用户根据游戏类型决定。不要多类同时推进。
+3. 新方向：用户的游戏横版、俯视都有，也需要怪物。建议顺序：俯视 4 方向人形 → 8 方向 → 四足。一次只推进一类。
 4. 「视觉质检记录」里留下的观感问题；Unity、Cocos 实测。
 
 以下是前三轮的记录。1～9 都已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README、比例、合并）。第三轮把剩下的视觉质检做完了，修了 2 个观感问题，见「视觉质检记录」。
@@ -131,7 +142,10 @@ python dev/qa_flags.py all/hero-hd all/commando-hd
 | `package_skills.py` | 打包两个 `.skill`；`--check` 检查是否过期 |
 | `baseline.py`、`baseline.json` | 全量回归结果和基准比较；`--strict` 像素变化也算失败，`--update` 更新基准 |
 | `css_playback.js` | 在 Chromium 里播放 `sprites.css` 并逐帧截图 |
-| `tests/` | `python3 -m unittest discover -s dev/tests -v`：故障注入、CSS 回放、同步和打包检查 |
+| `godot_smoke.py`、`godot/smoke_test.gd` | Godot 4.3 无界面导入和播放测试 |
+| `web_engines.js` | Phaser、PixiJS 在 Chromium 里加载和播放测试 |
+| `engines/` | `get_godot.sh` 和固定版本的 `package.json`；下载的引擎不进 git |
+| `tests/` | `python3 -m unittest discover -s dev/tests -v`：故障注入、CSS 回放、引擎实测、同步和打包检查 |
 
 `test_shooter_demo.js` 和 `dev/qa_*.py` 读 `%TEMP%\spr\` 下的结果。`test_shooter_demo.js` 的参数是子目录名，例如 `node dev/test_shooter_demo.js all/commando-pixel`。
 
@@ -148,7 +162,7 @@ python dev/qa_flags.py all/hero-hd all/commando-hd
 ## 环境坑
 
 - **中文 Windows 默认 GBK。** skill 自己的脚本和 `dev/` 下的新脚本都显式用 UTF-8。旧的 skill-creator 打包脚本没有，要先设 `PYTHONUTF8=1`；现在用 `dev/package_skills.py`，不需要。
-- 这台机器没有 `gh`、`dotnet`、Godot、Unity、Cocos。引擎文件都没有在引擎里实测过，`references` 里写了每项的验证程度。
+- Windows 那台机器没有 `gh`、`dotnet`、Godot、Unity、Cocos。Godot、Phaser、PixiJS 第五轮在 Linux 容器里测过，Unity、Cocos 没有，`references` 里写了每项的验证程度。
 - 会话文件夹路径很长，Windows 上 `../..` 这类相对路径可能超 260 字符，要先规范化。
 - 预览窗格隐藏时浏览器的 `requestAnimationFrame` 会暂停，自动化测试用 Node 脚本。
 - 全量回归超过 10 分钟，要放后台。

@@ -22,7 +22,7 @@
 - **质检工具：** 检测重复帧、循环接缝、跳帧、滑步和动作衔接，以及武器挡脸、武器或身体穿地、画面被帧边缘裁切；也能检查已有的序列帧
 - **AI 视觉质检：** 生成审查图，由 Claude 逐张看图，找出数值查不到的问题，比如身体悬空、关节反折、剪影看不出动作，并记录结论
 - **自动适配大小：** 按最大的动作缩放角色，保证任何一帧都不出画
-- **导出：** 序列帧、精灵图、图集、`animations.json`，以及 Unity、Godot、Cocos、Phaser、PixiJS、H5 CSS 和 Canvas 播放器所需的文件
+- **导出：** 序列帧、精灵图、图集、`animations.json`，以及 Unity、Godot、Cocos、Phaser、PixiJS、H5 CSS 和 Canvas 播放器所需的文件。Godot 4.3、Phaser 3、PixiJS 8 和浏览器 CSS 已实测导入和播放，逐帧和原图一致；Unity、Cocos 尚未实测
 
 每次生成都会附带 `preview.html`，可以逐个查看动作，也可以用键盘试玩。
 

@@ -61,6 +61,9 @@ for f, _ in exts:
     assert os.path.exists(os.path.join(root, f)), f
 head = int(re.search(r'load_steps=(\d+)', t).group(1))
 assert head == len(subs) + len(exts) + 1, (head, len(subs), len(exts))
+for pf in doc['pages']:
+    imp = open(os.path.join(root, 'engine', 'godot', pf['file'] + '.import'), encoding='utf-8').read()
+    assert 'process/fix_alpha_border=false' in imp and 'compress/mode=0' in imp, pf['file']
 print('tres sub_resources:', len(subs), 'ext:', len(exts), 'anims:', t.count('"name": &"'))
 
 # 6. css: every keyframe block present, sheet files exist, sheet sizes match
