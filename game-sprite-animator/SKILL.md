@@ -30,7 +30,7 @@ Requires Python 3 with `pillow` and `numpy`. Scripts are in `scripts/`, run from
    | Choice | Default | Options |
    |---|---|---|
    | Style | HD cartoon | `--preset hd`, `hd60`, `hd512`; pixel: `pixel48`, `pixel` (64), `pixel96` |
-   | Character | closest of hero / knight / mage / ninja / goblin | a new spec, or the user's layered art |
+   | Character | closest of hero / knight / mage / ninja / goblin | a new spec, the user's layered art, or AI-generated art |
    | Clips | all 27 | any subset, plus custom clips |
    | Target | all exports | Unity, Godot, Cocos, Phaser/PixiJS, H5/mini-game |
 
@@ -39,6 +39,10 @@ Requires Python 3 with `pillow` and `numpy`. Scripts are in `scripts/`, run from
    express personality: a heavy knight is `speed: 0.85, bounce: 0.75`, a nimble ninja is
    `speed: 1.2, bounce: 1.25`. For a request outside the 27 built-in clips (a wave, drinking a potion),
    add a `custom_clips` entry rather than editing the library; see the same reference.
+
+   For the user's own look made with an image generator, follow `references/ai-art.md` instead: you
+   write the prompt from the reference pose, the user generates the picture, you mark its joints and
+   `scripts/cut_parts.py` cuts it into parts and checks every joint in motion.
 
 3. **Check the look on a contact sheet before the full render.** It takes seconds, a full set about a
    minute, and a wrong palette is cheapest to catch here. Read the image and look at it.
@@ -113,6 +117,7 @@ These are the rules behind the numbers. `references/smoothness.md` has the reaso
 Read these when the task reaches them:
 
 - `references/character-spec.md`: every spec field, cut-out mode for the user's own layered art, custom clips
+- `references/ai-art.md`: AI-generated characters: the prompt, marking joints, cutting and checking
 - `references/smoothness.md`: QA checks, skeleton constraints, causes and fixes; diagnosing stutter
 - `references/visual-review.md`: how to do the AI visual review, the checklist and the verdict format
 - `references/animation-principles.md`: timing tables and how to author new poses
@@ -123,7 +128,8 @@ Read these when the task reaches them:
 - Humanoid side-view rig only. Quadrupeds, flying enemies and blobs need a new rig and motion set.
 - One facing: mirror with the engine's flip. There are no top-down or front-view sets.
 - Procedural art has a clean cartoon look. For a specific art style, use cut-out mode with the
-  user's art; the motion stays the same.
-- Engine exports are verified to different degrees, and none has been opened in its engine. The table
-  in `references/engine-integration.md` says which. Tell the user when handing them over, and fix
-  whatever the import reports.
+  user's art or AI-generated art; the motion stays the same. Cut-outs don't change facial expression
+  and don't simulate cloth (`references/ai-art.md` lists the limits).
+- Engine exports are verified to different degrees: Godot, Phaser, PixiJS and the CSS have been
+  imported and played; Cocos and Unity have not. The table in `references/engine-integration.md`
+  says which. Tell the user when handing them over, and fix whatever the import reports.

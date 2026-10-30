@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 out/
+dev/engines/node_modules/
+dev/engines/package-lock.json
+dev/engines/godot/

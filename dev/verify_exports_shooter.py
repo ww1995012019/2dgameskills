@@ -22,10 +22,12 @@ for name, c in doc['clips'].items():
         same = (out[..., 3] == src[..., 3]).all() and (out[vis] == src[vis]).all()
         bad += not same; total += 1
 print(f'atlas rebuild: {total - bad}/{total} frames identical')
+assert bad == 0, f'{bad} frames rebuilt from the atlas differ from the source PNGs'
 
 # 2. transparent atlas pixels next to sprites carry bled colour, not black
 p = pages[0]; edge = (p[..., 3] == 0) & (p[..., :3].sum(2) > 0)
 print('bled transparent px:', int(edge.sum()))
+assert edge.sum() > 0, 'transparent atlas pixels carry no bled colour'
 
 # 3. texturepacker json covers all frames and animations
 n = 0
@@ -59,6 +61,9 @@ for f, _ in exts:
     assert os.path.exists(os.path.join(root, f)), f
 head = int(re.search(r'load_steps=(\d+)', t).group(1))
 assert head == len(subs) + len(exts) + 1, (head, len(subs), len(exts))
+for pf in doc['pages']:
+    imp = open(os.path.join(root, 'engine', 'godot', pf['file'] + '.import'), encoding='utf-8').read()
+    assert 'process/fix_alpha_border=false' in imp and 'compress/mode=0' in imp, pf['file']
 print('tres sub_resources:', len(subs), 'ext:', len(exts), 'anims:', t.count('"name": &"'))
 
 # 6. css: every keyframe block present, sheet files exist, sheet sizes match

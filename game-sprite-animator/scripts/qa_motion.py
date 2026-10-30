@@ -122,6 +122,27 @@ def analyse_rig(clip, tr, speed, tags):
     return res
 
 
+def joint_positions(tr):
+    """Frames x joints x xy, in the same output-pixel space as the trace."""
+    return np.stack([tr["joints"][j] for j in sorted(tr["joints"])], axis=1)
+
+
+def pose_distance(a, b):
+    """RMS joint displacement; retains root motion as well as limb changes."""
+    return float(np.sqrt(np.mean(np.sum((a - b) ** 2, axis=-1))))
+
+
+def joint_seam(tr, height):
+    pts = joint_positions(tr)
+    step = float(np.mean([pose_distance(a, b) for a, b in zip(pts, pts[1:])]))
+    distance = pose_distance(pts[-1], pts[0])
+    # Ignore sub-perceptual movement below 0.2% of standing height, including trace rounding.
+    ratio = distance / max(step, height * 0.002)
+    status = PASS if ratio <= 1.7 else WARN if ratio <= 2.6 else FAIL
+    values = dict(joint_seam_ratio=round(ratio, 3), joint_seam_height=round(distance / height, 5))
+    return values, status
+
+
 def run_set(root):
     with open(os.path.join(root, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -141,6 +162,14 @@ def run_set(root):
             r.update(analyse_rig(name, trace["traces"][name], trace["speeds"][name], c["tags"]))
             geo, flags = summarize(trace["traces"][name]["metrics"], c["tags"], trace["traces"][name]["frame_dt"])
             r.update(geo)
+            tr = trace["traces"][name]
+            if tr.get("joints") and c["loop"] and r["frames"] > 2:
+                values, status = joint_seam(tr, 100 * trace["unit_px"])
+                r.update(values)
+                r["seam"] = worst(r["seam"], status)
+                if status != PASS:
+                    for i in (0, r["frames"] - 1):
+                        flags.setdefault(i, []).append("joint loop seam: last -> first pose")
             for i in r["cut_frames"]:
                 flags.setdefault(i, []).append("cut off by the frame edge")
             r["flags"] = {str(k): v for k, v in sorted(flags.items())}
@@ -148,11 +177,26 @@ def run_set(root):
     trans = []
     if trace:
         for a, b in trace["seams"]:
-            d = diff(seqs[a][-1], seqs[b][0])
+            b_frame = doc["clips"][a].get("next_frame", 0) if doc["clips"][a].get("next") == b else 0
+            if not isinstance(b_frame, int) or not 0 <= b_frame < len(seqs[b]):
+                raise ValueError(f"invalid next_frame for {a} -> {b}: {b_frame}")
+            d = diff(seqs[a][-1], seqs[b][b_frame])
             base = max(report[a]["typical_step"], report[b]["typical_step"], 0.004)
             ratio = d / base
             st = PASS if ratio <= 2.5 else WARN if ratio <= 4.0 else FAIL
-            trans.append(dict(a=a, b=b, ratio=round(ratio, 2), status=st))
+            transition = dict(a=a, b=b, ratio=round(ratio, 2), status=st)
+            ta, tb = trace["traces"][a], trace["traces"][b]
+            if ta.get("joints") and tb.get("joints"):
+                distance = pose_distance(joint_positions(ta)[-1], joint_positions(tb)[b_frame])
+                normalized = distance / (100 * trace["unit_px"])
+                # A tenth of standing height is visible; a fifth is a clear pose discontinuity.
+                joint_status = PASS if normalized <= 0.1 else WARN if normalized <= 0.2 else FAIL
+                transition.update(joint_distance_height=round(normalized, 5),
+                                  status=worst(st, joint_status), a_frame=report[a]["frames"] - 1, b_frame=b_frame)
+                if joint_status != PASS:
+                    for clip, frame in ((a, transition["a_frame"]), (b, b_frame)):
+                        report[clip]["flags"].setdefault(str(frame), []).append(f"joint transition: {a} -> {b}")
+            trans.append(transition)
     out = dict(clips=report, transitions=trans)
     cols = ["hold", "seam", "spike", "slide", "jitter", "limits", "clip", "bounds"]
     print(f"{'clip':<14}{'frm':>4}  " + "".join(f"{c:<7}" for c in cols) + "detail")
@@ -160,13 +204,13 @@ def run_set(root):
     for name, r in report.items():
         st = [r.get(c, PASS) for c in cols]
         failed += sum(1 for s in st if s == FAIL)
-        detail = " ".join(f"{k}={r[k]}" for k in ("seam_ratio", "spike_ratio", "slide_px", "hover_px", "foot_wobble_px", "excess_deg", "weapon_head", "weapon_ground", "body_ground") if k in r)
+        detail = " ".join(f"{k}={r[k]}" for k in ("seam_ratio", "joint_seam_ratio", "spike_ratio", "slide_px", "hover_px", "foot_wobble_px", "excess_deg", "weapon_head", "weapon_ground", "body_ground") if k in r)
         print(f"{name:<14}{r['frames']:>4}  " + "".join(f"{s:<7}" for s in st) + detail)
     if trans:
         print("\ntransitions")
         for t in trans:
             failed += t["status"] == FAIL
-            print(f"  {t['a']:>13} -> {t['b']:<13} {t['status']:<5} ratio={t['ratio']}")
+            print(f"  {t['a']:>13} -> {t['b']:<13} {t['status']:<5} ratio={t['ratio']} joints/height={t.get('joint_distance_height', 'unavailable')}")
     with open(os.path.join(root, "qa_report.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, indent=1)
     warns = sum(1 for r in report.values() for c in cols if r.get(c) == WARN) + sum(t["status"] == WARN for t in trans)

@@ -97,8 +97,13 @@ Legs are IK: animate feet, not knees. To plant a foot, keep its `foot_*_x` const
 
 ## Cut-out mode: the user's own art
 
-To animate existing art, split it into PNG layers and map them in `parts`. The motion library, cloth
-sim for any `cloth` entries, QA and exports all work unchanged; the procedural drawing is replaced.
+To animate existing art, split it into PNG layers and map them in `parts`. The motion library, QA and
+exports work unchanged; the procedural drawing is replaced. Cloth is not drawn in this mode, so paint
+capes and hair into the parts and leave `cloth` empty.
+
+From a single full-body picture, such as one made with an image generator, `scripts/cut_parts.py`
+cuts the parts and writes this file for you: see `references/ai-art.md`. A worked example is
+`assets/characters/cutout_demo/` (the hero's reference pose, cut).
 
 ```json
 {
@@ -121,8 +126,14 @@ Rules for the layers:
 - Draw limbs hanging straight down, torso and head upright, the weapon pointing up, the foot flat
   and facing right. The rig rotates parts from this rest orientation.
 - `pivot` is the pixel in that image that sits on the joint: the shoulder for an upper arm, the elbow
-  for a forearm, the neck base for the head, the waist for the torso, the hand grip for the weapon.
+  for a forearm, the neck base for the head, the waist for the torso, and for the weapon the middle of
+  the fist on its handle (the rig holds it just past the wrist, along the forearm).
 - Let parts overlap generously at joints so bending doesn't open a gap.
 - `px_per_unit` is source pixels per rig unit. Standing height is 100 units, so art 400 px tall is 4.0.
+- Set `body` lengths (`thigh`, `shin`, `up_arm`, `lo_arm`, `pelvis_len`, `chest_len`, `neck_len`) to the
+  art's own, in rig units, or parts hang off their neighbours. `cut_parts.py` measures them.
+- `layers` (optional): `{"behind": [...], "front": [...]}` draws those parts behind or in front of
+  everything else, for art layered differently from the default order, such as a weapon held in the
+  far hand. `cut_parts.py` writes it from the joints file's `_behind` / `_front`.
 - Paths are relative to the spec file.
 - Limit: rotated bitmaps keep the source's baked shading and resolution. Supply art at or above output size.

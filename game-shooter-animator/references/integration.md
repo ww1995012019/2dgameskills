@@ -8,9 +8,10 @@ Verification status, so you can tell the user what is proven:
 | Export | Checked how |
 |---|---|
 | `atlas.png`, `animations.json`, `sprite-player.js` | Frames rebuilt from the atlas match the source; demo state machine run scripted |
-| `atlas.json` (JSON-hash) | Structure and bounds only; not loaded in Phaser or PixiJS |
-| `sprites.css` | Structure only; not played in a browser |
-| Godot `.tres`, Cocos `.plist` | Parsed and cross-referenced; not imported into the editors |
+| `atlas.json` (JSON-hash) | Loaded in Phaser 3.80 and PixiJS 8.6 in Chromium as shown below: every frame matches its source frame, playback order and timing checked at 60 and 144 Hz; layered anchors not checked in these engines |
+| `sprites.css` | Played in Chromium (whole-body clips only, as exported): every frame matches its source frame; not checked in Safari or on phones |
+| Godot `.tres` + `.import` | Imported into Godot 4.3: every frame matches its source frame, `AnimatedSprite2D` playback order, timing and loop checked at 60 and 144 Hz; layered anchors not checked |
+| Cocos `.plist` | Parsed and cross-referenced; not imported into the editor |
 | Unity `SpriteSetImporter.cs` | Never compiled or run. It imports frames, not layer anchors |
 
 ## The layered contract
@@ -76,19 +77,25 @@ or under 2048 px on low-end devices: use a pixel preset, `--size 192`, `--aim-st
 ## Phaser 3
 
 ```js
-this.load.atlas("hero", "atlas.png", "atlas.json");
+// preload(): the manifest, then every atlas page it lists (big sets split into atlas_0, atlas_1...)
 this.load.json("hero_anims", "animations.json");
+this.load.once("filecomplete-json-hero_anims", (key, type, doc) => {
+  doc.pages.forEach((p, i) => this.load.atlas(`hero${i}`, p.file, p.file.replace(".png", ".json")));
+});
 // create():
 const doc = this.cache.json.get("hero_anims");
+const pageOf = {};
+doc.pages.forEach((p, i) => this.textures.get(`hero${i}`).getFrameNames().forEach((f) => { pageOf[f] = `hero${i}`; }));
+const frameName = (clip, i) => `${clip}_${String(i).padStart(3, "0")}`;
 for (const [key, c] of Object.entries(doc.clips)) {
   this.anims.create({
     key, frameRate: c.fps, repeat: c.loop ? -1 : 0,
-    frames: c.frames.map((_, i) => ({ key: "hero", frame: `${key}_${String(i).padStart(3, "0")}` })),
+    frames: c.frames.map((_, i) => ({ key: pageOf[frameName(key, i)], frame: frameName(key, i) })),
   });
 }
 const origin = [doc.pivot[0] / doc.frame_size, doc.pivot[1] / doc.frame_size];
-const legs = this.add.sprite(x, y, "hero").setOrigin(...origin);
-const torso = this.add.sprite(x, y, "hero").setOrigin(...origin);
+const legs = this.add.sprite(x, y, "hero0").setOrigin(...origin);
+const torso = this.add.sprite(x, y, "hero0").setOrigin(...origin);
 // update(): position torso from the legs' current anchor
 const a = doc.clips[legs.anims.currentAnim.key].anchors[legs.anims.currentFrame.index - 1];
 torso.setPosition(legs.x + a[0] * (legs.flipX ? -1 : 1), legs.y + a[1]);
@@ -96,10 +103,12 @@ torso.setPosition(legs.x + a[0] * (legs.flipX ? -1 : 1), legs.y + a[1]);
 
 ## Godot 4
 
-Copy `atlas.png` and `engine/godot/sprite_frames.tres` to the project root. Use two `AnimatedSprite2D`
+Copy the atlas pages (`atlas.png`, or `atlas_0.png`, `atlas_1.png`... for big sets), their `.import` files
+from `engine/godot/`, and `engine/godot/sprite_frames.tres` to the project root. Use two `AnimatedSprite2D`
 nodes sharing the resource. On each frame change of the lower sprite, set the upper's `position` from
 that frame's anchor, loaded from `animations.json`. Set `offset` on both so the feet sit on the node
-origin: `offset = (frame_size/2 - pivot.x, frame_size/2 - pivot.y)`.
+origin: `offset = (frame_size/2 - pivot.x, frame_size/2 - pivot.y)`. The `.import` file sets Lossless
+compression and turns off Fix Alpha Border, which would otherwise give soft HD edges a faint dark fringe.
 
 ## Cocos Creator
 

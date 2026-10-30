@@ -1,3 +1,4 @@
+# Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
 """Frames -> sheets, trimmed atlas pages, manifests and engine import files."""
 import base64
 import hashlib
@@ -181,6 +182,13 @@ def godot_tres(root, doc):
     body = "\n".join(subs)
     with open(os.path.join(root, "engine", "godot", "sprite_frames.tres"), "w", encoding="utf-8") as fh:
         fh.write(head + ext + "\n" + body + "\n[resource]\nanimations = [" + ", ".join(anims) + "]\n")
+    # Import settings to copy next to each page. Godot's default fix_alpha_border recolours pixels
+    # under about 7% alpha, which turns soft HD edges into a faint dark fringe; the atlas is
+    # already bled, so it is off here. Godot fills in the uid and paths on first import.
+    for p in pages:
+        with open(os.path.join(root, "engine", "godot", p["file"] + ".import"), "w", encoding="utf-8") as fh:
+            fh.write('[remap]\n\nimporter="texture"\ntype="CompressedTexture2D"\n\n[params]\n\n'
+                     "compress/mode=0\nmipmaps/generate=false\nprocess/fix_alpha_border=false\n")
 
 
 def cocos_plist(root, doc):
@@ -222,8 +230,8 @@ def css_keyframes(root, doc, sheets):
     size = doc["frame_size"]
     rules = [f".sprite{{width:{size}px;height:{size}px;background-repeat:no-repeat;image-rendering:auto}}\n"]
     for name, c in doc["clips"].items():
-        if name not in sheets:
-            continue
+        if name not in sheets or c.get("layer", "full") != "full":
+            continue        # CSS has no way to sync two layers, so only whole-body clips apply
         cols, rows = sheets[name]
         n = len(c["frames"])
         dur = n / c["fps"]
