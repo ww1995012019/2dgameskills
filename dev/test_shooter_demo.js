@@ -46,6 +46,9 @@ const send = (type, code) => listeners[type].forEach((f) => f({ code, repeat: fa
   const tapS = (c, s) => { send('keydown', c); stepN(3, s); send('keyup', c); };
   const until = (cond, s, max = 600) => { let i = 0; while (!cond() && i++ < max) { tick(); s(); } return i; };
   const idle = () => P.st === 'idle' && !P.full && P.upper === 'aim';
+  // Ammo of the weapon in hand; weapons fill P.ammo in order, and start with a full magazine.
+  const W = () => Object.keys(P.ammo)[P.wi];
+  const MAG = { ...P.ammo };
 
   rec('idle', (s) => stepN(30, s));
   rec('walk', (s) => { send('keydown', 'KeyD'); stepN(30, s); send('keyup', 'KeyD'); stepN(5, s); });
@@ -54,25 +57,34 @@ const send = (type, code) => listeners[type].forEach((f) => f({ code, repeat: fa
   console.log('   face', P.face, 'aim', Math.round(P.aim));
   const b0 = P.shots;
   rec('fire 1s', (s) => { send('keydown', 'KeyJ'); stepN(60, s); send('keyup', 'KeyJ'); stepN(10, s); });
-  console.log('   shots in 1s', P.shots - b0, 'ammo', P.ammo.rifle);
+  console.log('   shots in 1s', P.shots - b0, 'ammo', P.ammo[W()]);
   const m = D.up.clip;
   rec('aim sweep', (s) => { el('game').onmousemove({ clientX: 900, clientY: 0 }); stepN(50, s); el('game').onmousemove({ clientX: 900, clientY: 430 }); stepN(50, s); el('game').onmousemove({ clientX: 900, clientY: 200 }); stepN(30, s); });
   rec('run + fire + aim', (s) => { send('keydown', 'KeyD'); send('keydown', 'ShiftLeft'); send('keydown', 'KeyJ'); stepN(40, s); send('keyup', 'KeyD'); send('keyup', 'ShiftLeft'); send('keyup', 'KeyJ'); stepN(6, s); });
   rec('reload', (s) => { tapS('KeyR', s); until(idle, s); });
-  console.log('   ammo after reload', P.ammo.rifle);
-  rec('reload while run', (s) => { P.ammo.rifle = 3; send('keydown', 'KeyD'); send('keydown', 'ShiftLeft'); tapS('KeyR', s); stepN(30, s); send('keyup', 'KeyD'); send('keyup', 'ShiftLeft'); until(idle, s); });
+  console.log('   ammo after reload', P.ammo[W()]);
+  rec('reload while run', (s) => { P.ammo[W()] = Math.min(3, MAG[W()] - 1); send('keydown', 'KeyD'); send('keydown', 'ShiftLeft'); tapS('KeyR', s); stepN(30, s); send('keyup', 'KeyD'); send('keyup', 'ShiftLeft'); until(idle, s); });
   rec('switch', (s) => { tapS('KeyQ', s); until(idle, s); });
   console.log('   weapon', P.wi);
   rec('shotgun fire', (s) => { send('keydown', 'KeyJ'); stepN(50, s); send('keyup', 'KeyJ'); stepN(40, s); });
   rec('back to rifle', (s) => { tapS('KeyQ', s); until(idle, s); });
   rec('throw', (s) => { tapS('KeyG', s); until(idle, s); stepN(90, s); });
   rec('melee', (s) => { tapS('KeyF', s); until(idle, s); });
+  // A key pressed on the last frame of a busy upper action must run once it ends, not vanish.
+  // Presses are buffered for 0.13 s, so earlier than the last frame may legitimately expire.
+  const nearEnd = () => D.up.frame >= D.up.clip.frames.length - 1;
+  const settled = (n) => () => D.up.name.endsWith(n) || D.up.name.includes('_aim_');
+  P.ammo[W()] = MAG[W()] - 1;
+  rec('R at throw end', (s) => { tapS('KeyG', s); until(nearEnd, s); tapS('KeyR', s); until(settled('_reload'), s); until(idle, s); });
+  console.log('   ammo', P.ammo[W()], P.ammo[W()] === MAG[W()] ? 'ok' : 'SWALLOWED');
+  P.ammo[W()] = MAG[W()] - 1;
+  rec('G at reload end', (s) => { tapS('KeyR', s); until(nearEnd, s); tapS('KeyG', s); until(settled('_throw'), s); until(idle, s); });
   rec('jump + air fire', (s) => { tapS('Space', s); until(() => P.air, s); send('keydown', 'KeyJ'); stepN(20, s); send('keyup', 'KeyJ'); until(() => !P.air, s); until(idle, s); });
   rec('crouch fire', (s) => { send('keydown', 'KeyS'); stepN(15, s); send('keydown', 'KeyJ'); stepN(20, s); send('keyup', 'KeyJ'); send('keyup', 'KeyS'); until(idle, s); });
   rec('roll', (s) => { tapS('KeyL', s); until(idle, s); });
   rec('slide', (s) => { send('keydown', 'KeyD'); tapS('KeyC', s); send('keyup', 'KeyD'); until(idle, s); });
   rec('death revive', (s) => { tapS('KeyX', s); stepN(100, s); tapS('KeyX', s); stepN(5, s); });
-  P.ammo.rifle = 2;
+  P.ammo[W()] = Math.min(2, MAG[W()]);
   rec('auto reload at 0', (s) => { send('keydown', 'KeyJ'); stepN(40, s); send('keyup', 'KeyJ'); until(idle, s); });
-  console.log('final ammo', P.ammo.rifle, 'bullets', D.bullets.length, 'fx', D.fxList.length, 'x', Math.round(P.x), 'hit targets', D.targets.filter((t) => t.hp < 4).length);
+  console.log('final ammo', P.ammo[W()], 'bullets', D.bullets.length, 'fx', D.fxList.length, 'x', Math.round(P.x), 'hit targets', D.targets.filter((t) => t.hp < 4).length);
 })();

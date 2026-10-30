@@ -1,12 +1,12 @@
 # 交接文档
 
-更新于 2026-10-30。这是未完成工作的快照，分支 `wip/shooter-and-qa`。`main` 上是已发布的第一版 skill，没有动过。
+更新于 2026-10-30。这是未完成工作的快照，分支 `claude/elegant-brown-0q6iwm`（从 `wip/shooter-and-qa` 接着做）。`main` 上是已发布的第一版 skill，没有动过。
 
 ## 接手时直接说
 
 把下面这段发给 Claude 就能继续：
 
-> 克隆 https://github.com/ww1995012019/2dgameskills 的 `wip/shooter-and-qa` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」第 1 步继续。
+> 克隆 https://github.com/ww1995012019/2dgameskills 的 `claude/elegant-brown-0q6iwm` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」第 6 步继续。
 
 ## 这两个 skill 是什么
 
@@ -29,46 +29,43 @@
 - 穿模检测：武器挡脸、武器和身体穿地、画面被帧边缘裁切（`qa_motion.py` 的 `limits`、`clip`、`bounds` 列）
 - AI 视觉质检工具：`scripts/visual_review.py`，流程见 `references/visual-review.md`
 - 生成前自动适配角色比例，让最大动作不出画（`render.py` 的 `fit_scale`）
-
-没完成：见下一节。全量回归是**手动中途停下的**，所以下面的结果不是最终结果。
+- 2026-10-30 第二轮（下面「接下来要做的事」第 1～5 步）：
+  - `attack_3` 右边裁切：剑约 30 毫秒扫过 200°，最远点落在 `fit_scale` 每秒 30 次的采样之间。改成每秒 120 次，并把刀光样条也算进去。刀光原来用当前帧的压扁画历史位置，现在每个点用它自己那一帧的压扁。`attack_3` 的前冲 `root_x` 从 8～9 改成 2，否则量准之后所有角色要缩小 6～10%。
+  - ghost 狙击枪朝正上方瞄准时扶枪手够不着（grip FAIL）：扶枪点超出手臂长度时，沿枪身往回滑（`rig.py` 的 `_slide_in`），间隙从 1.56 降到 0.14 单位。
+  - 视觉质检发现死亡、翻滚时披风和头发穿到地面以下最多 20 像素：布料地面碰撞改成按画出来的带宽留空间（`cloth.py` 的 `_ground`、`ChainDef.width`），头上的链也加了地面，地面改成非弹性（否则披风会弹起）。
+  - 试玩页测试改成按当前武器算弹药，并新增「投弹最后一帧按 R」「换弹最后一帧按 G」两个用例。
+  - 新增 `dev/regress_all.sh`，Linux 和 macOS 用，可并行，`ONLY=ghost,swat` 只跑部分角色。
 
 ## 最后一次回归结果
 
-共 18 套（9 个角色 × 高清、像素）。跑完 14 套，停止时还差 4 套。这是最新代码的结果。
+2026-10-30，最新代码，18 套全部跑完：**0 FAIL**。
 
-| 结果 | 套数 | 明细 |
-|---|---|---|
-| 全过 | 9 | commando、swat、mage、ninja 的高清和像素，knight 高清 |
-| 1 个 FAIL | 5 | goblin 高清、goblin 像素、hero 高清、hero 像素、knight 像素 |
-| 没跑完 | 4 | ghost 高清、ghost 像素、mercenary 高清、mercenary 像素 |
+- 唯一的 WARN：mage 像素的 `crouch_idle` `spike` 2.61，阈值 2.6。64 像素呼吸动画的取整噪声（每帧都变 20～50 像素），没有放宽阈值。
+- 导出校验 18 套全部 OK，多页图集两边都 OK。
+- 试玩页测试 8 套射击结果全部正常，两个按键缓冲用例都通过。
 
-这 5 个 FAIL 是同一个问题：`attack_3` 的 `bounds`，画面**右边缘**被裁切。
+自动适配比例（`[fit]`）：hero 0.929、knight 0.945、ninja 0.892、goblin 0.787、mage 0.794、commando 0.977、ghost 0.848。
 
-| 套 | 帧 | 边缘像素 alpha |
-|---|---|---|
-| hero 高清 | 9、10 | 198、11 |
-| hero 像素 | 5 | 255 |
-| goblin 高清 | 8 | 255 |
-| goblin 像素 | 4 | 255 |
-| knight 像素 | 5 | 255 |
+## 视觉质检记录
 
-高清的 alpha 不到 255，**推测**是刀光弧线越界，尚未验证。`fit_scale` 按刀尖的路径计算，但刀光是用 Catmull-Rom 曲线插值的，曲线可能冲出采样点。另一个可能是刀光的时间窗口比 `fit_scale` 的采样更细。
+按 `references/visual-review.md` 看完了 hero 高清（5 张）和 commando 高清（10 张），结论都用 `--record` 记录，没有未解决的 bug 级问题。
 
-ghost 和 mercenary 上一轮有过这些失败，本轮修复针对的就是它们，但**还没验证修好了**：
-- `roll`：长枪穿地（`weapon_margin` 已改）
-- `death`：脚穿地（已加转动脚的约束）
-- sniper 高仰角的抓握 WARN（`clear` 从 15 改成 11）
+已修的 bug 级问题：死亡时披风和头发穿地（见上）。
+
+留下的观感问题，没修：
+- hero `skid` 第 4 帧：急停时披风卷成半圆
+- commando `rifle_aim_m90`：枪朝正下方时和腿叠在一起，剪影看不到枪，彩色能看清
+- commando `rifle_fire_m90`、`shotgun_fire_m90`：站着朝正下方开火，枪口火光画到地面以下。这个角度主要在空中用
+
+没看的：其他 7 个角色、像素版。
 
 ## 接下来要做的事
 
-1. **修 `attack_3` 的 `bounds`。** 先确认是刀光还是刀身。如果是刀光，把 `smear` 用的插值点也算进 `fit_scale`，或者给 `extent_points` 加余量。改动在 `game-sprite-animator`，它的 `render.py` 和 `art.py`。
-2. **跑全量回归**，确认 18 套都是 0 FAIL。见下方命令，约 15 分钟，放后台跑。
-3. **做完整的 AI 视觉质检，这一步还没做过。** 目前只抽看过 3 张审查图，找到了翻滚悬空、刀光裁切、披风打结，这些已修，但没有复查。至少覆盖 hero 高清和 commando 高清，按 `references/visual-review.md` 看完每张图，用 `visual_review.py --record` 记录结论。重点看翻滚贴地、死亡、披风、瞄准上下极限、换弹。
-4. **重新测试射击试玩页。** 用 `dev/test_shooter_demo.js`。动作和武器参数改过之后还没重测。上次发现的「换弹结束那一帧按 R 被吞」已修，也要确认。
-5. **校验导出**：`dev/verify_exports_shooter.py` 和 `dev/verify_exports_sprite.py`。
+1～5 已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验）。
+
 6. **打包两个 skill**，解压到全新目录试运行。根目录的 `game-sprite-animator.skill` 目前是**旧版**，没有本分支的内容。
 7. **更新 README**：加入射击 skill、约束和视觉质检，换预览图。
-8. **检查自动适配的缩放比例。** 生成时会打印 `[fit]`。commando 是 0.962，但 mage 是 0.806，法杖太长导致角色小了约 19%，同尺寸下看起来会偏小。比较好的做法可能是调整法杖的握持和挥舞幅度。
+8. **检查自动适配的缩放比例。** mage 0.794 和 goblin 0.787 比其他角色小约 15%。最宽的动作都是 `attack_3`，长兵器（法杖、长枪）加上下劈。可以考虑按武器长度调整挥舞幅度。
 9. **询问用户后再合并到 `main`。** 这是公开仓库，合并和发布要用户确认。
 
 ## 常用命令
@@ -83,7 +80,7 @@ python scripts/visual_review.py out/hero
 python scripts/visual_review.py out/hero --record verdict.json
 ```
 
-全量回归：`dev/regress_all.ps1`，要在 `game-shooter-animator/scripts` 目录下运行，结果写到 `%TEMP%\spr\all`。然后：
+全量回归：Windows 用 `dev/regress_all.ps1`，要在 `game-shooter-animator/scripts` 目录下运行，结果写到 `%TEMP%\spr\all`。Linux 和 macOS 在仓库根目录运行 `dev/regress_all.sh`，结果写到 `$TEMP/spr/all`（默认 `/tmp`），日志在 `$TEMP/spr/logs`。然后：
 
 ```bash
 python dev/qa_failures.py
@@ -98,7 +95,7 @@ python dev/qa_flags.py all/hero-hd all/commando-hd
 
 | 文件 | 作用 |
 |---|---|
-| `regress_all.ps1` | 跑 9 个角色的全量回归 |
+| `regress_all.ps1`、`regress_all.sh` | 跑 9 个角色的全量回归（Windows、Linux 和 macOS） |
 | `qa_failures.py` | 汇总每套的失败项，定位裁切边缘 |
 | `qa_flags.py` | 列出标记的帧和原因 |
 | `verify_exports_sprite.py`、`verify_exports_shooter.py` | 校验图集还原、plist、tres、CSS |
