@@ -1,12 +1,12 @@
 # 交接文档
 
-更新于 2026-10-30。这是未完成工作的快照，分支 `claude/elegant-brown-0q6iwm`（从 `wip/shooter-and-qa` 接着做）。`main` 上是已发布的第一版 skill，没有动过。
+更新于 2026-10-30。这一轮的工作在分支 `claude/elegant-brown-0q6iwm` 上完成（从 `wip/shooter-and-qa` 接着做），已合并到 `main`。
 
 ## 接手时直接说
 
 把下面这段发给 Claude 就能继续：
 
-> 克隆 https://github.com/ww1995012019/2dgameskills 的 `claude/elegant-brown-0q6iwm` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」第 9 步继续。
+> 克隆 https://github.com/ww1995012019/2dgameskills 的 `main` 分支，读根目录的 HANDOVER.md，从「接下来要做的事」末尾列出的后续工作继续。
 
 ## 这两个 skill 是什么
 
@@ -38,13 +38,13 @@
 
 ## 最后一次回归结果
 
-2026-10-30，最新代码，18 套全部跑完：**0 FAIL**。
+2026-10-30，最新代码，18 套全部跑完：**0 FAIL、0 WARN**。最后一轮改武器长度和握法后，sprite 的 10 套重跑过；射击 skill 之后只改了预览脚本和文档，沿用上一轮的 8 套结果。
 
-- 唯一的 WARN：mage 像素的 `crouch_idle` `spike` 2.61，阈值 2.6。64 像素呼吸动画的取整噪声（每帧都变 20～50 像素），没有放宽阈值。
 - 导出校验 18 套全部 OK，多页图集两边都 OK。
 - 试玩页测试 8 套射击结果全部正常，两个按键缓冲用例都通过。
+- 之前 mage 像素 `crouch_idle` 的取整噪声 WARN（spike 2.61），在比例变化后消失了，阈值没动。
 
-自动适配比例（`[fit]`，取自回归日志）：knight 1.000、swat 1.000、mercenary 0.990、commando 0.977、hero 0.929、ninja 0.892、mage 0.849、ghost 0.848、goblin 0.787。
+自动适配比例（`[fit]`，取自回归日志）：knight 0.939、hero 0.929、mage 0.905、ninja 0.891、goblin 0.852；swat 1.000、mercenary 0.990、commando 0.977、ghost 0.848。
 
 ## 视觉质检记录
 
@@ -62,7 +62,7 @@
 
 ## 接下来要做的事
 
-1～8 已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README、比例）。
+1～9 都已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README、比例、合并）。可以接着做的：其他角色和像素版的视觉质检，以及「视觉质检记录」里留下的观感问题。
 
 第 6 步打包：根目录的 `game-sprite-animator.skill` 和 `game-shooter-animator.skill` 都是本分支的最新代码，包内文件和 git 跟踪的文件一一对应。解压到全新目录后，按 SKILL.md 的流程跑通了预览图、生成（像素）、数值检测（0 FAIL）、审查图，射击的试玩页测试也通过了。试运行时发现 `contact_sheet.py` 遇到角色没有的动作名会直接抛 `KeyError`（SKILL.md 示例里的 `rifle_reload`，swat 拿的是冲锋枪），已改成和 `generate.py` 一样列出可用动作名，SKILL.md 也补了说明。改了 skill 里的文件之后要重新打包：
 
@@ -71,7 +71,7 @@ cd <skill-creator 目录> && PYTHONUTF8=1 python -m scripts.package_skill <仓�
 ```
 7. ~~更新 README~~ 已完成：加入射击 skill、约束、穿模检测和视觉质检；`docs/preview.png` 用最新代码重新生成，新增 `docs/preview-shooter.png`（commando 的跑动射击、跳跃射击、翻滚、炸飞）。
 8. ~~检查自动适配的缩放比例~~ 已完成。量出来的武器尖原来比画出来的短 4～9 个单位（从手腕量，长度表是旧的：长枪 62 实际画到 66，斧 40 实际 47），一直靠 `fit_scale` 留的 6 个单位余量撑着。现在 `art.py` 的 `WEAPON_REACH` 记录每种武器实际画出的长度，`blade_points`、武器绘制和地面约束共用同一个起点（`weapon_origin`），余量降到 4。长枪和法杖改成握在更靠中间的位置（`WEAPON_GRIP`，总长不变）。比例：hero 0.929（不变）、knight 0.939、mage 0.905（原 0.849）、ninja 0.891、goblin 0.852（原 0.787），最大和最小的差距从 27% 缩到 10%。地面约束改成绕武器的真实起点算（`rig.py` 的 `pivot_y`），否则 goblin `attack_3` 落地时枪尖会插进地面 1 个单位。
-9. **询问用户后再合并到 `main`。** 这是公开仓库，合并和发布要用户确认。
+9. ~~合并到 `main`~~ 用户同意后通过 PR 合并。之后的新工作从最新的 `main` 开新分支。
 
 ## 常用命令
 
