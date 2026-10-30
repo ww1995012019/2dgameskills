@@ -1,0 +1,13 @@
+{
+  "name": "ninja",
+  "head": "hood",
+  "weapon": "sword",
+  "cloth": ["scarf"],
+  "body": { "head_size": 0.92, "bulk": 0.92 },
+  "style": { "speed": 1.2, "bounce": 1.25 },
+  "colors": {
+    "skin": "#e8bd96", "hair": "#20222c", "tunic": "#2b3244", "tunic2": "#1e2432",
+    "pants": "#262c3c", "boots": "#3b4254", "belt": "#7a2f35", "metal": "#d5dde6",
+    "accent": "#e2483f", "cape": "#d6423e", "glove": "#3b4254", "eye": "#141622", "ink": "#101119"
+  }
+}

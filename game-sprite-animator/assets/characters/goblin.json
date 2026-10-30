@@ -1,0 +1,112 @@
+{
+  "name": "goblin",
+  "head": "hood",
+  "weapon": "spear",
+  "cloth": [
+    "scarf"
+  ],
+  "body": {
+    "head_size": 1.05,
+    "bulk": 0.95
+  },
+  "style": {
+    "speed": 1.1,
+    "bounce": 1.2
+  },
+  "colors": {
+    "skin": "#8fb35a",
+    "hair": "#2f3b24",
+    "tunic": "#7a5a3a",
+    "tunic2": "#5a4029",
+    "pants": "#4b3a2c",
+    "boots": "#3a3026",
+    "belt": "#2f2620",
+    "metal": "#b7bcc4",
+    "accent": "#d4a33a",
+    "cape": "#9c3a2e",
+    "glove": "#6d8b42",
+    "eye": "#c9402e",
+    "ink": "#1a1a14"
+  },
+  "custom_clips": {
+    "taunt": {
+      "loop": false,
+      "keys": [
+        [
+          0.0,
+          {}
+        ],
+        [
+          0.14,
+          {
+            "root_y": -6,
+            "spine": 12,
+            "head": -14
+          }
+        ],
+        [
+          0.26,
+          {
+            "root_y": 0,
+            "spine": -6,
+            "head": 4,
+            "arm_f_up": 96,
+            "arm_f_lo": 40,
+            "mouth": 1,
+            "brow": 1
+          }
+        ],
+        [
+          0.4,
+          {
+            "root_y": -1,
+            "spine": -6,
+            "head": 6,
+            "arm_f_up": 96,
+            "arm_f_lo": 84,
+            "mouth": 0.6,
+            "brow": 1
+          }
+        ],
+        [
+          0.54,
+          {
+            "root_y": 0,
+            "spine": -6,
+            "head": 4,
+            "arm_f_up": 96,
+            "arm_f_lo": 40,
+            "mouth": 1,
+            "brow": 1
+          }
+        ],
+        [
+          0.68,
+          {
+            "root_y": -1,
+            "spine": -6,
+            "head": 6,
+            "arm_f_up": 96,
+            "arm_f_lo": 84,
+            "mouth": 0.6,
+            "brow": 1
+          }
+        ],
+        [
+          1.0,
+          {}
+        ]
+      ],
+      "events": [
+        [
+          0.26,
+          "taunt_sfx"
+        ]
+      ],
+      "tags": [
+        "ground",
+        "hold_feet"
+      ]
+    }
+  }
+}

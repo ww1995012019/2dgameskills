@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ 动作预览</title>
+<style>
+:root{--bg:#14161d;--panel:#1d2029;--panel2:#262a36;--line:#343a4a;--text:#e9ebf1;--mute:#9aa1b3;--acc:#f0b84a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Microsoft YaHei",sans-serif}
+header{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
+h1{font-size:16px;margin:0}
+.tabs{display:flex;gap:4px}
+.tabs button{background:none;border:1px solid transparent;color:var(--mute);padding:6px 14px;border-radius:6px;cursor:pointer;font:inherit}
+.tabs button.on{background:var(--panel2);border-color:var(--line);color:var(--text)}
+main{padding:16px;max-width:1280px;margin:0 auto}
+.hidden{display:none!important}
+#gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.cell{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;text-align:center}
+.cell.on{border-color:var(--acc)}
+.cell canvas{width:100%;height:auto;display:block}
+.cell b{display:block;font-weight:500;font-size:13px}
+.cell span{color:var(--mute);font-size:12px}
+.inspect{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;margin-bottom:16px}
+@media (max-width:800px){.inspect{grid-template-columns:1fr}}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;justify-content:center;align-items:center;min-height:300px}
+.stage canvas{max-width:100%;height:auto}
+.side{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row label{color:var(--mute)}
+.btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:5px 10px;border-radius:6px;cursor:pointer;font:inherit}
+.btn:hover{border-color:var(--acc)}
+input[type=range]{flex:1;min-width:100px;accent-color:var(--acc)}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--mute);word-break:break-all}
+#game{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#222838;outline:none}
+.keys{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;color:var(--mute)}
+kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 6px;color:var(--text);font:12px ui-monospace,Consolas,monospace}
+</style>
+</head>
+<body>
+<header>
+  <h1>__TITLE__</h1>
+  <div class="tabs">
+    <button id="tabA" class="on">动作库</button>
+    <button id="tabB">试玩</button>
+  </div>
+  <span class="mono" id="stat"></span>
+</header>
+<main>
+  <section id="paneA">
+    <div class="inspect">
+      <div class="stage" id="stage"><canvas id="big"></canvas></div>
+      <div class="side">
+        <div><b id="cname"></b> <span class="mono" id="cinfo"></span></div>
+        <div class="row"><label>速度</label><input id="spd" type="range" min="0.05" max="1.5" step="0.05" value="1"><span id="spdv" class="mono">1.00x</span></div>
+        <div class="row"><button class="btn" id="pp">暂停</button><button class="btn" id="prev">上一帧</button><button class="btn" id="next">下一帧</button></div>
+        <div class="row"><label><input type="checkbox" id="onion"> 洋葱皮</label><label><input type="checkbox" id="flip"> 翻转</label><label><input type="checkbox" id="grid"> 地面线</label></div>
+        <div class="row"><label>背景</label><button class="btn" data-bg="#1d2029">深</button><button class="btn" data-bg="#8fb7d9">天空</button><button class="btn" data-bg="#ffffff">白</button><button class="btn" data-bg="checker">棋盘</button></div>
+        <div class="mono" id="cevents"></div>
+      </div>
+    </div>
+    <div id="gallery"></div>
+  </section>
+  <section id="paneB" class="hidden">
+    <canvas id="game" width="960" height="440" tabindex="0"></canvas>
+    <div class="keys">
+      <span><kbd>A</kbd><kbd>D</kbd>/<kbd>←</kbd><kbd>→</kbd> 走</span><span>按住 <kbd>Shift</kbd> 跑</span><span><kbd>空格</kbd> 跳 / 二段跳</span>
+      <span><kbd>S</kbd>/<kbd>↓</kbd> 蹲</span><span><kbd>J</kbd> 三连击</span><span><kbd>K</kbd> 冲刺</span><span><kbd>L</kbd> 翻滚</span>
+      <span><kbd>U</kbd> 施法</span><span><kbd>I</kbd> 格挡</span><span><kbd>H</kbd> 受击</span><span><kbd>X</kbd> 死亡 / 复活</span>
+    </div>
+  </section>
+</main>
+<script>
+/*__PLAYER__*/
+const DATA = /*__DATA__*/null;
+const $ = (id) => document.getElementById(id);
+const doc = DATA.doc, fxDoc = DATA.fx;
+const SIZE = doc.frame_size;
+const PIXEL = SIZE < 128;
+const loadAll = (urls) => Promise.all(urls.map((u) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i); i.src = u; })));
+
+const CN = {idle:"待机",idle_look:"待机·张望",walk:"走路",run:"奔跑",skid:"急停",jump_start:"起跳",jump_rise:"上升",jump_apex:"滞空",fall:"下落",land:"落地",double_jump:"二段跳",crouch_enter:"下蹲",crouch_idle:"蹲姿",crouch_exit:"起身",crouch_walk:"蹲行",roll:"翻滚",dash:"冲刺",wall_slide:"贴墙下滑",attack_1:"攻击 1",attack_2:"攻击 2",attack_3:"攻击 3",air_attack:"空中攻击",cast:"施法",block:"格挡",block_hit:"格挡受击",hurt:"受击",death:"死亡"};
+
+loadAll(DATA.images).then((imgs) => loadAll(DATA.fx_images).then((fxImgs) => start(imgs, fxImgs)));
+
+function start(imgs, fxImgs) {
+  const names = Object.keys(doc.clips);
+  const total = names.reduce((s, n) => s + doc.clips[n].frames.length, 0);
+  $("stat").textContent = `${names.length} 个动作 · ${total} 帧 · ${SIZE}px`;
+  const scale = PIXEL ? Math.floor(256 / SIZE) : 1;
+
+  // ---- gallery ------------------------------------------------------------
+  const cells = names.map((n) => {
+    const el = document.createElement("div");
+    el.className = "cell";
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = SIZE * scale;
+    const c = doc.clips[n];
+    el.append(cv);
+    const b = document.createElement("b"); b.textContent = CN[n] || n;
+    const s = document.createElement("span"); s.textContent = `${n} · ${c.frames.length}f`;
+    el.append(b, s);
+    el.onclick = () => select(n);
+    $("gallery").append(el);
+    const ctx = cv.getContext("2d"); ctx.imageSmoothingEnabled = !PIXEL;
+    const p = new SpritePlayer(doc, imgs); p.play(n);
+    return { n, el, cv, ctx, p, hold: 0 };
+  });
+
+  const big = $("big");
+  big.width = big.height = Math.max(SIZE * scale, 420);
+  const bctx = big.getContext("2d");
+  const bscale = big.width / SIZE;
+  const bp = new SpritePlayer(doc, imgs);
+  let paused = false, bg = "#1d2029", bigHold = 0;
+  function select(n) {
+    bp.play(n, { restart: true });
+    cells.forEach((c) => c.el.classList.toggle("on", c.n === n));
+    const c = doc.clips[n];
+    $("cname").textContent = CN[n] || n;
+    $("cinfo").textContent = `${n}`;
+    const lines = [`${c.frames.length} 帧 · ${c.fps} fps · ${c.duration}s · ${c.loop ? "循环" : "单次"}`];
+    if (c.speed_px_s) lines.push(`移动速度 ${c.speed_px_s} px/s`);
+    if (c.events.length) lines.push("事件 " + c.events.map((e) => `${e.frame}:${e.name}`).join(" "));
+    if (c.chain_frame) lines.push(`连招取消帧 ${c.chain_frame}`);
+    $("cevents").innerHTML = lines.join("<br>");
+  }
+  $("pp").onclick = () => { paused = !paused; $("pp").textContent = paused ? "播放" : "暂停"; };
+  const stepBy = (d) => { paused = true; $("pp").textContent = "播放"; const n = bp.clip.frames.length; bp.frame = (bp.frame + d + n) % n; bp.done = false; };
+  $("prev").onclick = () => stepBy(-1);
+  $("next").onclick = () => stepBy(1);
+  $("spd").oninput = (e) => { $("spdv").textContent = (+e.target.value).toFixed(2) + "x"; };
+  document.querySelectorAll("[data-bg]").forEach((b) => b.onclick = () => bg = b.dataset.bg);
+  const checker = (() => { const c = document.createElement("canvas"); c.width = c.height = 32; const x = c.getContext("2d"); x.fillStyle = "#555"; x.fillRect(0, 0, 32, 32); x.fillStyle = "#777"; x.fillRect(0, 0, 16, 16); x.fillRect(16, 16, 16, 16); return c; })();
+
+  function drawBig() {
+    const w = big.width;
+    bctx.imageSmoothingEnabled = !PIXEL;
+    if (bg === "checker") { bctx.fillStyle = bctx.createPattern(checker, "repeat"); } else bctx.fillStyle = bg;
+    bctx.fillRect(0, 0, w, w);
+    const flip = $("flip").checked;
+    const x = w / 2, y = doc.pivot[1] * bscale;
+    if ($("grid").checked) { bctx.strokeStyle = "#f0b84a"; bctx.beginPath(); bctx.moveTo(0, y + .5); bctx.lineTo(w, y + .5); bctx.moveTo(x + .5, 0); bctx.lineTo(x + .5, w); bctx.stroke(); }
+    if ($("onion").checked) {
+      const n = bp.clip.frames.length;
+      for (const [d, a] of [[-2, .12], [-1, .25], [1, .25], [2, .12]]) {
+        let f = bp.frame + d;
+        if (bp.clip.loop) f = (f + n) % n;
+        if (f >= 0 && f < n) bp.draw(bctx, x, y, { flip, scale: bscale, frame: f, alpha: a });
+      }
+    }
+    bp.draw(bctx, x, y, { flip, scale: bscale });
+    $("cinfo").textContent = `${bp.name} · 第 ${bp.frame + 1}/${bp.clip.frames.length} 帧`;
+  }
+
+  // ---- playable demo ------------------------------------------------------
+  const game = $("game"), g = game.getContext("2d");
+  const Z = PIXEL ? Math.max(2, Math.round(180 / SIZE)) : 1.15;
+  const hero = new SpritePlayer(doc, imgs);
+  const groundY = 372;
+  const P = { x: 200, y: groundY, vx: 0, vy: 0, dir: 1, air: false, jumps: 0, state: "idle", combo: false, dead: false, cool: 0, dash: 0 };
+  const keys = {};
+  const GRAV = 2300, JUMP = 900, DBL = 780;
+  const walkV = (doc.clips.walk ? doc.clips.walk.speed_px_s : 80) * Z;
+  const runV = (doc.clips.run ? doc.clips.run.speed_px_s : 300) * Z;
+  const has = (n) => !!doc.clips[n];
+  const fxList = [];
+  function spawn(name, x, y, dir) {
+    if (!fxDoc || !fxDoc.clips[name]) return;
+    const p = new SpritePlayer(fxDoc, fxImgs); p.play(name);
+    fxList.push({ p, x, y, dir });
+  }
+  const set = (s, restart) => { if (!has(s)) s = "idle"; P.state = s; hero.play(s, { restart: !!restart }); };
+  let shake = 0;
+  function onEvent(e) {
+    const m = { footstep: "dust_step", land_dust: "dust_land", skid_dust: "dust_skid", dash_burst: "dust_dash", air_puff: "puff_air", block_spark: "block_spark" }[e];
+    if (m) spawn(m, P.x, m === "puff_air" ? P.y : groundY, P.dir < 0);
+    if (e === "takeoff") { P.vy = -JUMP; P.air = true; P.jumps = 1; }
+    if (e === "hit_on") { spawn("hit_spark", P.x + P.dir * 70 * Z, P.y - 10, false); }
+    if (e === "screen_shake") shake = 9;
+    if (e === "projectile") bolts.push({ x: P.x + P.dir * 60 * Z, y: P.y - 62 * Z, dir: P.dir, p: (() => { const q = new SpritePlayer(fxDoc, fxImgs); q.play("projectile_orb"); return q; })() });
+  }
+  const bolts = [];
+  const LOCK = new Set(["attack_1", "attack_2", "attack_3", "air_attack", "cast", "hurt", "death", "roll", "dash", "land", "jump_start", "double_jump", "crouch_exit", "block_hit"]);
+  const take = (k) => { if (!press[k]) return false; press[k] = false; return true; };
+  const LAND_CANCEL = 4;               // frames of landing that always play
+  const BUFFER = 0.13;                 // seconds a press stays valid
+  const press = {}, pressAge = {};
+  function step(dt) {
+    const s = P.state, left = keys.ArrowLeft || keys.KeyA, right = keys.ArrowRight || keys.KeyD, down = keys.ArrowDown || keys.KeyS, run = keys.ShiftLeft || keys.ShiftRight;
+    const mv = (right ? 1 : 0) - (left ? 1 : 0);
+    const cancelLand = s === "land" && hero.frame >= LAND_CANCEL;
+    const locked = LOCK.has(s) && !hero.done && !cancelLand;
+    const ev = hero.update(dt * 1000);
+    ev.forEach(onEvent);
+    if (s === "death") {
+      if (take("KeyX")) { P.dead = false; set("idle", true); }
+    } else {
+      if (take("KeyX")) { P.vx = 0; set("death", true); P.dead = true; }
+      else if (!locked && take("KeyH")) { set("hurt", true); P.vx = -P.dir * 120; spawn("hit_spark", P.x, P.y - 30, false); }
+      if (!locked && !P.air) {
+        if (take("KeyK")) { set("dash", true); P.vx = 0; }
+        else if (take("KeyL")) { set("roll", true); P.vx = P.dir * doc.clips.roll.speed_px_s * Z; }
+        else if (take("KeyU")) { set("cast", true); P.vx = 0; }
+        else if (take("KeyJ")) { set("attack_1", true); P.vx = 0; P.combo = false; }
+        else if (keys.KeyI && has("block")) { if (s !== "block") set("block", true); P.vx = 0; }
+        else if (take("Space")) { set("jump_start", true); }
+        else if (down) {
+          if (mv) { set("crouch_walk"); P.vx = mv * doc.clips.crouch_walk.speed_px_s * Z; P.dir = mv; }
+          else if (s === "crouch_enter" && hero.done) set("crouch_idle");
+          else if (s !== "crouch_idle" && s !== "crouch_enter") { set("crouch_enter", true); P.vx = 0; }
+          else P.vx = 0;
+        } else if (s === "crouch_idle" || s === "crouch_enter") { set("crouch_exit", true); P.vx = 0; }
+        else if (mv) {
+          P.dir = mv; const v = run ? runV : walkV; set(run ? "run" : "walk"); P.vx = mv * v;
+        } else {
+          if (s === "run") { set("skid", true); P.vx = P.dir * 240; }
+          else if (s !== "skid" && s !== "idle" && s !== "idle_look") { set("idle"); P.vx = 0; }
+        }
+      }
+      if (P.air && !locked) {
+        if (P.jumps < 2 && take("Space")) { P.jumps = 2; P.vy = -DBL; set("double_jump", true); }
+        else if (take("KeyJ")) set("air_attack", true);
+      }
+      if (P.air && mv) { const v = run ? runV * .85 : Math.max(walkV * 1.6, 180); P.vx = mv * v; P.dir = mv; }
+      else if (P.air && s !== "dash") P.vx *= Math.pow(.02, dt);
+      // combos: buffer J, cancel into the next hit at the clip's chain frame
+      if (s === "attack_1" || s === "attack_2") {
+        if (take("KeyJ")) P.combo = true;
+        if (P.combo && hero.frame >= doc.clips[s].chain_frame) { P.combo = false; set(s === "attack_1" ? "attack_2" : "attack_3", true); }
+      }
+      if (s === "dash") { const f = hero.frame / hero.clip.frames.length; P.vx = (f > .1 && f < .7) ? P.dir * doc.clips.dash.speed_px_s * Z * .9 : P.vx * .8; }
+      if (s === "attack_3") P.vx = hero.frame < hero.clip.frames.length * .35 ? P.dir * 150 : 0;
+      if (s === "attack_1" || s === "attack_2") P.vx = hero.frame < 8 ? P.dir * 40 : 0;
+      if (s === "skid") P.vx *= Math.pow(.004, dt);
+      if (s === "hurt") P.vx *= Math.pow(.01, dt);
+      // one-shots hand over to their follow-up
+      if (hero.done) {
+        if (s === "jump_start") set("jump_rise");
+        else if (s === "jump_apex" || s === "double_jump" || s === "air_attack") set(P.air ? "fall" : "land", true);
+        else if (s === "block_hit") set("block");
+        else if (s !== "death") { if (s === "land" || s === "skid" || s === "roll" || s === "dash" || s.startsWith("attack") || s === "cast" || s === "hurt" || s === "crouch_exit" || s === "block" || s === "idle_look") { if (!(s === "block" && keys.KeyI)) { set("idle"); P.vx = 0; } } }
+      }
+      if (s === "block" && !keys.KeyI && !locked) set("idle");
+      if (s === "jump_rise" && P.vy > -180) set("jump_apex", true);
+      if (P.air && s !== "fall" && P.vy > 500 && !LOCK.has(s) && s !== "jump_apex") set("fall");
+    }
+    if (P.air) P.vy += GRAV * dt;
+    P.x += P.vx * dt; P.y += P.vy * dt;
+    if (P.air && P.y >= groundY) {
+      P.y = groundY; P.vy = 0; P.air = false; P.jumps = 0;
+      if (P.state !== "death") { set("land", true); P.vx *= .25; }
+    }
+    if (s === "death") P.vx *= Math.pow(.01, dt);
+    for (const b of bolts) { b.x += b.dir * 620 * dt; b.p.update(dt * 1000); }
+    while (bolts.length && Math.abs(bolts[0].x - P.x) > 900) bolts.shift();
+    for (const f of fxList) f.p.update(dt * 1000);
+    for (let i = fxList.length - 1; i >= 0; i--) if (fxList[i].p.done) fxList.splice(i, 1);
+    shake = Math.max(0, shake - dt * 40);
+    for (const k in press) {
+      pressAge[k] = (pressAge[k] || 0) + dt;
+      if (pressAge[k] > BUFFER) press[k] = false;
+    }
+  }
+  function drawGame() {
+    const W = game.width, H = game.height;
+    const cam = Math.max(0, P.x - W / 2);
+    g.imageSmoothingEnabled = !PIXEL;
+    const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, "#3b4d78"); sky.addColorStop(.75, "#8a8fb0"); sky.addColorStop(1, "#d6b69a");
+    g.fillStyle = sky; g.fillRect(0, 0, W, H);
+    g.save();
+    if (shake > 0) g.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+    // parallax hills
+    for (const [k, col, h, a] of [[.2, "#55608a", 150, .006], [.45, "#3f4a70", 95, .011]]) {
+      g.fillStyle = col; g.beginPath(); g.moveTo(0, H);
+      for (let x = 0; x <= W; x += 8) { const wx = x + cam * k; g.lineTo(x, groundY - h * (.55 + .45 * Math.sin(wx * a) * Math.sin(wx * a * 2.3 + 1))); }
+      g.lineTo(W, H); g.fill();
+    }
+    g.fillStyle = "#39425f"; g.fillRect(0, groundY, W, H - groundY);
+    g.fillStyle = "#566088"; g.fillRect(0, groundY, W, 4);
+    g.fillStyle = "#475073";
+    for (let i = Math.floor(cam / 80); i * 80 < cam + W + 80; i++) g.fillRect(i * 80 - cam, groundY + 16 + (i % 3) * 12, 42, 3);
+    g.fillStyle = "rgba(0,0,0,.28)";
+    const hgt = Math.max(0, groundY - P.y), sw = 46 * Z * (1 - Math.min(.6, hgt / 400));
+    g.beginPath(); g.ellipse(P.x - cam, groundY + 3, sw, 7 * (1 - Math.min(.6, hgt / 400)), 0, 0, 7); g.fill();
+    for (const f of fxList) f.p.draw(g, f.x - cam, f.y, { flip: f.dir, scale: Z });
+    hero.draw(g, P.x - cam, P.y, { flip: P.dir < 0, scale: Z });
+    for (const b of bolts) b.p.draw(g, b.x - cam, b.y + 46 * Z, { scale: Z * .8 });
+    g.restore();
+    g.fillStyle = "#fff"; g.font = "13px system-ui,'Microsoft YaHei'";
+    g.fillText(`${CN[P.state] || P.state}  帧 ${hero.frame + 1}/${hero.clip.frames.length}`, 12, 22);
+  }
+  hero.play("idle");
+  window.__demo = { P, hero, fxList };   // read-only hook for automated checks
+  const swallow = new Set(["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
+  addEventListener("keydown", (e) => {
+    if ($("paneB").classList.contains("hidden")) return;
+    if (swallow.has(e.code)) e.preventDefault();
+    if (!e.repeat) { press[e.code] = true; pressAge[e.code] = 0; }
+    keys[e.code] = true;
+  });
+  addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+  let mode = "a";
+  $("tabA").onclick = () => { mode = "a"; $("tabA").classList.add("on"); $("tabB").classList.remove("on"); $("paneA").classList.remove("hidden"); $("paneB").classList.add("hidden"); };
+  $("tabB").onclick = () => { mode = "b"; $("tabB").classList.add("on"); $("tabA").classList.remove("on"); $("paneB").classList.remove("hidden"); $("paneA").classList.add("hidden"); game.focus(); };
+
+  select(names.includes("run") ? "run" : names[0]);
+  let last = performance.now(), simAcc = 0;
+  const SIM = 1 / 120;
+  function frame(now) {
+    const dt = Math.min(.1, (now - last) / 1000); last = now;
+    if (mode === "a") {
+      for (const c of cells) {
+        if (c.p.done) { c.hold += dt; if (c.hold > .7) { c.p.play(c.n, { restart: true }); c.hold = 0; } }
+        c.p.update(dt * 1000);
+        c.ctx.clearRect(0, 0, c.cv.width, c.cv.height);
+        c.p.draw(c.ctx, c.cv.width / 2, doc.pivot[1] * scale, { scale });
+      }
+      if (!paused) {
+        if (bp.done) { bigHold += dt; if (bigHold > .7) { bp.play(bp.name, { restart: true }); bigHold = 0; } }
+        bp.update(dt * 1000, +$("spd").value);
+      }
+      drawBig();
+    } else {
+      simAcc += dt;
+      while (simAcc >= SIM) { step(SIM); simAcc -= SIM; }
+      drawGame();
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>

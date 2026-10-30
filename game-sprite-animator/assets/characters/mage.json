@@ -1,0 +1,12 @@
+{
+  "name": "mage",
+  "head": "wizard",
+  "weapon": "staff",
+  "cloth": ["hair", "cape"],
+  "style": { "speed": 0.95, "bounce": 1.05 },
+  "colors": {
+    "skin": "#f6d3b5", "hair": "#c9d7e8", "tunic": "#5b3fa0", "tunic2": "#3f2b78",
+    "pants": "#2e2a4a", "boots": "#3a2f55", "belt": "#b08a3c", "metal": "#d8dde6",
+    "accent": "#6fe0d2", "cape": "#2f6d78", "glove": "#f6d3b5", "eye": "#203055", "ink": "#17142a"
+  }
+}
