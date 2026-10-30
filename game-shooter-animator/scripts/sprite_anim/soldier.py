@@ -7,6 +7,18 @@ from .mathx import add, catmull_closed, rot, scale
 from .weapons import GUN_SCALE, WEAPONS
 
 
+def _splash(pts, x0, floor=0.8):
+    """A blast fired into the floor spreads along it instead of passing through: points below the
+    floor land on it, pushed away from the source by the depth they had to lose."""
+    out = []
+    for x, y in pts:
+        if y < floor:
+            x += (floor - y) * (1.0 if x >= x0 else -1.0)
+            y = floor
+        out.append((x, y))
+    return out
+
+
 class SoldierArt(CharacterArt):
     def __init__(self, spec):
         super().__init__(spec)
@@ -310,15 +322,16 @@ class SoldierArt(CharacterArt):
                 along = max(math.cos(ang), 0) ** 1.4 * 1.6 + 0.45
                 x, y = math.cos(ang) * r * along, math.sin(ang) * r * 0.62
                 pts.append(add(add(o, scale(d, x + size * 0.1)), scale(n, y)))
-            cv.details([(pts, col, 255)])
+            cv.details([(_splash(pts, o[0]), col, 255)])
         if w["kind"] == "rocket":
             # Back-blast: a cone out of the rear of the tube.
             b = self.gun_point(sk, (-28, 6))
             for col, k in layers:
                 ln, wd = size * 1.5 * k, size * 0.55 * k
                 tip = add(b, scale(d, -ln))
-                cv.details([([add(b, scale(n, wd)), add(add(b, scale(d, -ln * 0.5)), scale(n, wd * 0.8)), tip,
-                              add(add(b, scale(d, -ln * 0.5)), scale(n, -wd * 0.8)), add(b, scale(n, -wd))], col, 255)])
+                cone = [add(b, scale(n, wd)), add(add(b, scale(d, -ln * 0.5)), scale(n, wd * 0.8)), tip,
+                        add(add(b, scale(d, -ln * 0.5)), scale(n, -wd * 0.8)), add(b, scale(n, -wd))]
+                cv.details([(_splash(cone, b[0]), col, 255)])
 
     def shells(self, cv, sk, pose, name):
         w = WEAPONS[name]
