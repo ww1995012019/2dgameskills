@@ -21,13 +21,14 @@ DT = 1.0 / SIM_HZ
 class ChainDef:
     def __init__(self, name, attach, n, seg, gravity=520.0, drag=5.0, stiff=0.0, rest=(-0.3, -1.0),
                  flutter=0.0, ground=True, follow=0.0, rest_frame="chest_rot", max_bend=62.0,
-                 width=(0.0, 0.0)):
+                 width=(0.0, 0.0), max_curl=140.0):
         self.name, self.attach, self.n, self.seg = name, attach, n, seg
         self.gravity, self.drag, self.stiff = gravity, drag, stiff
         self.rest = np.array(rest, dtype=float) / (math.hypot(*rest) or 1)
         self.flutter, self.ground, self.follow = flutter, ground, follow
         self.rest_frame = rest_frame
         self.max_bend = max_bend    # degrees between neighbouring segments; stops knots
+        self.max_curl = max_curl    # degrees summed root to tip; stops the chain rolling into a loop
         self.width = np.linspace(width[0], width[1], n)     # drawn strip width, root to tip
 
 
@@ -193,17 +194,23 @@ def _constrain(p, defn, frame_rot):
             else:
                 p[i] += delta * diff * 0.5
                 p[i + 1] -= delta * diff * 0.5
-    _limit_bend(p, defn.seg, defn.max_bend)
+    _limit_bend(p, defn.seg, defn.max_bend, defn.max_curl)
 
 
-def _limit_bend(p, seg, max_bend):
-    limit = math.radians(max_bend)
+def _limit_bend(p, seg, max_bend, max_curl=360.0):
+    """Each joint bends at most max_bend, and the turns summed along the chain stay within
+    max_curl, so a strip can arc but not roll up. The rest of the chain follows a corrected joint."""
+    limit, curl = math.radians(max_bend), math.radians(max_curl)
+    total = 0.0
     for i in range(1, len(p) - 1):
         a = p[i] - p[i - 1]
         b = p[i + 1] - p[i]
         turn = math.atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1])
-        if abs(turn) > limit:
-            base = math.atan2(a[1], a[0]) + math.copysign(limit, turn)
+        fixed = max(-limit, min(limit, turn))
+        fixed = max(-curl - total, min(curl - total, fixed))
+        total += fixed
+        if fixed != turn:
+            base = math.atan2(a[1], a[0]) + fixed
             p[i + 1] = p[i] + np.array((math.cos(base), math.sin(base))) * seg
 
 
