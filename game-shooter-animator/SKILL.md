@@ -60,7 +60,8 @@ game, CSS playback or a quick H5 mini-game.
    ```
 
    Lower and upper clips render alone here, showing half a soldier. That is correct. View a combo to
-   see the whole character.
+   see the whole character. Weapon clips are named after the character's weapons (`smg_reload` for a
+   character with an SMG); `--list` prints every clip name.
 
 4. **Generate the set.**
 

@@ -44,7 +44,7 @@
 - 导出校验 18 套全部 OK，多页图集两边都 OK。
 - 试玩页测试 8 套射击结果全部正常，两个按键缓冲用例都通过。
 
-自动适配比例（`[fit]`）：hero 0.929、knight 0.945、ninja 0.892、goblin 0.787、mage 0.794、commando 0.977、ghost 0.848。
+自动适配比例（`[fit]`，取自回归日志）：knight 1.000、swat 1.000、mercenary 0.990、commando 0.977、hero 0.929、ninja 0.892、mage 0.849、ghost 0.848、goblin 0.787。
 
 ## 视觉质检记录
 
@@ -61,11 +61,15 @@
 
 ## 接下来要做的事
 
-1～5 已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验）。
+1～6 已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包）。
 
-6. **打包两个 skill**，解压到全新目录试运行。根目录的 `game-sprite-animator.skill` 目前是**旧版**，没有本分支的内容。
+第 6 步打包：根目录的 `game-sprite-animator.skill` 和 `game-shooter-animator.skill` 都是本分支的最新代码，包内文件和 git 跟踪的文件一一对应。解压到全新目录后，按 SKILL.md 的流程跑通了预览图、生成（像素）、数值检测（0 FAIL）、审查图，射击的试玩页测试也通过了。试运行时发现 `contact_sheet.py` 遇到角色没有的动作名会直接抛 `KeyError`（SKILL.md 示例里的 `rifle_reload`，swat 拿的是冲锋枪），已改成和 `generate.py` 一样列出可用动作名，SKILL.md 也补了说明。改了 skill 里的文件之后要重新打包：
+
+```bash
+cd <skill-creator 目录> && PYTHONUTF8=1 python -m scripts.package_skill <仓库>/game-sprite-animator <仓库>
+```
 7. **更新 README**：加入射击 skill、约束和视觉质检，换预览图。
-8. **检查自动适配的缩放比例。** mage 0.794 和 goblin 0.787 比其他角色小约 15%。最宽的动作都是 `attack_3`，长兵器（法杖、长枪）加上下劈。可以考虑按武器长度调整挥舞幅度。
+8. **检查自动适配的缩放比例。** goblin 0.787 最小，比 hero 小约 15%；mage 0.849 和 ghost 0.848 次之。goblin 和 mage 最宽的动作是 `attack_3`，长兵器（长枪、法杖）加上下劈。可以考虑按武器长度调整挥舞幅度。ghost 是狙击枪太长。
 9. **询问用户后再合并到 `main`。** 这是公开仓库，合并和发布要用户确认。
 
 ## 常用命令

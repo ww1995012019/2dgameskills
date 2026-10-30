@@ -33,6 +33,9 @@ def main():
     clips = build_clips(spec.get("style"), spec.get("custom_clips"))
     r = Renderer(spec, a.size, a.pixel, clips=clips)
     names = [n for n in a.clips.split(",") if n] if a.clips != "all" else list(clips)
+    unknown = [n for n in names if n not in clips]
+    if unknown:
+        sys.exit(f"unknown clips: {unknown}\navailable: {list(clips)}")
     cell = a.size * a.zoom
     cols = a.cols or a.max_frames
     rows = len(names)
