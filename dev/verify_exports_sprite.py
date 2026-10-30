@@ -22,10 +22,12 @@ for name, c in doc['clips'].items():
         same = (out[..., 3] == src[..., 3]).all() and (out[vis] == src[vis]).all()
         bad += not same; total += 1
 print(f'atlas rebuild: {total - bad}/{total} frames identical')
+assert bad == 0, f'{bad} frames rebuilt from the atlas differ from the source PNGs'
 
 # 2. transparent atlas pixels next to sprites carry bled colour, not black
 p = pages[0]; edge = (p[..., 3] == 0) & (p[..., :3].sum(2) > 0)
 print('bled transparent px:', int(edge.sum()))
+assert edge.sum() > 0, 'transparent atlas pixels carry no bled colour'
 
 # 3. texturepacker json covers all frames and animations
 n = 0

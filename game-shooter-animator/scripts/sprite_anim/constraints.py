@@ -1,3 +1,4 @@
+# Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
 """Joint limits and clipping checks, shared by the rig (enforcement) and QA (measurement).
 
 Limits are soft: a pose inside the range is untouched, one past it eases into the limit along a

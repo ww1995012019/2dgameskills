@@ -1,3 +1,4 @@
+// Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
 // Unity editor importer for animations.json. Put this file in Assets/Editor/, copy atlas*.png and
 // animations.json into your project, select animations.json and run
 // Tools > Sprite Set > Import Selected. Creates sliced sprites and one .anim per clip.

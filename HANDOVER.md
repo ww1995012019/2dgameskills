@@ -1,6 +1,6 @@
 # 交接文档
 
-更新于 2026-10-30。工作在分支 `claude/elegant-brown-0q6iwm` 上完成（从 `wip/shooter-and-qa` 接着做），分两次合并到 `main`。
+更新于 2026-10-30。前三轮在分支 `claude/elegant-brown-0q6iwm` 上完成（从 `wip/shooter-and-qa` 接着做），分两次合并到 `main`。第四轮（工程基础：共用代码、基准回归、故障注入、CSS 回放）在 `claude/wizardly-wright-kwbjaj` 上。工作规范见根目录 `CLAUDE.md`。
 
 ## 接手时直接说
 
@@ -12,8 +12,8 @@
 
 | Skill | 用途 | 状态 |
 |---|---|---|
-| `game-sprite-animator` | 横版 RPG、动作游戏的 2D 角色动画，27 个动作 | 第一版已发布在 `main`；本分支加了约束、穿模检测、视觉质检和多处修复，尚未发布 |
-| `game-shooter-animator` | 横版枪战，6 种枪、9 方向瞄准、上下半身分层 | 功能写完，尚未打包，**还不能安装** |
+| `game-sprite-animator` | 横版 RPG、动作游戏的 2D 角色动画，27 个动作 | 已打包，在 `main` |
+| `game-shooter-animator` | 横版枪战，6 种枪、9 方向瞄准、上下半身分层 | 已打包，在 `main` |
 
 ## 当前进度
 
@@ -35,6 +35,22 @@
   - 视觉质检发现死亡、翻滚时披风和头发穿到地面以下最多 20 像素：布料地面碰撞改成按画出来的带宽留空间（`cloth.py` 的 `_ground`、`ChainDef.width`），头上的链也加了地面，地面改成非弹性（否则披风会弹起）。
   - 试玩页测试改成按当前武器算弹药，并新增「投弹最后一帧按 R」「换弹最后一帧按 G」两个用例。
   - 新增 `dev/regress_all.sh`，Linux 和 macOS 用，可并行，`ONLY=ghost,swat` 只跑部分角色。
+
+## 第四轮：工程基础
+
+按 Game Sprite Animator 2.0 方案的评审意见，先补工程基础，不加新功能。画面没有任何变化：全量回归和改动前逐像素相同。
+
+- **共用代码只有一份。** `shared/` 是两边共用文件的唯一来源，`dev/sync_shared.py` 复制到两个 skill，`--check` 检查是否一致。`export.py` 原来两边差 1 行（CSS 跳过分层动作），改成 `c.get("layer", "full")` 后两边相同。
+- **打包不再依赖 skill-creator。** `dev/package_skills.py` 直接打包 git 跟踪的文件，固定时间戳，内容不变包就不变；`--check` 检查包是否过期。不需要 PyYAML。
+- **基准回归。** `dev/baseline.json` 记录 18 套、864 个动作的帧数、每项 QA 状态、QA 数值和解码后像素的哈希。`dev/baseline.py` 比较：状态变差就失败；`--strict` 下像素变了也失败（重构用）。
+- **故障注入测试。** `dev/tests/test_qa_faults.py` 故意植入问题，确认 QA 能报出来并定位到帧：重复帧、循环接缝、跳帧、出画、滑步、站立脚抖动、骨骼拉长、膝盖反折、武器穿地、武器挡脸、握枪脱手、开火没有枪口火光、图集越界、图集区域错位。
+- **找到并修了一个漏洞：** `dev/verify_exports_*.py` 发现图集还原的帧和原图不一致时只打印数字，最后仍输出 OK。现在会失败；透明边缘没有渗色也会失败。
+- **找到两个 QA 缺口，没修**，写成 `expectedFailure` 测试：
+  - 截短的走路循环查不出：走路每帧本来就改变大半剪影，像素接缝比例总在 1.7 以下。
+  - 衔接姿势错误（把死亡最后一帧接到起跳）查不出：衔接比例除以较快动作的典型步长，像素差又会饱和，只有约 1.5，阈值是 2.5。
+  - 两者都要改成基于 `rig_trace.json` 关节位置的检查。
+- **CSS 实际播放过了。** `dev/css_playback.js` 在 Chromium 里播放 `sprites.css`，每帧暂停在时间段中点截图，和原始帧逐像素比较（`dev/tests/test_css_playback.py`，含一个故意把关键帧错一位的用例）。验证表已更新。
+- **Godot、Phaser、PixiJS 没测成。** 下载 Godot 和 npm 包要运行外部程序，这次会话的权限没批准，需要用户同意后再做。
 
 ## 最后一次回归结果
 
@@ -60,12 +76,19 @@
 
 ## 接下来要做的事
 
-1～9 都已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README、比例、合并）。第三轮把剩下的视觉质检做完了，修了 2 个观感问题，见「视觉质检记录」。可以接着做的：那里列出的观感问题；在 Unity、Godot、Cocos 里实测导出文件（这台机器没有这些引擎）。
+第四轮之后，按优先级：
 
-第 6 步打包：根目录的 `game-sprite-animator.skill` 和 `game-shooter-animator.skill` 都是本分支的最新代码，包内文件和 git 跟踪的文件一一对应。解压到全新目录后，按 SKILL.md 的流程跑通了预览图、生成（像素）、数值检测（0 FAIL）、审查图，射击的试玩页测试也通过了。试运行时发现 `contact_sheet.py` 遇到角色没有的动作名会直接抛 `KeyError`（SKILL.md 示例里的 `rifle_reload`，swat 拿的是冲锋枪），已改成和 `generate.py` 一样列出可用动作名，SKILL.md 也补了说明。改了 skill 里的文件之后要重新打包：
+1. 引擎实测：Godot 4 可以无界面运行，在 Linux 容器里导入 `sprite_frames.tres` 并播放；Phaser、PixiJS 可以用 Playwright 在 Chromium 里加载 `atlas.json`。需要先得到用户同意下载这些外部程序。
+2. 补上两个 QA 缺口：基于关节位置的循环接缝和动作衔接检查。加上后先跑全量回归，看会不会冒出新的 FAIL。
+3. 选一个新方向（俯视 4 方向人形或四足动物），等用户根据游戏类型决定。不要多类同时推进。
+4. 「视觉质检记录」里留下的观感问题；Unity、Cocos 实测。
+
+以下是前三轮的记录。1～9 都已完成（修 `attack_3`、全量回归、hero 和 commando 的视觉质检、试玩页测试、导出校验、打包、README、比例、合并）。第三轮把剩下的视觉质检做完了，修了 2 个观感问题，见「视觉质检记录」。
+
+第 6 步打包：根目录的 `game-sprite-animator.skill` 和 `game-shooter-animator.skill` 都是本分支的最新代码，包内文件和 git 跟踪的文件一一对应。解压到全新目录后，按 SKILL.md 的流程跑通了预览图、生成（像素）、数值检测（0 FAIL）、审查图，射击的试玩页测试也通过了。试运行时发现 `contact_sheet.py` 遇到角色没有的动作名会直接抛 `KeyError`（SKILL.md 示例里的 `rifle_reload`，swat 拿的是冲锋枪），已改成和 `generate.py` 一样列出可用动作名，SKILL.md 也补了说明。改了 skill 里的文件之后要重新打包（第四轮起不再用 skill-creator）：
 
 ```bash
-cd <skill-creator 目录> && PYTHONUTF8=1 python -m scripts.package_skill <仓库>/game-sprite-animator <仓库>
+python dev/package_skills.py
 ```
 7. ~~更新 README~~ 已完成：加入射击 skill、约束、穿模检测和视觉质检；`docs/preview.png` 用最新代码重新生成，新增 `docs/preview-shooter.png`（commando 的跑动射击、跳跃射击、翻滚、炸飞）。
 8. ~~检查自动适配的缩放比例~~ 已完成。量出来的武器尖原来比画出来的短 4～9 个单位（从手腕量，长度表是旧的：长枪 62 实际画到 66，斧 40 实际 47），一直靠 `fit_scale` 留的 6 个单位余量撑着。现在 `art.py` 的 `WEAPON_REACH` 记录每种武器实际画出的长度，`blade_points`、武器绘制和地面约束共用同一个起点（`weapon_origin`），余量降到 4。长枪和法杖改成握在更靠中间的位置（`WEAPON_GRIP`，总长不变）。比例：hero 0.929（不变）、knight 0.939、mage 0.905（原 0.849）、ninja 0.891、goblin 0.852（原 0.787），最大和最小的差距从 27% 缩到 10%。地面约束改成绕武器的真实起点算（`rig.py` 的 `pivot_y`），否则 goblin `attack_3` 落地时枪尖会插进地面 1 个单位。
@@ -104,12 +127,17 @@ python dev/qa_flags.py all/hero-hd all/commando-hd
 | `verify_exports_sprite.py`、`verify_exports_shooter.py` | 校验图集还原、plist、tres、CSS |
 | `test_shooter_demo.js` | 用 Node 跑试玩页的真实脚本，按固定时钟推进，不需要浏览器 |
 | `test_atlas_pages.py` | 强制多页图集并校验 |
+| `sync_shared.py` | 把 `shared/` 复制到两个 skill；`--check` 检查是否一致 |
+| `package_skills.py` | 打包两个 `.skill`；`--check` 检查是否过期 |
+| `baseline.py`、`baseline.json` | 全量回归结果和基准比较；`--strict` 像素变化也算失败，`--update` 更新基准 |
+| `css_playback.js` | 在 Chromium 里播放 `sprites.css` 并逐帧截图 |
+| `tests/` | `python3 -m unittest discover -s dev/tests -v`：故障注入、CSS 回放、同步和打包检查 |
 
 `test_shooter_demo.js` 和 `dev/qa_*.py` 读 `%TEMP%\spr\` 下的结果。`test_shooter_demo.js` 的参数是子目录名，例如 `node dev/test_shooter_demo.js all/commando-pixel`。
 
 ## 关键决定
 
-- **射击 skill 是独立的一份代码**，不依赖第一个 skill，这样能单独安装。代价是公共代码有两份：`constraints.py` 两边一致，改一边要同步另一边；`rig.py`、`render.py`、`cloth.py` 大体相同但有差异。
+- **射击 skill 是独立的一份代码**，不依赖第一个 skill，这样能单独安装。代价是公共代码有两份。第四轮起完全相同的文件放在 `shared/`，只改那里，用 `dev/sync_shared.py` 同步；`rig.py`、`render.py`、`motions.py`、`art.py` 两边有差异，各改各的。
 - **射击类用上下半身分层**，学合金弹头，否则动作、角度、武器组合会爆帧。同时烘焙几个常用组合给想省事的引擎用。
 - **AI 视觉质检不调用 API**，由运行 skill 的 Claude 自己看图，不需要密钥。
 - **只做横版。** 俯视角要另做角色。
@@ -119,8 +147,7 @@ python dev/qa_flags.py all/hero-hd all/commando-hd
 
 ## 环境坑
 
-- **中文 Windows 默认 GBK。** skill 自己的脚本都显式用 UTF-8。skill-creator 的打包脚本没有，要先设 `PYTHONUTF8=1`。
-- **打包需要 PyYAML**，本机没有。建议 `pip install --target <临时目录> pyyaml`，再设 `PYTHONPATH`。
+- **中文 Windows 默认 GBK。** skill 自己的脚本和 `dev/` 下的新脚本都显式用 UTF-8。旧的 skill-creator 打包脚本没有，要先设 `PYTHONUTF8=1`；现在用 `dev/package_skills.py`，不需要。
 - 这台机器没有 `gh`、`dotnet`、Godot、Unity、Cocos。引擎文件都没有在引擎里实测过，`references` 里写了每项的验证程度。
 - 会话文件夹路径很长，Windows 上 `../..` 这类相对路径可能超 260 字符，要先规范化。
 - 预览窗格隐藏时浏览器的 `requestAnimationFrame` 会暂停，自动化测试用 Node 脚本。

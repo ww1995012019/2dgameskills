@@ -1,3 +1,4 @@
+# Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
 """Verlet chains for hair, capes, scarves. Offline and deterministic.
 
 Loop clips: run the cycle long enough to shed the start-up transient, then close the seam by

@@ -1,3 +1,4 @@
+# Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
 """Frames -> sheets, trimmed atlas pages, manifests and engine import files."""
 import base64
 import hashlib
@@ -222,7 +223,7 @@ def css_keyframes(root, doc, sheets):
     size = doc["frame_size"]
     rules = [f".sprite{{width:{size}px;height:{size}px;background-repeat:no-repeat;image-rendering:auto}}\n"]
     for name, c in doc["clips"].items():
-        if name not in sheets or c.get("layer") != "full":
+        if name not in sheets or c.get("layer", "full") != "full":
             continue        # CSS has no way to sync two layers, so only whole-body clips apply
         cols, rows = sheets[name]
         n = len(c["frames"])

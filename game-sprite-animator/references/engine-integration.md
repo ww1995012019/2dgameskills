@@ -13,7 +13,7 @@ Verification status, so you can tell the user what is proven:
 |---|---|
 | `atlas.png`, `animations.json`, `sprite-player.js` | Frames rebuilt from the atlas match the source; player run in a browser and at 30-240 Hz |
 | `atlas.json` (JSON-hash) | Structure and bounds only; not loaded in Phaser or PixiJS |
-| `sprites.css` | Structure only; not played in a browser |
+| `sprites.css` | Played in Chromium: every frame matches its source frame; not checked in Safari or on phones |
 | Godot `.tres`, Cocos `.plist` | Parsed and cross-referenced; not imported into the editors |
 | Unity `SpriteSetImporter.cs` | Never compiled or run |
 

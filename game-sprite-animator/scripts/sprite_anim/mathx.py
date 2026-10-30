@@ -1,3 +1,4 @@
+# Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
 """Interpolation primitives. Everything here is C1-continuous on purpose:
 velocity jumps between keys are what the eye reads as stutter."""
 import math
