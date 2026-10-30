@@ -18,15 +18,19 @@
 - 四足仅复用 exporter、Unity importer、mathx、cloth 和 rig_data。尾巴给共用 `simulate` 传
   `state_at(t)`，人形保留原路径。`JointRecorder` 接收命名二维关节映射，人形与四足共用记录格式；
   骨骼求解和接触规则仍按解剖分别实现，不要把这个小接口描述成完整通用骨骼框架。
+- AI 美术流程（阶段 A）：`game-sprite-animator/scripts/cut_parts.py`（template / cut / check），流程见该 skill 的
+  `references/ai-art.md`。剪纸模式的武器挂在 `art.hand_grip`，和程序画法共用，改它要跑严格基准。
+  示例 `assets/characters/cutout_demo/` 必须是工具对 `source.png` + `joints.json` 的当前输出（测试会比对），
+  改了 `cut_parts.py` 就重新生成它。`dev/cutout_match.py` 量切块后和原版的相似度。
 - `dev/` 是开发工具，不进 skill 包。
-- `regress_all.sh` 现在覆盖 24 套；新增模板要加入脚本及 `baseline.json`。新文件打包前用 `git add -N` 登记路径，包内容保持可审查。
+- `regress_all.sh` 现在覆盖 26 套（含 `cutout_demo`；剪纸角色是文件夹，脚本读其中的 `character.json`）；新增模板要加入脚本及 `baseline.json`。新文件打包前用 `git add -N` 登记路径，包内容保持可审查。
 
 ## 改完要跑的
 
 ```bash
 python3 -m unittest discover -s dev/tests -v      # 故障注入、CSS 回放、引擎实测、同步和打包检查
 bash dev/engines/get_godot.sh && npm install --prefix dev/engines   # 引擎测试要的 Godot、Phaser、PixiJS，装一次
-bash dev/regress_all.sh                          # 24 套全量回归，放后台并检查各套真实退出码
+bash dev/regress_all.sh                          # 26 套全量回归，放后台并检查各套真实退出码
 python3 dev/baseline.py                          # 和 dev/baseline.json 比较：状态变差就失败
 python3 dev/baseline.py --strict                 # 重构时用：任何像素变化都算失败
 python3 dev/package_skills.py                    # 改了 skill 里的文件后重新打包 .skill

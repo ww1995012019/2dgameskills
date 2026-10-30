@@ -287,6 +287,11 @@ CUTOUT_BONES = {
 }
 
 
+def hand_grip(sk):
+    """Where the near fist holds a weapon: just past the wrist, along the forearm."""
+    return add(sk["wr_n"], scale((sk["wr_n"][0] - sk["el_n"][0], sk["wr_n"][1] - sk["el_n"][1]), 0.14))
+
+
 class Cutout:
     """Rigs user-supplied part images onto the skeleton. spec["parts"] maps part names to
     {"image": path, "pivot": [x, y]}; spec["px_per_unit"] is the source art scale."""
@@ -318,7 +323,10 @@ class Cutout:
             # Inverse affine: output pixel -> source pixel. Clockwise on screen (y-down).
             ca, sa = math.cos(a), math.sin(a)
             sx, sy = k * cv.sx, k * cv.sy
-            ox, oy = cv.T(sk[joint])
+            # The weapon hangs where the fist closes on it, just past the wrist along the forearm,
+            # the same point the drawn weapons and the rig's ground clamp turn about.
+            at = sk[joint] if name != "weapon" else hand_grip(sk)
+            ox, oy = cv.T(at)
             w, h = im.size
             cs = [(-pivot[0], -pivot[1]), (w - pivot[0], -pivot[1]), (w - pivot[0], h - pivot[1]), (-pivot[0], h - pivot[1])]
             xs = [ox + (x * ca - y * sa) * sx for x, y in cs]
@@ -593,8 +601,7 @@ class CharacterArt:
 
     def weapon_origin(self, sk):
         """Where the weapon's local y=0 sits: just past the wrist, slid back by the grip."""
-        o = add(sk["wr_n"], scale((sk["wr_n"][0] - sk["el_n"][0], sk["wr_n"][1] - sk["el_n"][1]), 0.14))
-        return add(o, scale(sk["wep_dir"], -WEAPON_GRIP.get(self.spec["weapon"], 0)))
+        return add(hand_grip(sk), scale(sk["wep_dir"], -WEAPON_GRIP.get(self.spec["weapon"], 0)))
 
     def blade_points(self, sk):
         """(hilt, tip) for smears, framing and clipping; the tip is the drawn one."""

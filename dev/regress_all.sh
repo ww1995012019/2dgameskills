@@ -11,15 +11,17 @@ mkdir -p "$out" "$logs"
 run() {
   skill=$1 c=$2 p=$3
   d="$out/$c-$p" log="$logs/$c-$p.log"
+  spec="$root/$skill/assets/characters/$c.json"
+  [ -d "${spec%.json}" ] && spec="${spec%.json}/character.json"     # cut-out characters are folders
   rm -rf "$d"
-  python3 "$root/$skill/scripts/generate.py" --character "$root/$skill/assets/characters/$c.json" \
+  python3 "$root/$skill/scripts/generate.py" --character "$spec" \
     --preset "$p" --out "$d" > "$log" 2>&1 || return
   python3 "$root/$skill/scripts/qa_motion.py" "$d" >> "$log" 2>&1 || return
   echo "$c-$p: $(grep -E '^result:|Traceback' "$log" | tail -1)"
 }
 export -f run; export root out logs
 {
-  for c in hero knight mage ninja goblin; do for p in hd pixel; do echo "game-sprite-animator $c $p"; done; done
+  for c in hero knight mage ninja goblin cutout_demo; do for p in hd pixel; do echo "game-sprite-animator $c $p"; done; done
   for c in commando swat ghost mercenary; do for p in hd pixel; do echo "game-shooter-animator $c $p"; done; done
   for c in wanderer warden; do for p in hd pixel; do echo "game-topdown-animator $c $p"; done; done
   for p in hd pixel; do echo "game-quadruped-animator wolf $p"; done

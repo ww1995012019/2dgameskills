@@ -1,0 +1,82 @@
+{
+ "px_per_unit": 2.695,
+ "parts": {
+  "arm_f_up": {
+   "coverage": 0.28,
+   "source": "near limb, darkened"
+  },
+  "arm_f_lo": {
+   "coverage": 0.07,
+   "source": "near limb, darkened"
+  },
+  "hand_f": {
+   "coverage": 0.65,
+   "filled_px": 288,
+   "angle": 10.0
+  },
+  "leg_f_up": {
+   "coverage": 0.77,
+   "filled_px": 650,
+   "angle": -1.6
+  },
+  "leg_f_lo": {
+   "coverage": 1.23,
+   "angle": 24.0
+  },
+  "foot_f": {
+   "coverage": 1.63,
+   "angle": 0.0
+  },
+  "leg_n_up": {
+   "coverage": 0.92,
+   "filled_px": 424,
+   "angle": -24.2
+  },
+  "leg_n_lo": {
+   "coverage": 1.19,
+   "angle": -1.6
+  },
+  "foot_n": {
+   "coverage": 1.95,
+   "angle": 0.0
+  },
+  "pelvis": {
+   "coverage": 0.52,
+   "filled_px": 843,
+   "angle": 0.0
+  },
+  "torso": {
+   "coverage": 1.21,
+   "angle": 0.0
+  },
+  "head": {
+   "coverage": 1.17,
+   "angle": 0.0
+  },
+  "weapon": {
+   "coverage": 1.14,
+   "angle": 70.0
+  },
+  "arm_n_up": {
+   "coverage": 0.52,
+   "angle": -30.0
+  },
+  "arm_n_lo": {
+   "coverage": 1.43,
+   "angle": -48.0
+  },
+  "hand_n": {
+   "coverage": 1.35,
+   "angle": -48.0
+  }
+ },
+ "warnings": [
+  "arm_f_up: only 28% visible, rebuilt from arm_n_up; better art would help",
+  "arm_f_lo: only 7% visible, rebuilt from arm_n_lo; better art would help",
+  "hand_f: 288 hidden pixels filled from its own colours; check bind_preview.png",
+  "leg_f_up: 650 hidden pixels filled from its own colours; check bind_preview.png",
+  "leg_n_up: 424 hidden pixels filled from its own colours; check bind_preview.png",
+  "pelvis: 843 hidden pixels filled from its own colours; check bind_preview.png"
+ ],
+ "gaps": {}
+}
