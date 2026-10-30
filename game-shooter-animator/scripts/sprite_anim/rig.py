@@ -193,7 +193,10 @@ def solve(pose, b: Body):
     gn = (-gd[1], gd[0])
     fi = g("far_ik")
     if fi > 0:
-        fore = add(add(wr_n, scale(gd, g("fore_x") + g("fh_x"))), scale(gn, g("fore_y") + g("fh_y")))
+        along = g("fore_x") + g("fh_x")
+        side = add(wr_n, scale(gn, g("fore_y") + g("fh_y")))
+        along -= _slide_in(side, gd, along, sh_f, (b.up_arm + b.lo_arm) * 0.965)
+        fore = add(side, scale(gd, along))
         target = (wr_f[0] + (fore[0] - wr_f[0]) * fi, wr_f[1] + (fore[1] - wr_f[1]) * fi)
         el_f, wr_f = two_bone(sh_f, target, b.up_arm, b.lo_arm, -1.0)
         fa_f = _limb_angle(el_f, wr_f)
@@ -207,6 +210,22 @@ def solve(pose, b: Body):
         hip_f=hip_f, kn_f=kn_f, an_f=an_f, fr_f=fr_f,
         wep_a=wep_a, wep_dir=gd, gun_n=gn, hand_gaps=gaps, excess=excess,
     )
+
+
+def _slide_in(base, d, along, root, reach):
+    """How far the support hand slides back along the gun so it stays within reach of the
+    shoulder. Aiming steeply up carries the forend past arm's length; a shooter slides the
+    hand toward the receiver rather than letting go."""
+    rel = (base[0] - root[0], base[1] - root[1])
+    p = (rel[0] + d[0] * along, rel[1] + d[1] * along)
+    if math.hypot(*p) <= reach:
+        return 0.0
+    # Smallest s with |p - s*d| = reach, never sliding past the grip.
+    b = p[0] * d[0] + p[1] * d[1]
+    disc = b * b - (p[0] ** 2 + p[1] ** 2 - reach * reach)
+    if disc < 0:
+        return max(0.0, min(along, b))
+    return max(0.0, min(along, b - math.sqrt(disc)))
 
 
 def _limb_angle(a, b):
