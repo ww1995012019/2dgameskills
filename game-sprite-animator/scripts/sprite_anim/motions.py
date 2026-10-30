@@ -193,13 +193,13 @@ def build_clips(style=None, custom=None):
                   foot_f_p=-30, brow=1, mouth=0.7, squash=sq(1.05))
     A2_FOLLOW = dict(A2_HIT, root_y=-3, root_x=17, spine=-13, head=4, arm_n_up=152, arm_n_lo=24,
                      wep=48, mouth=0.2)
-    A3_LEAP = dict(root_y=11, root_x=8, pelvis=-8, spine=-14, head=-2, arm_n_up=150, arm_n_lo=46,
+    A3_LEAP = dict(root_y=11, root_x=2, pelvis=-8, spine=-14, head=-2, arm_n_up=150, arm_n_lo=46,
                    wep=44, arm_f_up=120, arm_f_lo=50, foot_n_x=20, foot_n_y=18, foot_n_p=-8,
                    foot_f_x=0, foot_f_y=24, foot_f_p=-32, squash=sq(1.05), brow=1, mouth=0.4)
-    A3_HIT = dict(root_y=-12, root_x=9, pelvis=24, spine=26, head=-30, arm_n_up=86, arm_n_lo=10,
+    A3_HIT = dict(root_y=-12, root_x=2, pelvis=24, spine=26, head=-30, arm_n_up=86, arm_n_lo=10,
                   wep=-6, arm_f_up=-50, arm_f_lo=34, foot_n_x=23, foot_f_x=-5, foot_f_p=-16,
                   brow=1, mouth=1, squash=sq(0.88))
-    A3_FOLLOW = dict(A3_HIT, root_y=-14, root_x=9, pelvis=26, spine=30, head=-32, arm_n_up=62,
+    A3_FOLLOW = dict(A3_HIT, root_y=-14, root_x=2, pelvis=26, spine=30, head=-32, arm_n_up=62,
                      arm_n_lo=8, wep=28, mouth=0.4, squash=sq(0.93))
 
     # ---- idle --------------------------------------------------------------------------

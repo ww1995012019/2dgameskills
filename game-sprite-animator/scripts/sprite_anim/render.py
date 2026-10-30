@@ -3,6 +3,7 @@ import numpy as np
 
 from .art import Canvas, CharacterArt, chain_defs
 from .cloth import bake_all
+from .mathx import catmull_open
 from .rig import full_pose, solve
 
 PRESETS = {
@@ -55,7 +56,9 @@ class Renderer:
         because the character scales with the frame."""
         half, up = 0.0, 0.0
         for clip in self.clips.values():
-            n = max(8, int(clip.duration * 30))
+            # 120 Hz: a fast swing crosses its widest point between 30 Hz samples, and
+            # hd60 frames or the smear land right on it.
+            n = max(8, int(clip.duration * 120))
             for i in range(n + 1):
                 t = clip.duration * i / n
                 pose = full_pose(clip.sample(t))
@@ -63,6 +66,12 @@ class Renderer:
                 wide = 1.0 / pose["squash"] ** 0.6     # squash widens the body as it flattens
                 for p in self.art.extent_points(sk, pose):
                     half, up = max(half, abs(p[0]) * wide), max(up, p[1] * pose["squash"])
+                # The smear's spline overshoots the blade positions it passes through. Measure
+                # it at the shortest window and at 10 fps, the longest any preset uses.
+                for dt in (0.0, 0.1):
+                    hist = self.smear_history(clip, t, pose, dt)
+                    for p in catmull_open(hist[0], 5) if hist else ():
+                        half, up = max(half, abs(p[0]) * wide), max(up, p[1] * pose["squash"])
         for by_chain in self.bakes.values():
             for bake in by_chain.values():
                 half = max(half, float(np.abs(bake.pos[..., 0]).max()) + 8.0)
@@ -80,10 +89,14 @@ class Renderer:
         window = max(0.054, dt)     # must span the frame gap or low fps leaves the arc broken
         for k in range(6, -1, -1):
             tt = max(0.0, t - k * window / 6)
-            sk = solve(full_pose(clip.sample(tt)), self.art.body)
-            h, tip = self.art.blade_points(sk)
-            tips.append(tip)
-            hilts.append(h)
+            past = full_pose(clip.sample(tt))
+            h, tip = self.art.blade_points(solve(past, self.art.body))
+            # The canvas squashes with this frame's pose; undo that and apply the squash the
+            # blade was drawn with, so the arc traces where it really was on screen.
+            sx = (pose["squash"] / past["squash"]) ** 0.6
+            sy = past["squash"] / pose["squash"]
+            tips.append((tip[0] * sx, tip[1] * sy))
+            hilts.append((h[0] * sx, h[1] * sy))
         return np.array(tips), np.array(hilts)
 
     def _render_once(self, clip, t, dt=0.0):
