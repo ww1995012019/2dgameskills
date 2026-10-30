@@ -76,8 +76,9 @@ class Renderer:
             for bake in by_chain.values():
                 half = max(half, float(np.abs(bake.pos[..., 0]).max()) + 8.0)
                 up = max(up, float(bake.pos[..., 1].max()) + 8.0)
+        # 4 units of pad cover the outline and the blade's own width; the points are exact.
         frame_half, frame_up = 0.5 / UNIT_PX, GROUND_FRAC / UNIT_PX
-        return min(1.0, (frame_half - 3) / max(half + 6, 1), (frame_up - 3) / max(up + 6, 1))
+        return min(1.0, (frame_half - 3) / max(half + 4, 1), (frame_up - 3) / max(up + 4, 1))
 
     def cloth_at(self, clip, t):
         return {d.name: self.bakes[clip.name][d.name].at(t) for d in self.defs}

@@ -335,6 +335,13 @@ class Cutout:
             cv.buf[y0:y1, x0:x1] = np.asarray(base)
 
 
+# Drawn extent of each weapon from its local origin: (tip, butt). Keep in step with weapon().
+WEAPON_REACH = {"sword": (47, 7.4), "axe": (47, 10), "staff": (54, 22), "spear": (66, 20)}
+# Long hafts are held further up the shaft, as a fighter chokes up, so the reach past the hand
+# doesn't dwarf the character once the frame is fitted to it. The overall length is unchanged.
+WEAPON_GRIP = {"staff": 6, "spear": 12}
+
+
 class CharacterArt:
     def __init__(self, spec):
         self.spec = merged_spec(spec)
@@ -343,8 +350,11 @@ class CharacterArt:
         self.c = {k: ramp(v) for k, v in col.items()}
         self.ink = hex_rgb(col["ink"])
         self.bulk = self.body.bulk
-        self.body.weapon_front = {"sword": 47, "axe": 40, "staff": 54, "spear": 62}.get(self.spec["weapon"], 0)
-        self.body.weapon_back = {"sword": 7, "axe": 10, "staff": 22, "spear": 20}.get(self.spec["weapon"], 0)
+        front, back = WEAPON_REACH.get(self.spec["weapon"], (0, 0))
+        grip = WEAPON_GRIP.get(self.spec["weapon"], 0)
+        # Measured from the wrist; the drawing starts ~2 units further out (see weapon_origin).
+        self.body.weapon_front = front - grip + 2.0 if front else 0
+        self.body.weapon_back = back + grip
         self.cutout = Cutout(self.spec) if self.spec.get("parts") else None
 
     def palette(self):
@@ -581,11 +591,15 @@ class CharacterArt:
 
     # -- weapon -----------------------------------------------------------------------
 
+    def weapon_origin(self, sk):
+        """Where the weapon's local y=0 sits: just past the wrist, slid back by the grip."""
+        o = add(sk["wr_n"], scale((sk["wr_n"][0] - sk["el_n"][0], sk["wr_n"][1] - sk["el_n"][1]), 0.14))
+        return add(o, scale(sk["wep_dir"], -WEAPON_GRIP.get(self.spec["weapon"], 0)))
+
     def blade_points(self, sk):
-        """(hilt, tip) for smears."""
-        kind = self.spec["weapon"]
-        length = {"sword": 47, "axe": 40, "staff": 54, "spear": 62}.get(kind, 0)
-        return sk["wr_n"], add(sk["wr_n"], scale(sk["wep_dir"], length))
+        """(hilt, tip) for smears, framing and clipping; the tip is the drawn one."""
+        front = WEAPON_REACH.get(self.spec["weapon"], (0, 0))[0]
+        return sk["wr_n"], add(self.weapon_origin(sk), scale(sk["wep_dir"], front))
 
     primary = None
 
@@ -610,7 +624,7 @@ class CharacterArt:
         if kind == "none":
             return
         c = self.c
-        o = add(sk["wr_n"], scale((sk["wr_n"][0] - sk["el_n"][0], sk["wr_n"][1] - sk["el_n"][1]), 0.14))
+        o = self.weapon_origin(sk)
         a = sk["wep_a"]
         # Local frame: +y along the blade; rot(angle=180-a) maps +y to the blade direction.
         ang = 180 - a
