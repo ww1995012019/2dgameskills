@@ -304,7 +304,7 @@ class Cutout:
             if name not in CUTOUT_BONES:
                 raise ValueError(f"unknown part {name!r}, expected one of {list(CUTOUT_BONES)}")
             im = Image.open(os.path.join(base, p["image"])).convert("RGBA")
-            self.parts[name] = (im, tuple(p["pivot"]))
+            self.parts[name] = (im, tuple(p["pivot"]), float(p.get("rest_angle", 0)))
         # The art's own layering where it differs from the default: a weapon in the far hand puts
         # that upper arm behind the chest and the other arm in front, and the cut-out keeps it so.
         layers = spec.get("layers", {})
@@ -317,7 +317,7 @@ class Cutout:
 
     def palette(self):
         cols = set()
-        for im, _ in self.parts.values():
+        for im, _, _ in self.parts.values():
             q = im.convert("RGB").quantize(colors=24).convert("RGB")
             cols |= {c for _, c in q.getcolors(1 << 16)}
         return sorted(cols)
@@ -327,9 +327,9 @@ class Cutout:
             joint, ang = CUTOUT_BONES[name]
             if name not in self.parts:
                 continue
-            im, pivot = self.parts[name]
+            im, pivot, rest_angle = self.parts[name]
             k = cv.s / self.px_per_unit
-            a = math.radians(ang(sk))
+            a = math.radians(ang(sk) - rest_angle)
             # Inverse affine: output pixel -> source pixel. Clockwise on screen (y-down).
             ca, sa = math.cos(a), math.sin(a)
             sx, sy = k * cv.sx, k * cv.sy

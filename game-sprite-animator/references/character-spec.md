@@ -128,6 +128,10 @@ Rules for the layers:
 - `pivot` is the pixel in that image that sits on the joint: the shoulder for an upper arm, the elbow
   for a forearm, the neck base for the head, the waist for the torso, and for the weapon the middle of
   the fist on its handle (the rig holds it just past the wrist, along the forearm).
+- Optionally set `rest_angle` in degrees for a part drawn away from its standard orientation.
+  It is clockwise in image coordinates (right and down are positive), measured from the
+  standard orientation for that part. For example, an arm pointing right instead of down has
+  `rest_angle: -90`. The renderer subtracts this angle from the rig angle. It defaults to 0.
 - Let parts overlap generously at joints so bending doesn't open a gap.
 - `px_per_unit` is source pixels per rig unit. Standing height is 100 units, so art 400 px tall is 4.0.
 - Set `body` lengths (`thigh`, `shin`, `up_arm`, `lo_arm`, `pelvis_len`, `chest_len`, `neck_len`) to the

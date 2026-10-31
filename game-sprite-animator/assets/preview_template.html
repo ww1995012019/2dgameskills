@@ -63,6 +63,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2p
   </section>
   <section id="paneB" class="hidden">
     <canvas id="game" width="960" height="440" tabindex="0"></canvas>
+    <p class="mono" id="missing-actions"></p>
     <div class="keys">
       <span><kbd>A</kbd><kbd>D</kbd>/<kbd>←</kbd><kbd>→</kbd> 走</span><span>按住 <kbd>Shift</kbd> 跑</span><span><kbd>空格</kbd> 跳 / 二段跳</span>
       <span><kbd>S</kbd>/<kbd>↓</kbd> 蹲</span><span><kbd>J</kbd> 三连击</span><span><kbd>K</kbd> 冲刺</span><span><kbd>L</kbd> 翻滚</span>
@@ -158,11 +159,15 @@ function start(imgs, fxImgs) {
   const Z = PIXEL ? Math.max(2, Math.round(180 / SIZE)) : 1.15;
   const hero = new SpritePlayer(doc, imgs);
   const groundY = 372;
-  const P = { x: 200, y: groundY, vx: 0, vy: 0, dir: 1, air: false, jumps: 0, state: "idle", combo: false, dead: false, cool: 0, dash: 0 };
+  const home = doc.clips.idle ? "idle" : names[0];
+  const demoActions = ["idle", "walk", "run", "jump_start", "double_jump", "crouch_walk", "roll", "dash", "attack_1", "attack_2", "attack_3", "cast", "block", "block_hit", "hurt", "death"];
+  const missing = demoActions.filter((name) => !doc.clips[name]);
+  if (missing.length) $("missing-actions").textContent = "未导出的动作无法在试玩中使用：" + missing.map((name) => CN[name] || name).join("、");
+  const P = { x: 200, y: groundY, vx: 0, vy: 0, dir: 1, air: false, jumps: 0, state: home, combo: false, dead: false, cool: 0, dash: 0 };
   const keys = {};
   const GRAV = 2300, JUMP = 900, DBL = 780;
-  const walkV = (doc.clips.walk ? doc.clips.walk.speed_px_s : 80) * Z;
-  const runV = (doc.clips.run ? doc.clips.run.speed_px_s : 300) * Z;
+  const walkV = (doc.clips.walk ? doc.clips.walk.speed_px_s : 0) * Z;
+  const runV = (doc.clips.run ? doc.clips.run.speed_px_s : 0) * Z;
   const has = (n) => !!doc.clips[n];
   const fxList = [];
   function spawn(name, x, y, dir) {
@@ -170,7 +175,7 @@ function start(imgs, fxImgs) {
     const p = new SpritePlayer(fxDoc, fxImgs); p.play(name);
     fxList.push({ p, x, y, dir });
   }
-  const set = (s, restart, frame = 0) => { if (!has(s)) s = "idle"; P.state = s; hero.play(s, { restart: !!restart, frame }); };
+  const set = (s, restart, frame = 0) => { if (!has(s)) { s = home; frame = 0; } P.state = s; hero.play(s, { restart: !!restart, frame }); };
   let shake = 0;
   function onEvent(e) {
     const m = { footstep: "dust_step", land_dust: "dust_land", skid_dust: "dust_skid", dash_burst: "dust_dash", air_puff: "puff_air", block_spark: "block_spark" }[e];
@@ -178,7 +183,7 @@ function start(imgs, fxImgs) {
     if (e === "takeoff") { P.vy = -JUMP; P.air = true; P.jumps = 1; }
     if (e === "hit_on") { spawn("hit_spark", P.x + P.dir * 70 * Z, P.y - 10, false); }
     if (e === "screen_shake") shake = 9;
-    if (e === "projectile") bolts.push({ x: P.x + P.dir * 60 * Z, y: P.y - 62 * Z, dir: P.dir, p: (() => { const q = new SpritePlayer(fxDoc, fxImgs); q.play("projectile_orb"); return q; })() });
+    if (e === "projectile" && fxDoc && fxDoc.clips.projectile_orb) bolts.push({ x: P.x + P.dir * 60 * Z, y: P.y - 62 * Z, dir: P.dir, p: (() => { const q = new SpritePlayer(fxDoc, fxImgs); q.play("projectile_orb"); return q; })() });
   }
   const bolts = [];
   const LOCK = new Set(["attack_1", "attack_2", "attack_3", "air_attack", "cast", "hurt", "death", "roll", "dash", "land", "jump_start", "double_jump", "crouch_exit", "block_hit"]);
@@ -197,35 +202,36 @@ function start(imgs, fxImgs) {
       if (take("KeyX")) { P.dead = false; set("idle", true); }
     } else {
       let reacted = false;
-      if (take("KeyX")) { P.vx = 0; set("death", true); P.dead = true; reacted = true; }
-      else if (!locked && take("KeyH")) {
+      if (take("KeyX") && has("death")) { P.vx = 0; set("death", true); P.dead = true; reacted = true; }
+      else if (!locked && take("KeyH") && (has("hurt") || (s === "block" && keys.KeyI && hero.frame === hero.clip.frames.length - 1 && has("block_hit")))) {
         reacted = true;
         if (s === "block" && keys.KeyI && hero.frame === hero.clip.frames.length - 1 && has("block_hit")) { set("block_hit", true); P.vx = 0; }
         else { set("hurt", true); P.vx = -P.dir * 120; spawn("hit_spark", P.x, P.y - 30, false); }
       }
       if (!locked && !P.air && !reacted) {
-        if (take("KeyK")) { set("dash", true); P.vx = 0; }
-        else if (take("KeyL")) { set("roll", true); P.vx = P.dir * doc.clips.roll.speed_px_s * Z; }
-        else if (take("KeyU")) { set("cast", true); P.vx = 0; }
-        else if (take("KeyJ")) { set("attack_1", true); P.vx = 0; P.combo = false; }
+        if (take("KeyK") && has("dash")) { set("dash", true); P.vx = 0; }
+        else if (take("KeyL") && has("roll")) { set("roll", true); P.vx = P.dir * doc.clips.roll.speed_px_s * Z; }
+        else if (take("KeyU") && has("cast")) { set("cast", true); P.vx = 0; }
+        else if (take("KeyJ") && has("attack_1")) { set("attack_1", true); P.vx = 0; P.combo = false; }
         else if (keys.KeyI && has("block")) { if (s !== "block") set("block", true); P.vx = 0; }
-        else if (take("Space")) { set("jump_start", true); }
+        else if (take("Space") && has("jump_start")) { set("jump_start", true); }
         else if (down) {
-          if (mv) { set("crouch_walk"); P.vx = mv * doc.clips.crouch_walk.speed_px_s * Z; P.dir = mv; }
+          if (mv && has("crouch_walk")) { set("crouch_walk"); P.vx = mv * doc.clips.crouch_walk.speed_px_s * Z; P.dir = mv; }
           else if (s === "crouch_enter" && hero.done) set("crouch_idle");
           else if (s !== "crouch_idle" && s !== "crouch_enter") { set("crouch_enter", true); P.vx = 0; }
           else P.vx = 0;
         } else if (s === "crouch_idle" || s === "crouch_enter") { set("crouch_exit", true); P.vx = 0; }
         else if (mv) {
-          P.dir = mv; const v = run ? runV : walkV; set(run ? "run" : "walk"); P.vx = mv * v;
+          P.dir = mv; const move = run && has("run") ? "run" : has("walk") ? "walk" : has("run") ? "run" : null;
+          set(move || home); P.vx = mv * (move === "run" ? runV : move === "walk" ? walkV : 0);
         } else {
           if (s === "run") { set("skid", true); P.vx = P.dir * 240; }
           else if (s !== "skid" && s !== "idle" && s !== "idle_look") { set("idle"); P.vx = 0; }
         }
       }
       if (P.air && !locked) {
-        if (P.jumps < 2 && take("Space")) { P.jumps = 2; P.vy = -DBL; set("double_jump", true); }
-        else if (take("KeyJ")) set("air_attack", true);
+        if (P.jumps < 2 && take("Space") && has("double_jump")) { P.jumps = 2; P.vy = -DBL; set("double_jump", true); }
+        else if (take("KeyJ") && has("air_attack")) set("air_attack", true);
       }
       if (P.air && mv) { const v = run ? runV * .85 : Math.max(walkV * 1.6, 180); P.vx = mv * v; P.dir = mv; }
       else if (P.air && s !== "dash") P.vx *= Math.pow(.02, dt);
@@ -298,7 +304,7 @@ function start(imgs, fxImgs) {
     g.fillStyle = "#fff"; g.font = "13px system-ui,'Microsoft YaHei'";
     g.fillText(`${CN[P.state] || P.state}  帧 ${hero.frame + 1}/${hero.clip.frames.length}`, 12, 22);
   }
-  hero.play("idle");
+  hero.play(home);
   window.__demo = { P, hero, fxList };   // read-only hook for automated checks
   const swallow = new Set(["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
   addEventListener("keydown", (e) => {

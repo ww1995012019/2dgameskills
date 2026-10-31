@@ -35,13 +35,25 @@ const send = (type, code) => listeners[type].forEach((f) => f({ code, repeat: fa
   await new Promise((r) => setTimeout(r, 0));
   el('tabB').onclick();
   const { P, hero } = win.__demo;
-  const holdFrame = hero.doc.clips.block.frames.length - 1;
   let sparks = 0;
   const update = hero.update.bind(hero);
   hero.update = (...args) => { const events = update(...args); sparks += events.filter(e => e === 'block_spark').length; return events; };
   const advance = (n) => { for (let i = 0; i < n; i++) tick(); };
   const until = (test) => { for (let i = 0; i < 300; i++) { if (test()) return; tick(); } assert.fail('state timeout: ' + P.state); };
   const tap = (code) => { send('keydown', code); tick(); send('keyup', code); };
+  if (process.argv.includes('--subset')) {
+    // Reduced exports are supported by --clips. Missing actions must not crash the loop.
+    for (const code of ['KeyL', 'KeyK', 'KeyU', 'Space', 'KeyH', 'KeyX', 'KeyJ']) {
+      tap(code); advance(120);
+    }
+    send('keydown', 'KeyS'); send('keydown', 'KeyD'); advance(30);
+    send('keyup', 'KeyS'); send('keyup', 'KeyD'); advance(30);
+    assert.ok(hero.clip, 'the demo always has a playable clip');
+    assert.ok(Number.isFinite(P.x) && Number.isFinite(P.y));
+    console.log('sprite subset controls: OK');
+    return;
+  }
+  const holdFrame = hero.doc.clips.block.frames.length - 1;
   send('keydown', 'KeyI');
   until(() => P.state === 'block' && hero.done);
   assert.equal(hero.frame, holdFrame);
