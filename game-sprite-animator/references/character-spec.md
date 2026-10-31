@@ -66,6 +66,13 @@ Optional keys: `prev` and `next` (cloth hand-over, default `idle`), `period` (lo
 Add `ground` to `tags` for a clip on the floor, so clipping checks run on it. The rig's joint limits
 apply automatically, so an extreme key may render less extreme than written: QA's `limits` reports it.
 
+Use `--clips all` or include the custom name when generating a subset. Non-built-in names appear in
+the preview's custom-action selector when `idle` is also exported; select one and press Q to play it. A one-shot returns to idle
+when finished; Q stops a loop or switches to another selected custom clip. Existing names such as
+`cast` can be overridden, and retain their normal preview controls. Events are exported as timing
+metadata: the target game must implement their effects and transitions. The preview only visualizes
+its built-in event types, so a new event name alone will not create an effect.
+
 ### Pose channels
 
 Angles are in degrees. Limbs: 0 hangs straight down, positive swings forward (toward +x), 90 is

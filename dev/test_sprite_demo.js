@@ -14,6 +14,7 @@ const mk = (id) => ({
 });
 const el = (id) => els[id] || (els[id] = mk(id));
 el('paneB').classList.add('hidden');
+el('custom-controls').classList.add('hidden');
 const listeners = {};
 let raf = [], clock = 1000;
 const win = {};
@@ -43,6 +44,9 @@ const send = (type, code) => listeners[type].forEach((f) => f({ code, repeat: fa
   const tap = (code) => { send('keydown', code); tick(); send('keyup', code); };
   if (process.argv.includes('--subset')) {
     // Reduced exports are supported by --clips. Missing actions must not crash the loop.
+    let drawScale;
+    const draw = hero.draw.bind(hero);
+    hero.draw = (...args) => { drawScale = args[3].scale; return draw(...args); };
     for (const code of ['KeyL', 'KeyK', 'KeyU', 'Space', 'KeyH', 'KeyX', 'KeyJ']) {
       tap(code); advance(120);
     }
@@ -50,6 +54,31 @@ const send = (type, code) => listeners[type].forEach((f) => f({ code, repeat: fa
     send('keyup', 'KeyS'); send('keyup', 'KeyD'); advance(30);
     assert.ok(hero.clip, 'the demo always has a playable clip');
     assert.ok(Number.isFinite(P.x) && Number.isFinite(P.y));
+    if (process.argv.includes('--no-idle')) {
+      assert.ok(el('custom-controls').classList.contains('hidden'), 'custom controls require idle');
+      assert.match(el('missing-actions').textContent, /idle/, 'explain the missing idle');
+    }
+    if (process.argv.includes('--custom')) {
+      if (P.state === 'death') tap('KeyX');
+      until(() => P.state === 'idle');
+      const custom = el('custom-action').value;
+      assert.ok(custom && hero.doc.clips[custom], 'a custom action must be offered');
+      tap('KeyQ');
+      assert.equal(P.state, custom, 'Q must start the selected custom action');
+      send('keydown', 'KeyD'); advance(5); send('keyup', 'KeyD');
+      assert.equal(P.state, custom, 'movement must not interrupt a custom action');
+      if (process.argv.includes('--switch-custom')) {
+        el('custom-action').value = 'test_second';
+        tap('KeyQ');
+        assert.equal(P.state, 'test_second', 'Q must switch to the selected custom action');
+        advance(5); tap('KeyQ');
+      } else if (hero.doc.clips[custom].loop) { advance(10); tap('KeyQ'); }
+      until(() => P.state === 'idle');
+    }
+    if (hero.doc.frame_size >= 128) {
+      assert.ok(Math.abs(drawScale * hero.doc.frame_size - 1.15 * 256) < 1e-6,
+        'HD sprite should keep the same on-screen size at any output resolution');
+    }
     console.log('sprite subset controls: OK');
     return;
   }

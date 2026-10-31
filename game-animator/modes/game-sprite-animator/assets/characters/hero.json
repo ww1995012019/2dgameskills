@@ -1,0 +1,11 @@
+{
+  "name": "hero",
+  "head": "hair",
+  "weapon": "sword",
+  "cloth": ["cape", "hair"],
+  "colors": {
+    "skin": "#f2c7a0", "hair": "#5b3a29", "tunic": "#3f7fb5", "tunic2": "#2d5f8e",
+    "pants": "#46506b", "boots": "#6b4a32", "belt": "#8a5a33", "metal": "#c9d3dd",
+    "accent": "#e8b84a", "cape": "#c23b3b", "glove": "#6b4a32", "eye": "#1d2230", "ink": "#1b1a26"
+  }
+}

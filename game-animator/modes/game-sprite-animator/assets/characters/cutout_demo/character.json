@@ -1,0 +1,147 @@
+{
+ "name": "cutout_demo",
+ "head": "hair",
+ "weapon": "sword",
+ "cloth": [],
+ "colors": {
+  "skin": "#f2c7a0",
+  "hair": "#5b3a29",
+  "tunic": "#3f7fb5",
+  "tunic2": "#2d5f8e",
+  "pants": "#46506b",
+  "boots": "#6b4a32",
+  "belt": "#8a5a33",
+  "metal": "#c9d3dd",
+  "accent": "#e8b84a",
+  "cape": "#c23b3b",
+  "glove": "#6b4a32",
+  "eye": "#1d2230",
+  "ink": "#1b1a26"
+ },
+ "px_per_unit": 2.6948,
+ "body": {
+  "thigh": 18.999,
+  "shin": 18.001,
+  "up_arm": 14.501,
+  "lo_arm": 13.5,
+  "pelvis_len": 9.997,
+  "chest_len": 18.003,
+  "neck_len": 2.499,
+  "sh_w": 2.401,
+  "hip_w": 2.201
+ },
+ "parts": {
+  "hand_f": {
+   "image": "parts/hand_f.png",
+   "pivot": [
+    20.26,
+    12.34
+   ]
+  },
+  "leg_f_up": {
+   "image": "parts/leg_f_up.png",
+   "pivot": [
+    23.07,
+    16.18
+   ]
+  },
+  "leg_f_lo": {
+   "image": "parts/leg_f_lo.png",
+   "pivot": [
+    20.52,
+    15.36
+   ]
+  },
+  "foot_f": {
+   "image": "parts/foot_f.png",
+   "pivot": [
+    20.78,
+    9.67
+   ]
+  },
+  "leg_n_up": {
+   "image": "parts/leg_n_up.png",
+   "pivot": [
+    20.78,
+    9.18
+   ]
+  },
+  "leg_n_lo": {
+   "image": "parts/leg_n_lo.png",
+   "pivot": [
+    20.79,
+    12.87
+   ]
+  },
+  "foot_n": {
+   "image": "parts/foot_n.png",
+   "pivot": [
+    23.14,
+    10.36
+   ]
+  },
+  "pelvis": {
+   "image": "parts/pelvis.png",
+   "pivot": [
+    24.0,
+    51.18
+   ]
+  },
+  "torso": {
+   "image": "parts/torso.png",
+   "pivot": [
+    35.0,
+    67.24
+   ]
+  },
+  "head": {
+   "image": "parts/head.png",
+   "pivot": [
+    49.0,
+    95.99
+   ]
+  },
+  "weapon": {
+   "image": "parts/weapon.png",
+   "pivot": [
+    22.77,
+    132.4
+   ]
+  },
+  "arm_n_up": {
+   "image": "parts/arm_n_up.png",
+   "pivot": [
+    13.41,
+    12.81
+   ]
+  },
+  "arm_n_lo": {
+   "image": "parts/arm_n_lo.png",
+   "pivot": [
+    17.95,
+    13.65
+   ]
+  },
+  "hand_n": {
+   "image": "parts/hand_n.png",
+   "pivot": [
+    13.98,
+    12.0
+   ]
+  },
+  "arm_f_up": {
+   "image": "parts/arm_f_up.png",
+   "pivot": [
+    13.41,
+    12.81
+   ]
+  },
+  "arm_f_lo": {
+   "image": "parts/arm_f_lo.png",
+   "pivot": [
+    17.95,
+    13.65
+   ]
+  }
+ }
+}

@@ -64,6 +64,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2p
   <section id="paneB" class="hidden">
     <canvas id="game" width="960" height="440" tabindex="0"></canvas>
     <p class="mono" id="missing-actions"></p>
+    <div class="row hidden" id="custom-controls"><label for="custom-action">自定义动作</label><select class="btn" id="custom-action"></select><span class="mono">按 Q 播放或停止</span></div>
     <div class="keys">
       <span><kbd>A</kbd><kbd>D</kbd>/<kbd>←</kbd><kbd>→</kbd> 走</span><span>按住 <kbd>Shift</kbd> 跑</span><span><kbd>空格</kbd> 跳 / 二段跳</span>
       <span><kbd>S</kbd>/<kbd>↓</kbd> 蹲</span><span><kbd>J</kbd> 三连击</span><span><kbd>K</kbd> 冲刺</span><span><kbd>L</kbd> 翻滚</span>
@@ -156,13 +157,24 @@ function start(imgs, fxImgs) {
 
   // ---- playable demo ------------------------------------------------------
   const game = $("game"), g = game.getContext("2d");
-  const Z = PIXEL ? Math.max(2, Math.round(180 / SIZE)) : 1.15;
+  // Keep the character's on-screen size stable when HD frame resolution changes.
+  const Z = PIXEL ? Math.max(2, Math.round(180 / SIZE)) : 1.15 * 256 / SIZE;
+  const worldZ = PIXEL ? Z : 1.15;
   const hero = new SpritePlayer(doc, imgs);
   const groundY = 372;
   const home = doc.clips.idle ? "idle" : names[0];
   const demoActions = ["idle", "walk", "run", "jump_start", "double_jump", "crouch_walk", "roll", "dash", "attack_1", "attack_2", "attack_3", "cast", "block", "block_hit", "hurt", "death"];
   const missing = demoActions.filter((name) => !doc.clips[name]);
   if (missing.length) $("missing-actions").textContent = "未导出的动作无法在试玩中使用：" + missing.map((name) => CN[name] || name).join("、");
+  const customNames = names.filter((name) => !Object.prototype.hasOwnProperty.call(CN, name));
+  if (customNames.length && doc.clips.idle) {
+    const customSelect = $("custom-action");
+    customNames.forEach((name) => { const option = document.createElement("option"); option.value = name; option.textContent = name; customSelect.append(option); });
+    customSelect.value = customNames[0];
+    $("custom-controls").classList.remove("hidden");
+  } else if (customNames.length) {
+    $("missing-actions").textContent += "；自定义动作试玩需要同时导出待机动作 idle。";
+  }
   const P = { x: 200, y: groundY, vx: 0, vy: 0, dir: 1, air: false, jumps: 0, state: home, combo: false, dead: false, cool: 0, dash: 0 };
   const keys = {};
   const GRAV = 2300, JUMP = 900, DBL = 780;
@@ -181,9 +193,9 @@ function start(imgs, fxImgs) {
     const m = { footstep: "dust_step", land_dust: "dust_land", skid_dust: "dust_skid", dash_burst: "dust_dash", air_puff: "puff_air", block_spark: "block_spark" }[e];
     if (m) spawn(m, P.x, m === "puff_air" ? P.y : groundY, P.dir < 0);
     if (e === "takeoff") { P.vy = -JUMP; P.air = true; P.jumps = 1; }
-    if (e === "hit_on") { spawn("hit_spark", P.x + P.dir * 70 * Z, P.y - 10, false); }
+    if (e === "hit_on") { spawn("hit_spark", P.x + P.dir * 70 * worldZ, P.y - 10, false); }
     if (e === "screen_shake") shake = 9;
-    if (e === "projectile" && fxDoc && fxDoc.clips.projectile_orb) bolts.push({ x: P.x + P.dir * 60 * Z, y: P.y - 62 * Z, dir: P.dir, p: (() => { const q = new SpritePlayer(fxDoc, fxImgs); q.play("projectile_orb"); return q; })() });
+    if (e === "projectile" && fxDoc && fxDoc.clips.projectile_orb) bolts.push({ x: P.x + P.dir * 60 * worldZ, y: P.y - 62 * worldZ, dir: P.dir, p: (() => { const q = new SpritePlayer(fxDoc, fxImgs); q.play("projectile_orb"); return q; })() });
   }
   const bolts = [];
   const LOCK = new Set(["attack_1", "attack_2", "attack_3", "air_attack", "cast", "hurt", "death", "roll", "dash", "land", "jump_start", "double_jump", "crouch_exit", "block_hit"]);
@@ -195,7 +207,8 @@ function start(imgs, fxImgs) {
     const s = P.state, left = keys.ArrowLeft || keys.KeyA, right = keys.ArrowRight || keys.KeyD, down = keys.ArrowDown || keys.KeyS, run = keys.ShiftLeft || keys.ShiftRight;
     const mv = (right ? 1 : 0) - (left ? 1 : 0);
     const cancelLand = s === "land" && hero.frame >= LAND_CANCEL;
-    const locked = LOCK.has(s) && !hero.done && !cancelLand;
+    const customPlaying = !!doc.clips.idle && customNames.includes(s);
+    const locked = (LOCK.has(s) || customPlaying) && !hero.done && !cancelLand;
     const ev = hero.update(dt * 1000);
     ev.forEach(onEvent);
     if (s === "death") {
@@ -207,6 +220,10 @@ function start(imgs, fxImgs) {
         reacted = true;
         if (s === "block" && keys.KeyI && hero.frame === hero.clip.frames.length - 1 && has("block_hit")) { set("block_hit", true); P.vx = 0; }
         else { set("hurt", true); P.vx = -P.dir * 120; spawn("hit_spark", P.x, P.y - 30, false); }
+      }
+      if (!reacted && !P.air && (!locked || customPlaying) && take("KeyQ") && customNames.length) {
+        const chosen = $("custom-action").value;
+        if (has(chosen)) { set(customPlaying && s === chosen ? "idle" : chosen, true); P.vx = 0; reacted = true; }
       }
       if (!locked && !P.air && !reacted) {
         if (take("KeyK") && has("dash")) { set("dash", true); P.vx = 0; }
@@ -253,7 +270,7 @@ function start(imgs, fxImgs) {
           const next = doc.clips[s].next || "block";
           set(next, true, doc.clips[s].next_frame || 0);
         }
-        else if (s !== "death") { if (s === "land" || s === "skid" || s === "roll" || s === "dash" || s.startsWith("attack") || s === "cast" || s === "hurt" || s === "crouch_exit" || s === "block" || s === "idle_look") { if (!(s === "block" && keys.KeyI)) { set("idle"); P.vx = 0; } } }
+        else if (s !== "death") { if (s === "land" || s === "skid" || s === "roll" || s === "dash" || customPlaying || s.startsWith("attack") || s === "cast" || s === "hurt" || s === "crouch_exit" || s === "block" || s === "idle_look") { if (!(s === "block" && keys.KeyI)) { set("idle"); P.vx = 0; } } }
       }
       if (s === "block" && !keys.KeyI && !locked && !reacted) set("idle");
       if (s === "jump_rise" && P.vy > -180) set("jump_apex", true);
@@ -295,11 +312,11 @@ function start(imgs, fxImgs) {
     g.fillStyle = "#475073";
     for (let i = Math.floor(cam / 80); i * 80 < cam + W + 80; i++) g.fillRect(i * 80 - cam, groundY + 16 + (i % 3) * 12, 42, 3);
     g.fillStyle = "rgba(0,0,0,.28)";
-    const hgt = Math.max(0, groundY - P.y), sw = 46 * Z * (1 - Math.min(.6, hgt / 400));
+    const hgt = Math.max(0, groundY - P.y), sw = 46 * worldZ * (1 - Math.min(.6, hgt / 400));
     g.beginPath(); g.ellipse(P.x - cam, groundY + 3, sw, 7 * (1 - Math.min(.6, hgt / 400)), 0, 0, 7); g.fill();
     for (const f of fxList) f.p.draw(g, f.x - cam, f.y, { flip: f.dir, scale: Z });
     hero.draw(g, P.x - cam, P.y, { flip: P.dir < 0, scale: Z });
-    for (const b of bolts) b.p.draw(g, b.x - cam, b.y + 46 * Z, { scale: Z * .8 });
+    for (const b of bolts) b.p.draw(g, b.x - cam, b.y + 46 * worldZ, { scale: Z * .8 });
     g.restore();
     g.fillStyle = "#fff"; g.font = "13px system-ui,'Microsoft YaHei'";
     g.fillText(`${CN[P.state] || P.state}  帧 ${hero.frame + 1}/${hero.clip.frames.length}`, 12, 22);

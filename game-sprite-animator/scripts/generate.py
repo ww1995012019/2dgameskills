@@ -155,8 +155,17 @@ def main():
         for k, v in fx.items():
             export.write_sheet(os.path.join(root, "fx"), k, v["frames"], size)
 
+    seams = [s for s in SEAMS if s[0] in names and s[1] in names]
+    # Custom clips declare their own neighbors; include them in the same transition QA.
+    for name in spec.get("custom_clips", {}):
+        if name not in names:
+            continue
+        clip = clips[name]
+        for pair in ((clip.prev, name), (name, clip.next)):
+            if pair[0] in names and pair[1] in names and pair[0] != pair[1] and pair not in seams:
+                seams.append(pair)
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
-        json.dump(dict(traces=traces, seams=[s for s in SEAMS if s[0] in names and s[1] in names],
+        json.dump(dict(traces=traces, seams=seams,
                        unit_px=unit_px, speeds={n: clips[n].speed * unit_px for n in names}), fh)
 
     export.preview_html(root, os.path.join(SKILL_ROOT, "assets", "preview_template.html"),

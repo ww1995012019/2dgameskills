@@ -1,0 +1,162 @@
+{
+  "name": "bird-skeleton-placeholder",
+  "motion": {
+    "period": 0.8,
+    "bob": 2.0,
+    "pitch": 3.0
+  },
+  "view": {
+    "units": 145,
+    "pivot": [
+      0.44,
+      0.53
+    ]
+  },
+  "wing_pairs": [
+    [
+      "wing_far",
+      "wing_near"
+    ],
+    [
+      "tip_far",
+      "tip_near"
+    ]
+  ],
+  "bones": [
+    {
+      "name": "body",
+      "parent": null,
+      "length": 25,
+      "angle": 0,
+      "tags": [
+        "body"
+      ]
+    },
+    {
+      "name": "wing_far",
+      "parent": "body",
+      "anchor": "start",
+      "offset": [
+        9,
+        -2
+      ],
+      "length": 27,
+      "angle": -125,
+      "limits": [
+        -170,
+        -80
+      ],
+      "flap_amplitude": 35,
+      "tags": [
+        "wing"
+      ]
+    },
+    {
+      "name": "tip_far",
+      "parent": "wing_far",
+      "length": 18,
+      "angle": -10,
+      "limits": [
+        -50,
+        30
+      ],
+      "flap_amplitude": 25,
+      "flap_phase": -25,
+      "tags": [
+        "wing"
+      ]
+    },
+    {
+      "name": "head",
+      "parent": "body",
+      "length": 12,
+      "angle": -18,
+      "tags": [
+        "head"
+      ]
+    },
+    {
+      "name": "tail",
+      "parent": "body",
+      "anchor": "start",
+      "length": 17,
+      "angle": 170,
+      "tags": [
+        "tail"
+      ]
+    },
+    {
+      "name": "wing_near",
+      "parent": "body",
+      "anchor": "start",
+      "offset": [
+        9,
+        2
+      ],
+      "length": 27,
+      "angle": -125,
+      "limits": [
+        -170,
+        -80
+      ],
+      "flap_amplitude": 35,
+      "tags": [
+        "wing"
+      ]
+    },
+    {
+      "name": "tip_near",
+      "parent": "wing_near",
+      "length": 18,
+      "angle": -10,
+      "limits": [
+        -50,
+        30
+      ],
+      "flap_amplitude": 25,
+      "flap_phase": -25,
+      "tags": [
+        "wing"
+      ]
+    }
+  ],
+  "draw_order": [
+    "wing_far",
+    "tip_far",
+    "tail",
+    "body",
+    "head",
+    "wing_near",
+    "tip_near"
+  ],
+  "parts": {
+    "body": {
+      "color": "#d8d8ca",
+      "width": 12
+    },
+    "head": {
+      "color": "#f1d19a",
+      "width": 8
+    },
+    "tail": {
+      "color": "#8a9a9b",
+      "width": 5
+    },
+    "wing_far": {
+      "color": "#7ea7bb",
+      "width": 8
+    },
+    "tip_far": {
+      "color": "#576f7a",
+      "width": 5
+    },
+    "wing_near": {
+      "color": "#7ea7bb",
+      "width": 8
+    },
+    "tip_near": {
+      "color": "#8cb3c1",
+      "width": 5
+    }
+  }
+}

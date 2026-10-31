@@ -3,8 +3,8 @@
 Use this when the user wants their own look and will make the character with an image generator
 (GPT image, Midjourney, Stable Diffusion, Jimeng, Kling and the like). The image model draws the
 character once; `scripts/cut_parts.py` cuts it into parts, and the rig, motion library, QA and
-exports work unchanged. You cannot generate images yourself: write the prompt, the user runs it and
-puts the picture in the working folder.
+exports work unchanged. Use an available image-generation tool when appropriate; otherwise provide
+the prompt for the user to generate the picture. Save or place the resulting image in the working folder.
 
 ## 1. The reference pose
 

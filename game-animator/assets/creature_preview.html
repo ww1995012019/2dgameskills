@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__ · 飞行姿势预览</title><style>body{background:#18212b;color:#ecf2f5;font:16px system-ui;margin:24px}canvas{display:block;background:#27343f;max-width:100%;height:auto;margin:16px 0;border-radius:8px}select,button{font:inherit;padding:7px}p{max-width:700px;line-height:1.6;color:#b9c8d2}</style></head>
+<body><h1>__TITLE__</h1><p>实验性骨骼预览：检查部件重叠、翅膀弯曲和裁切。该页面只播放动画，不模拟游戏移动或碰撞。</p>
+<label>动作 <select id="action"></select></label> <button id="restart">重新播放</button><canvas id="preview"></canvas><p id="status"></p>
+<script>
+/*__PLAYER__*/
+const DATA=/*__DATA__*/null, select=document.getElementById('action'), canvas=document.getElementById('preview');
+canvas.width=canvas.height=DATA.doc.frame_size;
+for(const [name,clip] of Object.entries(DATA.doc.clips)){const o=document.createElement('option');o.value=name;o.textContent=name+' · '+clip.frames.length+' 帧';select.append(o);}
+Promise.all(DATA.images.map(src=>new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=src;}))).then(images=>{
+ const p=new SpritePlayer(DATA.doc,images),ctx=canvas.getContext('2d');let previous=performance.now();
+ function play(){p.play(select.value,{restart:true});document.getElementById('status').textContent=select.value;}
+ select.onchange=play;document.getElementById('restart').onclick=play;play();
+ function frame(now){p.update(Math.min(100,now-previous));previous=now;ctx.clearRect(0,0,canvas.width,canvas.height);p.draw(ctx,DATA.doc.pivot[0],DATA.doc.pivot[1]);requestAnimationFrame(frame);}
+ requestAnimationFrame(frame);
+}).catch(()=>{document.getElementById('status').textContent='预览图片加载失败';});
+</script></body></html>

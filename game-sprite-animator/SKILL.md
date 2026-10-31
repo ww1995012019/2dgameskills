@@ -39,9 +39,13 @@ Requires Python 3 with `pillow` and `numpy`. Scripts are in `scripts/`, run from
    express personality: a heavy knight is `speed: 0.85, bounce: 0.75`, a nimble ninja is
    `speed: 1.2, bounce: 1.25`. For a request outside the 27 built-in clips (a wave, drinking a potion),
    add a `custom_clips` entry rather than editing the library; see the same reference.
+   Describe the desired anticipation, main pose, timing, recovery and any event; build and visually
+   review the motion. A new custom clip appears in the preview's custom-action selector and is
+   triggered with Q in the playable demo. Existing named clips keep their usual controls. Do not
+   claim a game engine will trigger the animation or its effects without controller integration.
 
    For the user's own look made with an image generator, follow `references/ai-art.md` instead: you
-   write the prompt from the reference pose, the user generates the picture, you mark its joints and
+   use an available image tool or prepare a prompt for the user, mark the joints and
    `scripts/cut_parts.py` cuts it into parts and checks every joint in motion.
 
 3. **Check the look on a contact sheet before the full render.** It takes seconds, a full set about a

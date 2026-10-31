@@ -1,0 +1,12 @@
+{
+  "name": "commando",
+  "head": "headband",
+  "weapons": ["rifle", "shotgun"],
+  "cloth": ["headband"],
+  "body": { "bulk": 1.1 },
+  "colors": {
+    "skin": "#e0ae85", "hair": "#2b221d", "tunic": "#6a7a4d", "tunic2": "#4e5b3a",
+    "pants": "#566343", "boots": "#3a3029", "belt": "#2c2622", "vest": "#7c7650",
+    "helmet": "#5d6c48", "cape": "#b53a2e", "accent": "#d8a93f", "ink": "#16151a"
+  }
+}

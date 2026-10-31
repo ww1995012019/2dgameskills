@@ -1,0 +1,14 @@
+{
+  "name": "knight",
+  "head": "helmet",
+  "weapon": "axe",
+  "armor": true,
+  "cloth": ["cape", "plume"],
+  "body": { "bulk": 1.18, "head_size": 0.86 },
+  "style": { "speed": 0.86, "bounce": 0.75 },
+  "colors": {
+    "skin": "#cfa98a", "hair": "#2f2a33", "tunic": "#6d7787", "tunic2": "#4d5564",
+    "pants": "#3b4150", "boots": "#7a8494", "belt": "#5c4333", "metal": "#b9c3cf",
+    "accent": "#d9a441", "cape": "#7d2638", "glove": "#7a8494", "eye": "#1d2230", "ink": "#16151f"
+  }
+}

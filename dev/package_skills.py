@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build game-sprite-animator.skill and game-shooter-animator.skill in the repo root.
+"""Build the four mode packages and the unified game-animator.skill in the repo root.
 
-    python dev/package_skills.py            # rebuild both packages
+    python dev/package_skills.py            # rebuild packages
     python dev/package_skills.py --check    # exit 1 if a package is out of date
 
 A .skill is a zip of the skill folder. It holds exactly the git-tracked files of that folder, read
 from the working tree, with a fixed timestamp so the package only changes when its content does.
-Refuses to build while the shared files are out of sync (dev/sync_shared.py --check).
+Refuses to build while shared files or unified mode snapshots are out of sync.
 """
 import argparse
 import io
@@ -17,7 +17,7 @@ import sys
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKILLS = ("game-sprite-animator", "game-shooter-animator", "game-topdown-animator", "game-quadruped-animator")
+SKILLS = ("game-sprite-animator", "game-shooter-animator", "game-topdown-animator", "game-quadruped-animator", "game-animator")
 STAMP = (2026, 1, 1, 0, 0, 0)
 
 
@@ -59,6 +59,8 @@ def main():
     a = ap.parse_args()
     if subprocess.run([sys.executable, os.path.join(ROOT, "dev", "sync_shared.py"), "--check"]).returncode:
         sys.exit(1)
+    if subprocess.run([sys.executable, os.path.join(ROOT, "dev", "sync_modes.py"), "--check"]).returncode:
+        sys.exit("unified modes out of sync; run dev/sync_modes.py and register new paths")
     stale = []
     for skill in SKILLS:
         check_frontmatter(skill)

@@ -7,6 +7,11 @@
 
 ## 代码布局
 
+- 统一入口首版是 `game-animator/`，包含四个模式的原样快照。改了原模式后运行
+  `python dev/sync_modes.py` 更新快照，再重新打包；`--check` 检查文件一致性。统一包目前
+  不代表角色配置通用；实验性飞行流程的限制见 `game-animator/references/creature-rig.md`，
+  原四个 skill 仍保留。
+
 - 每个 skill 文件夹必须能单独复制、单独打包使用，所以两边共用的文件在两个 skill 里各存一份。
 - **共用文件只改 `shared/`**，然后运行 `python dev/sync_shared.py` 复制到两边。直接改 skill 里的副本，`--check` 会报不一致。
   目前共用：`sprite_anim/` 下的 `constraints.py`、`cloth.py`、`mathx.py`、`export.py`，以及 `visual_review.py`、

@@ -1,0 +1,13 @@
+{
+  "name": "mercenary",
+  "head": "cap",
+  "weapons": ["shotgun", "rocket"],
+  "cloth": ["hair"],
+  "body": { "bulk": 1.18, "head_size": 0.96 },
+  "style": { "speed": 0.9, "bounce": 0.9 },
+  "colors": {
+    "skin": "#c98f66", "hair": "#6a4a2c", "tunic": "#a58a5c", "tunic2": "#83693f",
+    "pants": "#7a6443", "boots": "#4a3424", "belt": "#3b2b1e", "vest": "#6c5636",
+    "helmet": "#8a6f43", "accent": "#d9b35c", "glove": "#4a3424", "ink": "#1b150f"
+  }
+}

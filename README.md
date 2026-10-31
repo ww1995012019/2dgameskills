@@ -2,6 +2,8 @@
 
 用 Claude 生成 2D 游戏角色动画的 skill：一句话描述角色，得到完整、流畅、可直接导入引擎的动作素材。
 
+现在可试用统一入口 [game-animator](game-animator/SKILL.md)：安装 `game-animator.skill` 后按角色与视角选择下面四种模式。当前是打包和路由首版，各模式的角色配置仍各自独立。另有实验性配置驱动飞行流程，支持刚性 PNG 部件和基础动作，但示例只是骨架占位，尚未完成生物美术和引擎实测。旧的四个包仍可单独使用。
+
 | Skill | 适合 |
 |---|---|
 | [game-sprite-animator](#game-sprite-animator) | 横版 RPG、动作游戏：刀剑、法术、跳跃、翻滚 |
@@ -27,6 +29,7 @@
 - **导出：** 序列帧、精灵图、图集、`animations.json`，以及 Unity、Godot、Cocos、Phaser、PixiJS、H5 CSS 和 Canvas 播放器所需的文件。Godot 4.3、Phaser 3、PixiJS 8 和浏览器 CSS 已实测导入和播放，逐帧和原图一致；Unity、Cocos 尚未实测
 
 每次生成都会附带 `preview.html`，可以逐个查看动作，也可以用键盘试玩。
+为横版人形添加的自定义动作可在试玩页选择并按 Q 播放；导出时需要包含 `idle` 和该动作。
 
 ## game-shooter-animator
 
