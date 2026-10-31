@@ -41,6 +41,14 @@ tone for each. `ink` is the outline. A dark, slightly saturated ink looks better
 
 ## Custom clips
 
+For a character whose proportions make a built-in keyed action awkward, an optional
+`clip_key_overrides` object can replace individual pose channels at existing zero-based key indices.
+For example, `"clip_key_overrides": {"attack_3": {"1": {"arm_n_up": 120}}}` changes only that
+channel at key 1. Other keys, timing, events, velocity and combo metadata remain unchanged. Indices
+refer to the keys in `scripts/sprite_anim/motions.py`; inspect that clip before editing. Only
+non-looping keyed clips are supported. Review the entire action and its combo transitions, and run
+motion QA; corrections to a shared combo pose may need matching changes in both clips.
+
 `assets/characters/goblin.json` has a working example. Add actions without touching the library. Times are in seconds, poses are sparse dicts layered on the
 idle pose, and the first and last keys should stay close to idle so the clip joins the rest of the set.
 

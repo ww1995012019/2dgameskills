@@ -7,9 +7,11 @@
 
 ## 代码布局
 
-- 统一入口首版是 `game-animator/`，包含四个模式的原样快照。改了原模式后运行
-  `python dev/sync_modes.py` 更新快照，再重新打包；`--check` 检查文件一致性。统一包目前
-  不代表角色配置通用；实验性飞行流程的限制见 `game-animator/references/creature-rig.md`，
+- 统一入口是 `game-animator/`，包含四个模式的代码快照；导出器、骨骼完整性校验与数学模块在包内
+  只保留人形模式的一份，其他需要它们的模式使用同步脚本生成的适配器。改了原模式后运行 `python dev/sync_modes.py`
+  更新，再重新打包；`--check` 检查同步和适配器。统一包目前
+  支持横版和俯视共享角色名称、基础配色的 manifest（`scripts/generate_character.py`）；
+  俯视仍不支持自定义 PNG 或统一身体比例。实验性飞行流程的限制见 `game-animator/references/creature-rig.md`，
   原四个 skill 仍保留。
 
 - 每个 skill 文件夹必须能单独复制、单独打包使用，所以两边共用的文件在两个 skill 里各存一份。

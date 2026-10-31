@@ -30,7 +30,7 @@ def main():
     spec = json.load(open(a.character, encoding="utf-8")) if a.character else {}
     if a.character:
         spec["_dir"] = os.path.dirname(os.path.abspath(a.character))
-    clips = build_clips(spec.get("style"), spec.get("custom_clips"))
+    clips = build_clips(spec.get("style"), spec.get("custom_clips"), spec.get("clip_key_overrides"))
     r = Renderer(spec, a.size, a.pixel, clips=clips)
     names = [n for n in a.clips.split(",") if n] if a.clips != "all" else list(clips)
     unknown = [n for n in names if n not in clips]

@@ -1,0 +1,21 @@
+{
+  "name": "Shared Hero",
+  "palette": {
+    "skin": "#f2c7a0",
+    "hair": "#5b3a29",
+    "coat": "#3f7fb5",
+    "trim": "#e8b84a",
+    "pants": "#46506b",
+    "boots": "#6b4a32",
+    "ink": "#1b1a26"
+  },
+  "body": {"head_size": 1.0},
+  "views": {
+    "side": {
+      "base": "../modes/game-sprite-animator/assets/characters/hero.json"
+    },
+    "topdown": {
+      "base": "../modes/game-topdown-animator/assets/characters/wanderer.json"
+    }
+  }
+}

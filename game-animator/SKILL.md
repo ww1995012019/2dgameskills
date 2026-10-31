@@ -21,8 +21,31 @@ Read the chosen mode's `SKILL.md` for its commands, supported character configur
 export process. For side-view custom art and actions, use its `references/ai-art.md` and
 `references/character-spec.md`; test custom actions in the preview and inspect joints visually.
 
-These are independent existing implementations under one entry point. A character spec or PNG
-parts from one mode do not automatically work in another. The experimental flight workflow can
+## Shared character identity: side and top-down
+
+`assets/shared_character_example.json` demonstrates one manifest for a side-view humanoid and a
+top-down humanoid. Generate each view into a new output directory:
+
+```bash
+python scripts/generate_character.py --manifest assets/shared_character_example.json --view side --preset pixel --out out/hero-side
+python scripts/generate_character.py --manifest assets/shared_character_example.json --view topdown --preset pixel --out out/hero-topdown
+python modes/game-sprite-animator/scripts/qa_motion.py out/hero-side
+python modes/game-topdown-animator/scripts/qa_motion.py out/hero-topdown
+```
+
+The top-level `name` and `palette` are shared. Palette keys are `skin`, `hair`, `coat`, `trim`,
+`pants`, `boots`, and `ink`; coat maps to side-view `tunic`, trim to side-view `accent`. Each view
+can name an existing `base` spec path relative to the manifest and optionally supply `overrides`;
+view overrides take precedence. With a base, image paths in its `parts` and in view overrides are
+relative to that base file; without one, they are relative to the manifest. The resolved spec is
+saved with the output for inspection. `body` applies only to the side-view rig: top-down proportions
+are not configurable and top-down does not support cut-out PNGs. The two views use their own art,
+so matching palette and name do not guarantee a matching character design. The wrapper requires a
+new output directory, and QA and visual review are still separate steps.
+
+These modes retain their existing implementations under one entry point; the exporter, skeleton
+integrity checks and applicable math routines are shared within this bundle. A PNG part from one view does not automatically
+work in another. The experimental flight workflow can
 generate rigid-part motion but is not a visually validated bird, bat or dragon product. Arbitrary
 creature locomotion, full scene generation, and AI art for the top-down mode are not implemented.
 Do not advertise an engine integration as verified beyond the mode's integration documentation.

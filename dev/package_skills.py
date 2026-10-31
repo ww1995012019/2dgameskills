@@ -19,6 +19,14 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = ("game-sprite-animator", "game-shooter-animator", "game-topdown-animator", "game-quadruped-animator", "game-animator")
 STAMP = (2026, 1, 1, 0, 0, 0)
+TEXT_EXTENSIONS = {".py", ".md", ".json", ".html", ".js", ".cs"}
+
+
+def package_content(path, data):
+    """Keep text archives identical for LF and CRLF checkouts; preserve binary bytes."""
+    if os.path.splitext(path)[1].lower() in TEXT_EXTENSIONS:
+        return data.replace(b"\r\n", b"\n")
+    return data
 
 
 def tracked(skill):
@@ -49,7 +57,7 @@ def build(skill):
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             with open(os.path.join(ROOT, p), "rb") as fh:
-                z.writestr(info, fh.read())
+                z.writestr(info, package_content(p, fh.read()))
     return buf.getvalue()
 
 

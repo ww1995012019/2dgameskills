@@ -1,5 +1,28 @@
 # 交接文档
 
+## 打包换行一致性（2026-10-31）
+
+- `dev/package_skills.py` 在打包文本时统一为 LF，PNG 等二进制保持原样，避免 Windows CRLF 与 Linux LF 检出导致相同源码的 `.skill` 包不同。`dev/tests/test_package_line_endings.py` 覆盖文本和二进制处理；五个技能包已重建。
+
+## 统一包导出器去重（2026-10-31）
+
+- `game-animator` 内的横版射击、俯视、四足模式改用适配器执行横版人形模式中的同一份 `export.py` 和 `integrity.py`；射击和四足也共享 `mathx.py`。原四个独立技能保持不变。适配器由 `dev/sync_modes.py` 自动生成并校验，不要直接修改；`shared/` 仍是旧包公共代码的源头。
+- 解压统一包后，对四个模式分别生成 idle/walk/run，逐帧、图集、动画 JSON、质检报告及引擎导出内容与原独立模式一致（文本导出比较时统一换行）；测试也验证适配器的模块全局变量语义。尚未合并其他重复代码。
+- 新增 `dev/regress_unified.py`，在解压后的包内运行基准各套并保存日志、快照和比较报告。导出器、骨骼检查和数学模块三次分别跑完 26 套：均为 0 回退、0 像素变化、0 数值漂移。数学模块的初次并行运行在 `mage-hd` 内存分配失败，其余 25 套通过；减少负载后单独重跑该套，再合并比较全部通过。原始失败和补跑报告分别保留在 `xly/unified-regression-mathx/comparison.json` 和 `comparison-retry.json`；引擎没有重新实测。
+
+## 统一角色描述首版（2026-10-31）
+
+- `game-animator/scripts/generate_character.py` 通过一个 manifest 生成 side 或 topdown，复用现有生成器；名称和基础配色共享，`coat`/`trim` 分别映射到横版 `tunic`/`accent`，视角各自的 overrides 优先。base 相对 manifest，PNG 路径相对 base；解析结果保存在输出中，已有输出目录不会被覆盖。示例和命令见统一包 `SKILL.md`。
+- `xly/shared-character-hd/` 为同一配置生成的 256px、30fps 两套待机、走、跑预览。side 3 个片段、topdown 24 个方向片段各为 0 FAIL、0 WARN。生成器不能证明两视角造型完全一致：俯视目前不接收分层 PNG 或共享身体比例。未来还要接入真正的多视角素材。
+- `dev/tests/test_character_manifest.py` 检查映射、相对素材路径、非法配置和防覆盖；`test_unified_skill.py` 还从解压后的实际安装包生成两个视角。此首版不代表阶段 B 已全部完成。
+
+## 红衣枪客连击姿势调整（2026-10-31，本地工作）
+
+- 横版人形增加可选 `clip_key_overrides`，按已有非循环关键帧动作的索引替换姿势通道；保留原片段的时序、速度、事件和连击信息。生成、接缝预览及切块动作检查都读取同一配置。旧配置没有此字段时沿用原动作。
+- 红衣枪客的新配置在 `xly/spear-maiden-source/rig-v2/character.json`，产物在 `xly/spear-maiden-v2/`；原素材和原产物保留。调整第二击及第三击的持枪臂，第三击不再持续挡脸。第二击连招时点到第三击起点的 11 个关键关节最大距离约 0.78 骨架单位；hit_on、hit_off、screen_shake 及速度曲线仍保留。
+- 高清 27 动作、613 帧：数值 QA 0 FAIL、1 WARN；WARN 为剪纸角色的 `idle_look` 无表情变化。已生成并查看五张静态审查图；静态审查不能证明实际播放手感，须让用户试玩认可。原记录的袖口残留未修改，需进一步检查与修图。
+- 改动同步到统一包，重新打包并通过打包一致性检查。Windows 使用工作区临时目录运行完整单元测试：157 项，9 项因 Godot、Playwright 等依赖缺失跳过，2 项预期失败，其余通过。没有做全量基准或引擎实测。
+
 ## 骨骼完整性校验（本地工作，未提交）
 
 用户发现角色骨骼丢了还能通过验证。复现用的是 `Desktop/tstgame/swordsman-source/rig-fixed`，QA 原本全绿。

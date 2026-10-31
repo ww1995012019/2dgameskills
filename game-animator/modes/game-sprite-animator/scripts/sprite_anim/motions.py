@@ -141,7 +141,7 @@ class Gait(Clip):
         return p
 
 
-def build_clips(style=None, custom=None):
+def build_clips(style=None, custom=None, key_overrides=None):
     """style: {'speed': time multiplier > 1 = snappier, 'bounce': amplitude multiplier}."""
     style = style or {}
     tm = 1.0 / style.get("speed", 1.0)
@@ -485,6 +485,24 @@ def build_clips(style=None, custom=None):
                           prev=spec.get("prev", "idle"), next=spec.get("next", "idle"),
                           events=[(t * tm, n) for t, n in spec.get("events", [])],
                           tags=tuple(spec.get("tags", ())))
+
+    # Optional character-specific corrections to existing keyed poses. Keeping the
+    # clip object retains its events, velocity, combo timing and transition metadata.
+    for name, changes in (key_overrides or {}).items():
+        if name not in out or not isinstance(out[name], Keyed) or out[name].loop:
+            raise ValueError(f"key overrides require a non-looping keyed clip: {name}")
+        clip = out[name]
+        values = clip.curve.v.copy()
+        for index, pose in changes.items():
+            if not isinstance(index, str) or not index.isdecimal() or int(index) >= len(values):
+                raise ValueError(f"invalid key index for {name}: {index}")
+            if not isinstance(pose, dict):
+                raise ValueError(f"key override for {name}[{index}] must be an object")
+            for channel, value in pose.items():
+                if channel not in IDX or isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                    raise ValueError(f"invalid pose channel or value: {name}[{index}].{channel}")
+                values[int(index), IDX[channel]] = value
+        clip.curve = Curve(clip.curve.t, values)
     return out
 
 

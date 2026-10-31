@@ -525,7 +525,7 @@ def check(spec, size=192, fps=15, clips=CHECK_CLIPS):
     "floating" and "bones" entries give the frame-level skeleton checks' first finding."""
     from sprite_anim.motions import build_clips
     from sprite_anim.render import Renderer, frame_count, frame_time
-    lib = build_clips(spec.get("style"), spec.get("custom_clips"))
+    lib = build_clips(spec.get("style"), spec.get("custom_clips"), spec.get("clip_key_overrides"))
     picked = {n: lib[n] for n in clips if n in lib}
     r = Renderer(spec, size, clips=picked)
     yy, xx = np.mgrid[0:size, 0:size]

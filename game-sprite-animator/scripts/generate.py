@@ -96,7 +96,7 @@ def main():
     over = parse_overrides(a.fps_override)
     name = spec.get("name", "character")
 
-    clips = build_clips(spec.get("style"), spec.get("custom_clips"))
+    clips = build_clips(spec.get("style"), spec.get("custom_clips"), spec.get("clip_key_overrides"))
     names = list(clips) if a.clips == "all" else [c for c in a.clips.split(",") if c]
     unknown = [c for c in names if c not in clips]
     if unknown:

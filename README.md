@@ -2,7 +2,7 @@
 
 用 Claude 生成 2D 游戏角色动画的 skill：一句话描述角色，得到完整、流畅、可直接导入引擎的动作素材。
 
-现在可试用统一入口 [game-animator](game-animator/SKILL.md)：安装 `game-animator.skill` 后按角色与视角选择下面四种模式。当前是打包和路由首版，各模式的角色配置仍各自独立。另有实验性配置驱动飞行流程，支持刚性 PNG 部件和基础动作，但示例只是骨架占位，尚未完成生物美术和引擎实测。旧的四个包仍可单独使用。
+现在可试用统一入口 [game-animator](game-animator/SKILL.md)：安装 `game-animator.skill` 后按角色与视角选择下面四种模式。横版与俯视人形可通过一份角色描述共享名称、基础配色，并分别指定视角配置；俯视尚不支持分层 PNG 或共享身体比例。另有实验性配置驱动飞行流程，支持刚性 PNG 部件和基础动作，但示例只是骨架占位，尚未完成生物美术和引擎实测。旧的四个包仍可单独使用。
 
 | Skill | 适合 |
 |---|---|
@@ -163,4 +163,4 @@ python scripts/visual_review.py out/hero
 - 角色只有一个朝向，向左时用引擎的水平翻转。
 - 射击 skill 没有分层美术模式，不能绑定自己的 PNG；分层动作里，头上的布条（如头带）在跑动时不会随风飘，烘焙组合和整身动作里会。
 - AI 视觉质检是 Claude 看静态帧的判断，看不出动作在播放时的手感，最终效果请在 `preview.html` 里播放确认。
-- 引擎导出文件都没有在对应引擎里实测过：Unity 导入脚本未编译，Godot 和 Cocos 文件做过结构校验，`sprites.css` 和 `atlas.json` 也只查过结构。具体情况见 [engine-integration.md](game-sprite-animator/references/engine-integration.md) 和 [integration.md](game-shooter-animator/references/integration.md) 中的验证表。
+- 引擎导出的验证程度不同：已有模式的 Godot、Phaser、PixiJS 和浏览器 CSS 做过导入或播放测试；Unity 导入脚本尚未编译运行，Cocos 只做过结构校验。实验性飞行模式的引擎文件也仅做结构测试。具体范围见各模式的集成文档。
