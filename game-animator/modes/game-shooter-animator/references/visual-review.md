@@ -16,7 +16,9 @@ passed: the sheets exist to catch what QA passes. `out/c/review/index.json` list
 QA reason for each flagged frame, and the near-duplicate aim angles that were left out.
 
 How to read a sheet: each clip has a row of poses with the frame number, then the same poses as black
-silhouettes. The orange line is the ground. A red border means QA flagged that frame.
+silhouettes. The orange line is the ground. A red border means QA flagged that frame. Each clip is
+cropped to its art so a small character fills the cell; its title gives the zoom. Don't judge a face or
+a joint from a cell alone: on anything that looks off, open that frame in `frames/` and enlarge it.
 
 ## Checklist
 
@@ -32,6 +34,8 @@ Look at each clip for these, in this order. Name the clip and frame when somethi
 - Limbs bend the right way, with no reversed knee or elbow
 - Joints not folded past what a body can do
 - Neck not twisted, head attached to the shoulders
+- One face only, with no doubled chin, ear or hairline when the head turns
+- No colour patch or stripes at a joint that the character doesn't have
 - Limb lengths look constant across the row
 
 **Readability**

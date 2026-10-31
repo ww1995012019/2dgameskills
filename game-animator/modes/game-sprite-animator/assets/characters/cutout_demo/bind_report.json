@@ -2,7 +2,7 @@
  "px_per_unit": 2.695,
  "parts": {
   "arm_f_up": {
-   "coverage": 0.23,
+   "coverage": 0.22,
    "source": "near limb, darkened"
   },
   "arm_f_lo": {
@@ -45,7 +45,7 @@
    "angle": 0.0
   },
   "torso": {
-   "coverage": 0.79,
+   "coverage": 0.73,
    "filled_px": 808,
    "angle": 0.0
   },
@@ -71,7 +71,7 @@
   }
  },
  "warnings": [
-  "arm_f_up: only 23% visible, rebuilt from arm_n_up; better art would help",
+  "arm_f_up: only 22% visible, rebuilt from arm_n_up; better art would help",
   "arm_f_lo: only 15% visible, rebuilt from arm_n_lo; better art would help",
   "hand_f: only 43% visible, rebuilt from hand_n; better art would help",
   "leg_f_up: 757 hidden pixels filled from its own colours; check bind_preview.png",

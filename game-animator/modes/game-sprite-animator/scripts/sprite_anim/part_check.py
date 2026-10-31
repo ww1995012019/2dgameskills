@@ -23,11 +23,65 @@ STRIP = 1.2           # rig units either side of the bone that may hold the art
 PIVOT_REACH = 1.5     # rig units: a pivot further than this from any art turns the part about air
 MIN_AREA = 2.0        # square rig units: less than this is not a body part
 GRIP_REACH = 6.0      # rig units around the grip the fist hides, so a blade may be split there
+EDGE_SLACK = 2        # picture pixels: turning a part back softens its edge by about this much
+INVENTED_SHARE = 0.03  # of a part's art outside the picture's silhouette: hand-made or a fill gone wrong
+SECOND_FACE_SHARE = 0.08  # of the head also inside the torso's image: it shows when the head turns
 
 
 def disc(shape, centre, radius):
     yy, xx = np.mgrid[0:shape[0], 0:shape[1]]
     return np.hypot(xx - centre[0], yy - centre[1]) <= radius
+
+
+def grown(mask, steps):
+    out = mask.copy()
+    for _ in range(steps):
+        wider = out.copy()
+        wider[1:] |= out[:-1]
+        wider[:-1] |= out[1:]
+        wider[:, 1:] |= out[:, :-1]
+        wider[:, :-1] |= out[:, 1:]
+        out = wider
+    return out
+
+
+def in_picture(alpha, pivot, origin, size):
+    """A part's alpha, turned back to where cut_parts.py took it from in the source picture."""
+    w, h = size
+    margin = math.ceil(math.hypot(w, h))
+    centre = (origin["pivot"][0] + margin, origin["pivot"][1] + margin)
+    roomy = Image.new("L", (w + 2 * margin, h + 2 * margin))
+    roomy.paste(alpha, (round(centre[0] - pivot[0]), round(centre[1] - pivot[1])))
+    back = roomy.rotate(-origin["angle"], resample=Image.BILINEAR, center=centre)
+    return np.asarray(back.crop((margin, margin, margin + w, margin + h))) > SOLID
+
+
+def check_source(spec):
+    """Do the parts still match the picture they were cut from? Rigs with no record of it are skipped."""
+    base = spec.get("_dir", ".")
+    path = os.path.join(base, spec.get("source_image") or "")
+    parts = {n: p for n, p in (spec.get("parts") or {}).items() if "from" in p}
+    if not parts or not spec.get("source_image") or not os.path.isfile(path):
+        return []
+    with Image.open(path) as im:
+        picture = im.convert("RGBA")
+    art = grown(np.asarray(picture)[..., 3] > 24, EDGE_SLACK)
+    placed, out = {}, []
+    for name, part in parts.items():
+        image = os.path.join(base, part["image"])
+        if not os.path.isfile(image):
+            continue     # check_part has already reported it
+        with Image.open(image) as im:
+            placed[name] = in_picture(im.convert("RGBA").getchannel("A"), part["pivot"], part["from"], picture.size)
+        extra = placed[name] & ~art
+        if placed[name].any() and extra.sum() > INVENTED_SHARE * placed[name].sum():
+            out.append(f"{name}: {extra.sum() / placed[name].sum():.0%} of it is not in the source picture, "
+                       "pixels were invented past the silhouette")
+    if "head" in placed and "torso" in placed and placed["head"].any():
+        shared = (placed["head"] & placed["torso"]).sum() / placed["head"].sum()
+        if shared > SECOND_FACE_SHARE:
+            out.append(f"torso: {shared:.0%} of the head is also in this image, a second face shows when the head turns")
+    return out
 
 
 def check_part(name, solid, pivot, rest_angle, ppu, body, weapon_length=None):
@@ -66,4 +120,4 @@ def check_parts(spec, body):
             solid = np.asarray(im.convert("RGBA"))[..., 3] > SOLID
         out += check_part(name, solid, tuple(part["pivot"]), float(part.get("rest_angle", 0)),
                           ppu / float(part.get("scale", 1.0)), body, part.get("length"))
-    return out
+    return out + check_source(spec)

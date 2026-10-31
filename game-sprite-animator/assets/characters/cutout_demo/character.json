@@ -36,63 +36,126 @@
    "pivot": [
     20.07,
     15.18
-   ]
+   ],
+   "from": {
+    "angle": -1.6,
+    "pivot": [
+     250.07,
+     331.18
+    ]
+   }
   },
   "leg_f_lo": {
    "image": "parts/leg_f_lo.png",
    "pivot": [
     20.52,
     15.36
-   ]
+   ],
+   "from": {
+    "angle": 24.0,
+    "pivot": [
+     251.52,
+     382.36
+    ]
+   }
   },
   "foot_f": {
    "image": "parts/foot_f.png",
    "pivot": [
     20.78,
     9.67
-   ]
+   ],
+   "from": {
+    "angle": 0.0,
+    "pivot": [
+     231.78,
+     426.67
+    ]
+   }
   },
   "leg_n_up": {
    "image": "parts/leg_n_up.png",
    "pivot": [
     17.78,
     16.18
-   ]
+   ],
+   "from": {
+    "angle": -24.2,
+    "pivot": [
+     257.78,
+     331.18
+    ]
+   }
   },
   "leg_n_lo": {
    "image": "parts/leg_n_lo.png",
    "pivot": [
     20.79,
     12.87
-   ]
+   ],
+   "from": {
+    "angle": -1.6,
+    "pivot": [
+     278.79,
+     377.87
+    ]
+   }
   },
   "foot_n": {
    "image": "parts/foot_n.png",
    "pivot": [
     23.14,
     10.36
-   ]
+   ],
+   "from": {
+    "angle": 0.0,
+    "pivot": [
+     280.14,
+     426.36
+    ]
+   }
   },
   "pelvis": {
    "image": "parts/pelvis.png",
    "pivot": [
     34.0,
     51.18
-   ]
+   ],
+   "from": {
+    "angle": 0.0,
+    "pivot": [
+     256.0,
+     331.18
+    ]
+   }
   },
   "torso": {
    "image": "parts/torso.png",
    "pivot": [
     35.0,
-    67.24
-   ]
+    58.24
+   ],
+   "from": {
+    "angle": 0.0,
+    "pivot": [
+     256.0,
+     304.24
+    ]
+   }
   },
   "head": {
    "image": "parts/head.png",
    "pivot": [
     49.0,
     95.99
-   ]
+   ],
+   "from": {
+    "angle": 0.0,
+    "pivot": [
+     256.0,
+     248.99
+    ]
+   }
   },
   "weapon": {
    "image": "parts/weapon.png",
@@ -100,6 +163,13 @@
     22.77,
     132.4
    ],
+   "from": {
+    "angle": 70.0,
+    "pivot": [
+     303.77,
+     325.4
+    ]
+   },
    "length": 47.0
   },
   "arm_n_up": {
@@ -107,21 +177,42 @@
    "pivot": [
     13.41,
     12.81
-   ]
+   ],
+   "from": {
+    "angle": -30.0,
+    "pivot": [
+     253.41,
+     263.81
+    ]
+   }
   },
   "arm_n_lo": {
    "image": "parts/arm_n_lo.png",
    "pivot": [
     15.95,
     11.65
-   ]
+   ],
+   "from": {
+    "angle": -48.0,
+    "pivot": [
+     272.95,
+     297.65
+    ]
+   }
   },
   "hand_n": {
    "image": "parts/hand_n.png",
    "pivot": [
     13.98,
     12.0
-   ]
+   ],
+   "from": {
+    "angle": -48.0,
+    "pivot": [
+     299.98,
+     322.0
+    ]
+   }
   },
   "arm_f_up": {
    "image": "parts/arm_f_up.png",
@@ -144,5 +235,6 @@
     12.0
    ]
   }
- }
+ },
+ "source_image": "source.png"
 }

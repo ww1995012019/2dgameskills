@@ -15,7 +15,8 @@ Checks
   clip      weapon through the head, weapon or body through the ground
   float     art floating free of the body
   bones     a bone with nothing drawn along it
-  parts     a cut-out part missing, broken along its bone, or in loose pieces
+  parts     a cut-out part missing, broken along its bone, in loose pieces, not matching its picture
+  bind      the cut's own warnings (WARN) and joints it saw open (FAIL), from bind_report.json
   bounds    art cut off by the frame edge
 Exit code 1 when anything FAILs.
 """
@@ -235,12 +236,25 @@ def run_set(root):
         print("\nbroken parts (every clip is affected)")
         for p in problems:
             print("  " + p)
-    out = dict(clips=report, transitions=trans, parts=dict(status=FAIL if problems else PASS, problems=problems))
-    failed += len(problems)
+    bind_warnings = trace.get("bind_warnings", []) if trace else []
+    bind_gaps = trace.get("bind_gaps", {}) if trace else {}
+    if bind_warnings or bind_gaps:
+        print("\nfrom the cut (bind_report.json)")
+        for w in bind_warnings:
+            print("  warning: " + w)
+        for clip, joints in bind_gaps.items():
+            print(f"  gap: {clip}: {joints}")
+    out = dict(clips=report, transitions=trans, parts=dict(status=FAIL if problems else PASS, problems=problems),
+               bind=dict(status=FAIL if bind_gaps else WARN if bind_warnings else PASS, warnings=bind_warnings, gaps=bind_gaps))
+    failed += len(problems) + len(bind_gaps)
+    warns = sum(1 for r in report.values() for c in cols if r.get(c) == WARN) + sum(t["status"] == WARN for t in trans)
+    warns += len(bind_warnings)
+    total = trace.get("clips_total", len(report)) if trace else len(report)
+    out["scope"] = dict(clips_checked=len(report), clips_total=total)
     with open(os.path.join(root, "qa_report.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, indent=1)
-    warns = sum(1 for r in report.values() for c in cols if r.get(c) == WARN) + sum(t["status"] == WARN for t in trans)
     print(f"\nresult: {failed} FAIL, {warns} WARN")
+    print(f"scope: {len(report)} of {total} clips, measurements only. This does not show the art looks right: review the sheets by eye.")
     return failed
 
 

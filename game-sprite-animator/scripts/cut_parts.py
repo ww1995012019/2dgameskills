@@ -21,8 +21,10 @@ How parts are cut: every bone is a capsule between two joints. A pixel goes to t
 deepest inside; where capsules overlap, the part drawn in front wins unless the pixel's colour
 matches the part behind much better. Each part keeps a round cap of its neighbours' pixels at
 the joints, so bending never opens a gap, and pixels a front part hides are filled from the
-part's own colours. Parts are then turned upright (limbs hanging down, feet flat) as the rig
-expects, and the bone lengths measured from the picture go into character.json.
+part's own colours. Nothing is painted past the picture's silhouette. Parts are then turned
+upright (limbs hanging down, feet flat) as the rig expects, and the bone lengths measured from
+the picture go into character.json, with where each part came from so QA can check it against
+the picture. A copy of the picture is kept as source.png beside them.
 
 Far-side limbs are usually hidden behind the body. When less than half of one is visible it is
 rebuilt from the near-side limb, darkened, and the report says so: ask for better art there.
@@ -77,6 +79,8 @@ NEIGHBOURS = [("arm_f_up", "arm_f_lo"), ("arm_f_lo", "hand_f"), ("leg_f_up", "le
               ("pelvis", "torso"), ("torso", "head"), ("pelvis", "leg_n_up"), ("pelvis", "leg_f_up"),
               ("torso", "arm_n_up"), ("torso", "arm_f_up")]
 CAP_MAX = 4.0     # rig units: largest round cap two parts share at a joint
+HEAD_CAP = 0.13   # of the head's height: the collar the head keeps. Matches CAP_MAX on the hero's head
+MIN_HEAD_PX = 20  # tall at the hd preset: below this the face is a few pixels and can't read
 FAR = {"arm_f_up": "arm_n_up", "arm_f_lo": "arm_n_lo", "hand_f": "hand_n",
        "leg_f_up": "leg_n_up", "leg_f_lo": "leg_n_lo", "foot_f": "foot_n"}
 REQUIRED = ["head_top", "head_base", "neck", "waist", "hip", "sh_n", "el_n", "wr_n", "hip_n", "kn_n", "an_n",
@@ -417,6 +421,13 @@ def cut(img, joints, base=None):
         # Enough to bridge the joint while it bends, never a big shared patch: a cap the size of
         # the torso's would copy the face onto the chest, showing when the head turns.
         cap = np.hypot(xx - jx, yy - jy) < min(radius.get(a_, PARTS[a_][2]), radius.get(b_, PARTS[b_][2]), CAP_MAX) * ppu
+        if b_ == "head":
+            # One way only, sized from the head: the rig's units follow the legs, so on real
+            # proportions a cap in units reaches the mouth. The head is drawn over the torso and
+            # covers the joint itself, so the torso needs none of the head's pixels.
+            cap &= np.hypot(xx - jx, yy - jy) < HEAD_CAP * length("head_base", "head_top")
+            masks[b_] = masks[b_] | (cap & masks[a_])
+            continue
         both = cap & (masks[a_] | masks[b_])
         masks[a_] = masks[a_] | both
         masks[b_] = masks[b_] | both
@@ -442,9 +453,10 @@ def cut(img, joints, base=None):
         pivot = J[PIVOT.get(n, a)]
         region = hidden | own
         if kind in ("limb", "hand", "foot"):
-            # A limb ends in a full round cap at its pivot, as cut-out puppets do: if the mark sits
-            # near the body's edge, turning the limb would otherwise show its flat cut end.
-            region |= np.hypot(xx - pivot[0], yy - pivot[1]) < 0.9 * r * ppu
+            # A limb ends in a round cap at its pivot, as cut-out puppets do: if the mark sits near
+            # the body's edge, turning the limb would otherwise show its flat cut end. Only over
+            # art: past the silhouette the fill has nothing but the outline to stretch into stripes.
+            region |= (np.hypot(xx - pivot[0], yy - pivot[1]) < 0.9 * r * ppu) & fg
         pix, have = fill_from(rgba, own, region, int(r * ppu) + 2)
         if hidden.sum() > 0.15 * max(capsule.sum(), 1):
             info["filled_px"] = int(hidden.sum())
@@ -475,6 +487,31 @@ def cut(img, joints, base=None):
             a[..., :3] = (a[..., :3] * 0.72).astype(np.uint8)    # the procedural art's far shade
             parts[n] = (Image.fromarray(a, "RGBA"), pv)
 
+    def half_width(n):
+        """The character's half-width across a limb, at the middle of its bone, in rig units. Measured
+        on the whole silhouette: a limb behind another looks thin in its own mask. Clothes beside
+        it read as limb, so this can miss a slim limb but won't call a normal one slim."""
+        a_, b_ = J[PARTS[n][0]], J[PARTS[n][1]]
+        mid, v = np.add(a_, b_) / 2, np.subtract(b_, a_)
+        across = np.array([-v[1], v[0]]) / (np.hypot(*v) or 1)
+        total = 0
+        for side in (1, -1):
+            for t in range(1, int(2 * PARTS[n][2] * ppu)):
+                x, y = np.round(mid + across * side * t).astype(int)
+                if not (0 <= x < w and 0 <= y < h and fg[y, x]):
+                    break
+                total += 1
+        return total / 2 / ppu
+
+    # A capsule wider than the limb takes a block of its neighbour at the joint, and that block is
+    # trimmed square by the silhouette: it shows as a square end when the joint bends sharply.
+    for n in order:
+        if PARTS[n][3] == "limb" and n not in radius and "angle" in report["parts"].get(n, {}):
+            wide = half_width(n)
+            if 0.5 <= wide < 0.7 * PARTS[n][2]:     # under 0.5 the bone's middle isn't on the art at all
+                report["warnings"].append(f"{n}: art is about {wide:.1f} units wide each side, the cut assumes {PARTS[n][2]}, "
+                                          f"so a sharp bend shows a square end; add \"_radius\": {{\"{n}\": {wide + 0.3:.1f}}}")
+
     # How far the rig's own joints land from the picture's, once lengths are measured: a big gap
     # means a part will hang off its neighbour. Compared in the reference pose's angles.
     spec = {k: v for k, v in base.items() if k not in ("parts", "body", "_dir")}
@@ -482,6 +519,12 @@ def cut(img, joints, base=None):
                 body={**base.get("body", {}), **{k: round(v, 3) for k, v in measured.items()}})
     spec.setdefault("weapon", "sword" if has_weapon else "none")
     spec["parts"] = {n: {"image": f"parts/{n}.png", "pivot": list(pv)} for n, (_, pv) in parts.items()}
+    # Where each part came from, so part_check can lay it back on the picture. A far limb rebuilt
+    # from the near one has no place there, and a hand-drawn part can drop this entry.
+    spec["source_image"] = "source.png"
+    for n, info in report["parts"].items():
+        if n in spec["parts"] and "angle" in info:
+            spec["parts"][n]["from"] = {"angle": info["angle"], "pivot": list(J[PIVOT.get(n, PARTS[n][0])])}
     if "weapon" in spec["parts"]:     # no body length to hold it to, so part_check gets this one
         spec["parts"]["weapon"]["length"] = round(length("weapon_grip", "weapon_tip") / ppu, 2)
     if behind or front_parts:     # animate with the picture's layering, as it was cut
@@ -498,6 +541,10 @@ def cut(img, joints, base=None):
             ln, lf = length(f"{a_}_n", f"{b_}_n"), length(f"{a_}_f", f"{b_}_f")
             if abs(lf - ln) > 0.2 * ln:
                 report["warnings"].append(f"{a_}->{b_}: far side is {lf / ln:.0%} of the near side; one of them is marked wrong")
+    head_px = length("head_base", "head_top") / ppu * 256 * UNIT_PX
+    if head_px < MIN_HEAD_PX:
+        report["warnings"].append(f"head is {head_px:.0f} px tall at hd and {head_px * 2:.0f} at hd512: the rig's scale comes from "
+                                  "the legs, so a small head won't show a face; use hd512 or paint a bigger head")
     foot = length("heel_n", "toe_n") / ppu
     if not 6 <= foot <= 18:
         report["warnings"].append(f"foot is {foot:.1f} units heel to toe, the rig expects about 11; check heel_n and toe_n")
@@ -597,15 +644,23 @@ def main():
     c.add_argument("--joints", required=True, help="joints.json in the picture's pixels")
     c.add_argument("--base", help="character JSON to carry over: name, weapon, style, colors")
     c.add_argument("--out", required=True)
+    c.add_argument("--size", type=int, default=192, help="frame size of the motion check; use your preset's for a slim character")
     k = sub.add_parser("check", help="animate a cut-out and report joints that open")
     k.add_argument("--character", required=True)
+    k.add_argument("--size", type=int, default=192, help="frame size of the motion check; use your preset's for a slim character")
     k.add_argument("--out", help="motion sheet path (default: motion_check.png next to it)")
     a = ap.parse_args()
     if a.cmd == "check":
         with open(a.character, encoding="utf-8") as fh:
             spec = json.load(fh)
         spec["_dir"] = os.path.dirname(os.path.abspath(a.character))
-        sys.exit(run_check(spec, a.out or os.path.join(spec["_dir"], "motion_check.png")))
+        # A hand edit changes what the cut measured, so its report must not go on describing the old parts.
+        report_path = os.path.join(spec["_dir"], "bind_report.json")
+        report = None
+        if os.path.isfile(report_path):
+            with open(report_path, encoding="utf-8") as fh:
+                report = json.load(fh)
+        sys.exit(run_check(spec, a.out or os.path.join(spec["_dir"], "motion_check.png"), report, report_path, a.size))
     os.makedirs(a.out, exist_ok=True)
     if a.cmd == "template":
         spec = json.load(open(a.character, encoding="utf-8")) if a.character else {}
@@ -624,6 +679,9 @@ def main():
     os.makedirs(os.path.join(a.out, "parts"), exist_ok=True)
     for n, (im, _) in parts.items():
         im.save(os.path.join(a.out, "parts", n + ".png"))
+    source_path = os.path.join(a.out, spec["source_image"])
+    if not (os.path.exists(source_path) and os.path.samefile(a.image, source_path)):
+        Image.fromarray(foreground(img), "RGBA").save(source_path)
     with open(os.path.join(a.out, "character.json"), "w", encoding="utf-8") as fh:
         json.dump(spec, fh, ensure_ascii=False, indent=1)
     with open(os.path.join(a.out, "bind_report.json"), "w", encoding="utf-8") as fh:
@@ -633,17 +691,17 @@ def main():
     for wmsg in report["warnings"]:
         print("  warning:", wmsg)
     spec["_dir"] = os.path.abspath(a.out)
-    sys.exit(run_check(spec, os.path.join(a.out, "motion_check.png"), report, os.path.join(a.out, "bind_report.json")))
+    sys.exit(run_check(spec, os.path.join(a.out, "motion_check.png"), report, os.path.join(a.out, "bind_report.json"), a.size))
 
 
-def run_check(spec, sheet_path, report=None, report_path=None):
+def run_check(spec, sheet_path, report=None, report_path=None, size=192):
     """Animate, save the sheet, print gaps; non-zero exit when a joint opens."""
     broken = check_parts(spec, Body.from_spec(spec.get("body")))
     for problem in broken:
         print(f"  part: {problem}")
     if any(problem.endswith("not found") for problem in broken):
         return 1     # nothing to animate without the image
-    sheet, gaps = check(spec)
+    sheet, gaps = check(spec, size=size)
     sheet.save(sheet_path)
     print(f"[check] motion sheet -> {sheet_path}")
     for clip, js in gaps.items():

@@ -45,6 +45,8 @@ Tool notes:
 Copy `tpl/joints.json` and move every point onto the new picture, in its pixels (origin top left).
 Look at the picture to do it, then check your marks on a drawn overlay and correct them before
 cutting; marks within about 2% of the character's height are fine, past that joints start to open.
+Measure limb joints across the limb: a knee mark 9 px from one edge and 30 from the other opens when
+the leg bends, and nothing painted past the silhouette will cover it.
 
 | Joint | Where |
 |---|---|
@@ -101,6 +103,11 @@ python scripts/cut_parts.py cut --image knight.png --joints knight_joints.json -
   any joint that opens while moving and exits 1; move that joint's mark onto the joint centre and cut
   again.
 
+The motion check runs at 192 px, where one rig unit is about one pixel. A neck or wrist only a few
+units wide can then read as open though it is whole. For a slim character pass the size of the preset
+you will ship, such as `--size 512`, to `cut` or `check`. It takes longer, and the thresholds are the
+same. A gap that stays at your real size is a real gap.
+
 The same command exits 1 on a part that is broken on its own: missing, with a hole along its bone or
 in loose pieces. A limb lying over the body looks whole in every frame, so don't rely on the pictures
 for this. See `references/skeleton-qa.md`.
@@ -112,6 +119,8 @@ Warnings in the output and in `bind_report.json`:
 | `only N% visible, rebuilt from …` | a far limb hidden behind the body; it was copied from the near one and darkened, as the procedural art does | usually fine; for better art, draw that part and replace `parts/<name>.png` |
 | `hidden pixels filled from its own colours` | something in front covered part of it (an arm across the chest) and the gap was painted from its own colours | look at that area when it swings open in `motion_check.png` |
 | `far side is N% of the near side` | near and far limb lengths disagree | one of the two sets of marks is wrong |
+| `name: art is about N units wide each side` | the limb is much slimmer than the rig's default, so the part in front takes a block of its neighbour at the joint, which shows as a square end at a sharp bend | add the `_radius` the message gives and cut again |
+| `head is N px tall at hd` | the rig's scale comes from the legs, so real proportions give a small head and a face of a few pixels | use `--preset hd512`, or ask for a bigger head |
 | `joint … is not on the character` | the mark is on the background | move it |
 | `foot is N units` | heel and toe marks are far off | re-mark them on the sole |
 | `an_n is N units above the sole` | the ankle mark is too low or too high for the rig's foot | move it as the message says, or the foot sinks or floats |
@@ -119,6 +128,12 @@ Warnings in the output and in `bind_report.json`:
 | `gap: clip: floating frame N` | a piece of art moves apart from the body | find which part owns it in `bind_preview.png`, then fix the marks or `_radius` |
 | `gap: clip: bones frame N` | a bone has nothing drawn along it there | a part is missing or too short |
 | `part: name: ...` | that part image is broken on its own | the message says how; cut again, or redraw `parts/<name>.png` |
+| `part: name: N% of it is not in the source picture` | the part has art outside the silhouette | cut again; a part you redrew on purpose: delete its `from` entry in `character.json` |
+| `part: torso: N% of the head is also in this image` | a second face shows when the head turns | cut again; don't paint over it by hand |
+
+Every warning and every open joint here also reaches `qa_motion.py`, as WARN and FAIL. After editing
+a part by hand run `cut_parts.py check`, which replaces the report's gaps and part problems. A hand
+fix to one part does not clear the warnings about the others: fix the marks and cut again.
 
 ## 4. Generate as usual
 
@@ -128,13 +143,17 @@ python scripts/qa_motion.py out/knight
 python scripts/visual_review.py out/knight
 ```
 
-Then do the visual review as for any set (`references/visual-review.md`).
+Then do the visual review as for any set (`references/visual-review.md`). QA's `scope` line says how
+many clips it covered: a pass on `idle,walk,run` says nothing about the rest. Report results with that
+number, and don't report "0 FAIL, 0 WARN" as the art being right. QA measures joints and pixels, and
+can't tell a good face from a bad one.
 
 ## Limits to tell the user
 
 - The face never changes: no blinking or expressions. `idle_look` therefore holds a few identical
   frames, which QA reports as a hold WARN.
-- Capes, hair and scarves don't move. Paint them close to the body.
+- Capes, hair and scarves don't move. Paint them close to the body. Long skirts and wide sleeves are
+  cut into the limbs they cover and part when those limbs move: ask for fitted clothes, or expect it.
 - Light and shadow are painted into the parts and turn with them, so a part lit from the top left
   is lit from below when it swings over.
 - The motions are built for these proportions. A very different body still animates but needs a

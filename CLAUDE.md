@@ -63,7 +63,9 @@ python3 dev/package_skills.py                    # 改了 skill 里的文件后�
 `shared/references/skeleton-qa.md`，共用代码是 `shared/scripts/sprite_anim/integrity.py`。
 
 - `float`（逐帧，碎块脱离身体）、`bones`（逐帧，骨段上没有画面）、`parts`（整套一次，切块部件缺失、骨段断裂、
-  有孤块、枢轴不在图上）。`part_check.py` 只在横版 RPG 里。
+  有孤块、枢轴不在图上，以及部件贴回原图后超出轮廓、头的像素进了躯干）。`part_check.py` 只在横版 RPG 里。
+- `bind`（整套一次）：`bind_report.json` 的警告算 WARN，记录到的关节裂缝算 FAIL。QA 结果要带上 `scope` 的动作数，
+  “0 FAIL, 0 WARN”只说明测量项通过，不能说成画面没问题。
 - 只看合成帧不够：肢体叠在身体上时，躯干会把洞盖住，所以部件要单独检查。
 - 刀光帧、射击的 fire/action 动作不判 `float`；后者显示 `n/a`，不算通过。旧数据同样是 `n/a`。
 - 新增切块功能时，改完要确认 `cutout_demo` 的 `cut_parts.py check` 仍是 exit 0。

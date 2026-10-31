@@ -177,9 +177,16 @@ def main():
         for pair in ((clip.prev, name), (name, clip.next)):
             if pair[0] in names and pair[1] in names and pair[0] != pair[1] and pair not in seams:
                 seams.append(pair)
+    # What cut_parts.py found goes along, or a set can pass QA with the cut's warnings left behind.
+    bind = {}
+    bind_path = os.path.join(spec.get("_dir", ""), "bind_report.json")
+    if spec.get("parts") and os.path.isfile(bind_path):
+        with open(bind_path, encoding="utf-8") as fh:
+            bind = json.load(fh)
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
                        part_problems=check_parts(spec, r.art.body) if spec.get("parts") else [],
+                       bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
                        unit_px=unit_px, speeds={n: clips[n].speed * unit_px for n in names}), fh)
 
     export.preview_html(root, os.path.join(SKILL_ROOT, "assets", "preview_template.html"),

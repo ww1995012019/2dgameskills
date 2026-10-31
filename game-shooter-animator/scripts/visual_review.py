@@ -23,6 +23,7 @@ from PIL import Image, ImageDraw
 CELL = 180
 PER_SHEET = 6
 MAX_POSES = 8
+CROP_PAD = 4      # frame pixels kept around the art
 GROUND = (240, 184, 74, 255)
 BG = (58, 62, 74, 255)
 
@@ -65,15 +66,32 @@ def composite(root, doc, name, i):
     return im
 
 
+def crop_box(images, size, ground_y):
+    """Square around the art of a clip's poses, ground included: a character small in its frame
+    otherwise reaches the reviewer too small to judge a face or a joint."""
+    boxes = [b for b in (im.getbbox() for im in images) if b]
+    if not boxes:
+        return (0, 0, size, size)
+    x0, y0 = min(b[0] for b in boxes), min(min(b[1] for b in boxes), ground_y)
+    x1, y1 = max(b[2] for b in boxes), max(max(b[3] for b in boxes), ground_y + 1)
+    side = min(size, max(x1 - x0, y1 - y0) + 2 * CROP_PAD)
+    left = min(max((x0 + x1 - side) // 2, 0), size - side)
+    top = min(max((y0 + y1 - side) // 2, 0), size - side)
+    return (left, top, left + side, top + side)
+
+
 def draw_clip(sheet, d, root, doc, name, flagged, y, zoom):
     c = doc["clips"][name]
     n = len(c["frames"])
     picks = pick_frames(n, flagged)
     size = doc["frame_size"]
-    d.text((4, y + 2), f"{name}  ({n}f @ {c['fps']}fps, {'loop' if c['loop'] else 'once'})", fill=(255, 255, 255, 255))
-    gy = int(doc["pivot"][1] * CELL / size)
+    images = [composite(root, doc, name, i) for i in picks]
+    box = crop_box(images, size, int(doc["pivot"][1]))
+    side = box[2] - box[0]
+    d.text((4, y + 2), f"{name}  ({n}f @ {c['fps']}fps, {'loop' if c['loop'] else 'once'}, shown x{CELL / side:.1f})", fill=(255, 255, 255, 255))
+    gy = int((doc["pivot"][1] - box[1]) * CELL / side)
     for k, i in enumerate(picks):
-        im = composite(root, doc, name, i).resize((CELL, CELL), Image.NEAREST if size < 128 else Image.LANCZOS)
+        im = images[k].crop(box).resize((CELL, CELL), Image.NEAREST if size < 128 else Image.LANCZOS)
         x, top = k * CELL, y + 16
         d.line((x, top + gy, x + CELL - 1, top + gy), fill=GROUND)
         sheet.alpha_composite(im, (x, top))
