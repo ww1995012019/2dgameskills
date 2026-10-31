@@ -24,6 +24,8 @@ PIVOT_REACH = 1.5     # rig units: a pivot further than this from any art turns 
 MIN_AREA = 2.0        # square rig units: less than this is not a body part
 GRIP_REACH = 6.0      # rig units around the grip the fist hides, so a blade may be split there
 EDGE_SLACK = 2        # picture pixels: turning a part back softens its edge by about this much
+LIMBS = {n for n in PART_BONES if n.startswith(("arm_", "leg_"))}
+NUB = 2.5             # rig units a limb's art may run past its joint: cut_parts.py leaves 2, marks add a little
 INVENTED_SHARE = 0.03  # of a part's art outside the picture's silhouette: hand-made or a fill gone wrong
 SECOND_FACE_SHARE = 0.08  # of the head also inside the torso's image: it shows when the head turns
 
@@ -98,6 +100,13 @@ def check_part(name, solid, pivot, rest_angle, ppu, body, weapon_length=None):
         gap = strip_gap(solid, pivot, direction, span * ppu, STRIP * ppu)
         if gap > PART_GAP_SHARE:
             out.append(f"{name}: {gap:.0%} of the bone has no art in its own image, the limb is broken")
+        if name in LIMBS:
+            yy, xx = np.nonzero(solid)
+            along = (xx - pivot[0]) * direction[0] + (yy - pivot[1]) * direction[1]
+            across = np.abs((xx - pivot[0]) * direction[1] - (yy - pivot[1]) * direction[0])
+            past = along[across < STRIP * ppu].max(initial=0) / ppu - span
+            if past > NUB:
+                out.append(f"{name}: art runs {past:.1f} units past its joint, it sticks out as a nub when the joint bends")
     bridge = disc(solid.shape, pivot, GRIP_REACH * ppu) if name == "weapon" else None
     loose = islands(solid, bridge)
     if loose:

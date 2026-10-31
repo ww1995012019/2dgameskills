@@ -50,7 +50,7 @@ the leg bends, and nothing painted past the silhouette will cover it.
 
 | Joint | Where |
 |---|---|
-| `head_top` | top of the skull (not the hair tip or hat) |
+| `head_top` | top of the skull (not the hair tip or hat). This sets the head's size, and QA's face check follows it |
 | `head_base` | where the head meets the neck |
 | `neck` | base of the neck, on the shoulders' line |
 | `waist` | narrowest point of the trunk |
@@ -130,6 +130,7 @@ Warnings in the output and in `bind_report.json`:
 | `part: name: ...` | that part image is broken on its own | the message says how; cut again, or redraw `parts/<name>.png` |
 | `part: name: N% of it is not in the source picture` | the part has art outside the silhouette | cut again; a part you redrew on purpose: delete its `from` entry in `character.json` |
 | `part: torso: N% of the head is also in this image` | a second face shows when the head turns | cut again; don't paint over it by hand |
+| `part: name: art runs N units past its joint` | a limb's image goes on past its joint and sticks out as a nub at a sharp bend | cut again with the current tool; if you redrew the part, trim it at the joint |
 
 Every warning and every open joint here also reaches `qa_motion.py`, as WARN and FAIL. After editing
 a part by hand run `cut_parts.py check`, which replaces the report's gaps and part problems. A hand
@@ -146,7 +147,12 @@ python scripts/visual_review.py out/knight
 Then do the visual review as for any set (`references/visual-review.md`). QA's `scope` line says how
 many clips it covered: a pass on `idle,walk,run` says nothing about the rest. Report results with that
 number, and don't report "0 FAIL, 0 WARN" as the art being right. QA measures joints and pixels, and
-can't tell a good face from a bad one.
+can't tell a good face from a bad one. The reverse holds too: before changing a pose for a QA flag,
+enlarge the frame and confirm the problem is there.
+
+Don't call a set reviewed from the full-body sheets alone. Read `review/joints_00.png` cell by cell, as
+these faults are a few pixels across at a sharp bend. Then tell the user it still needs watching in
+motion: a person playing it is the last check, and no sheet replaces that.
 
 ## Limits to tell the user
 

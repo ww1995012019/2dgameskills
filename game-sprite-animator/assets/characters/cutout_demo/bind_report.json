@@ -6,7 +6,7 @@
    "source": "near limb, darkened"
   },
   "arm_f_lo": {
-   "coverage": 0.15,
+   "coverage": 0.12,
    "source": "near limb, darkened"
   },
   "hand_f": {
@@ -14,39 +14,39 @@
    "source": "near limb, darkened"
   },
   "leg_f_up": {
-   "coverage": 0.67,
-   "filled_px": 757,
+   "coverage": 0.51,
+   "filled_px": 833,
    "angle": -1.6
   },
   "leg_f_lo": {
-   "coverage": 1.23,
+   "coverage": 1.18,
    "angle": 24.0
   },
   "foot_f": {
-   "coverage": 1.64,
+   "coverage": 1.67,
    "angle": 0.0
   },
   "leg_n_up": {
-   "coverage": 0.74,
-   "filled_px": 637,
+   "coverage": 0.65,
+   "filled_px": 584,
    "angle": -24.2
   },
   "leg_n_lo": {
-   "coverage": 1.17,
+   "coverage": 1.13,
    "angle": -1.6
   },
   "foot_n": {
-   "coverage": 1.96,
+   "coverage": 2.01,
    "angle": 0.0
   },
   "pelvis": {
-   "coverage": 0.5,
-   "filled_px": 1526,
+   "coverage": 0.49,
+   "filled_px": 1528,
    "angle": 0.0
   },
   "torso": {
    "coverage": 0.73,
-   "filled_px": 808,
+   "filled_px": 811,
    "angle": 0.0
   },
   "head": {
@@ -58,11 +58,11 @@
    "angle": 70.0
   },
   "arm_n_up": {
-   "coverage": 0.98,
+   "coverage": 0.8,
    "angle": -30.0
   },
   "arm_n_lo": {
-   "coverage": 1.24,
+   "coverage": 1.04,
    "angle": -48.0
   },
   "hand_n": {
@@ -72,12 +72,12 @@
  },
  "warnings": [
   "arm_f_up: only 22% visible, rebuilt from arm_n_up; better art would help",
-  "arm_f_lo: only 15% visible, rebuilt from arm_n_lo; better art would help",
+  "arm_f_lo: only 12% visible, rebuilt from arm_n_lo; better art would help",
   "hand_f: only 43% visible, rebuilt from hand_n; better art would help",
-  "leg_f_up: 757 hidden pixels filled from its own colours; check bind_preview.png",
-  "leg_n_up: 637 hidden pixels filled from its own colours; check bind_preview.png",
-  "pelvis: 1526 hidden pixels filled from its own colours; check bind_preview.png",
-  "torso: 808 hidden pixels filled from its own colours; check bind_preview.png"
+  "leg_f_up: 833 hidden pixels filled from its own colours; check bind_preview.png",
+  "leg_n_up: 584 hidden pixels filled from its own colours; check bind_preview.png",
+  "pelvis: 1528 hidden pixels filled from its own colours; check bind_preview.png",
+  "torso: 811 hidden pixels filled from its own colours; check bind_preview.png"
  ],
  "gaps": {},
  "part_problems": []

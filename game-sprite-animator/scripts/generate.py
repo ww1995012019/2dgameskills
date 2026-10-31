@@ -187,6 +187,7 @@ def main():
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
                        part_problems=check_parts(spec, r.art.body) if spec.get("parts") else [],
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
+                       head_size=r.art.body.head_size,
                        unit_px=unit_px, speeds={n: clips[n].speed * unit_px for n in names}), fh)
 
     export.preview_html(root, os.path.join(SKILL_ROOT, "assets", "preview_template.html"),

@@ -20,6 +20,18 @@ silhouettes. The orange line is the ground. A red border means QA flagged that f
 cropped to its art so a small character fills the cell; its title gives the zoom. Don't judge a face or
 a joint from a cell alone: on anything that looks off, open that frame in `frames/` and enlarge it.
 
+`joints_00.png` is the sheet that catches what the others can't: each knee and elbow at its sharpest
+bends across all clips, and the head at the frames the arms are most folded, all enlarged. Trouble at a
+joint is a few pixels across and only appears at a sharp bend, so a full-body cell hides it. Judge every
+cell: the outside of a bend must be one smooth curve, with no step, nub, square end, stripe or hole.
+`--record` refuses a verdict that leaves this sheet out.
+
+Check a QA flag the same way before acting on it. Open the frame enlarged and confirm the problem is
+there: a flag is a measurement, and a measurement can be wrong.
+
+The review narrows the risk, it doesn't remove it. Say which sheets you read, and that the set still
+needs a person to watch it play before it counts as done.
+
 ## Checklist
 
 Look at each clip for these, in this order. Name the clip and frame when something is wrong.

@@ -26,6 +26,7 @@
   "lo_arm": 13.5,
   "pelvis_len": 9.997,
   "chest_len": 18.003,
+  "head_size": 1.0,
   "neck_len": 2.499,
   "sh_w": 2.401,
   "hip_w": 2.201
@@ -76,7 +77,7 @@
   "leg_n_up": {
    "image": "parts/leg_n_up.png",
    "pivot": [
-    17.78,
+    16.78,
     16.18
    ],
    "from": {

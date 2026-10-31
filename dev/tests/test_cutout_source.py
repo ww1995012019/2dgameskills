@@ -24,7 +24,10 @@ sys.path.insert(0, SCRIPTS)
 
 import cut_parts  # noqa: E402
 import visual_review  # noqa: E402
-from sprite_anim.part_check import check_source, in_picture  # noqa: E402
+from sprite_anim.constraints import face_circle, frame_metrics, summarize  # noqa: E402
+from sprite_anim.motions import build_clips  # noqa: E402
+from sprite_anim.part_check import check_parts, check_source, in_picture  # noqa: E402
+from sprite_anim.rig import Body, full_pose, solve  # noqa: E402
 
 
 def read_json(p):
@@ -120,6 +123,123 @@ class TestCutStaysOnThePicture(SourceCase):
         img, joints = small_head(self.img, self.joints)
         spec, _ = self.cut("smallhead", img, joints)
         self.assertEqual([p for p in check_source(spec) if "second face" in p], [])
+
+
+class TestLimbEndsAtItsJoint(SourceCase):
+    """A limb wider than the next one kept art past the joint, as a nub at a sharp bend. It was
+    whole and connected, so nothing flagged it; a person found it on a bent knee."""
+
+    def test_a_slim_shin_leaves_no_nub_on_the_thigh(self):
+        spec, _ = self.cut("slimshin", joints=dict(self.joints, _radius={"leg_n_lo": 2.0, "leg_f_lo": 2.0}))
+        self.assertEqual([p for p in check_parts(spec, Body.from_spec(spec["body"])) if "past its joint" in p], [])
+
+    def test_art_added_past_a_joint_is_caught_and_names_the_limb(self):
+        spec, _ = self.cut("nub")
+        path = os.path.join(spec["_dir"], "parts", "leg_n_up.png")
+        im = Image.open(path).convert("RGBA")
+        extra = 40
+        longer = Image.new("RGBA", (im.width, im.height + extra))
+        longer.paste(im, (0, 0))
+        pivot = spec["parts"]["leg_n_up"]["pivot"]
+        x, end = int(pivot[0]), int(pivot[1] + spec["body"]["thigh"] * spec["px_per_unit"])
+        a = np.asarray(longer).copy()
+        a[end:end + 30, x - 4:x + 4] = (240, 200, 180, 255)
+        Image.fromarray(a, "RGBA").save(path)
+        found = check_parts(spec, Body.from_spec(spec["body"]))
+        self.assertTrue(any(m.startswith("leg_n_up:") and "past its joint" in m for m in found), found)
+
+
+class TestFillIsSoft(unittest.TestCase):
+    def stripes(self, soften):
+        # An edge of alternating rows grown across a gap: the case that drew stripes on a torso.
+        rgba = np.zeros((40, 60, 4), np.uint8)
+        rgba[:, :4, 3] = 255
+        rgba[::2, :4, :3] = 240
+        own = rgba[..., 3] > 0
+        region = np.ones((40, 60), bool)
+        saved = cut_parts.SOFTEN
+        cut_parts.SOFTEN = soften
+        self.addCleanup(setattr, cut_parts, "SOFTEN", saved)
+        out, _ = cut_parts.fill_from(rgba, own, region, 60)
+        cut_parts.SOFTEN = saved
+        return float(np.abs(np.diff(out[5:35, 20:40, 0].astype(int), axis=0)).mean())
+
+    def test_a_fill_has_no_stripes_left(self):
+        self.assertGreater(self.stripes(0), 100, "the fixture no longer draws stripes, so this proves nothing")
+        self.assertLess(self.stripes(cut_parts.SOFTEN), 8)
+
+
+class TestJointSheet(unittest.TestCase):
+    TRACE = {"walk": {"skeleton": {"hip_n": [(0, 0)] * 3, "kn_n": [(0, 10)] * 3, "an_n": [(0, 20), (9, 11), (10, 10)]}},
+             "run": {"skeleton": {"hip_n": [(0, 0)] * 2, "kn_n": [(0, 10)] * 2, "an_n": [(0, 20), (0, 20)]}},
+             "aim": {"skeleton": {"hip_n": [(0, 0)], "kn_n": [(0, 10)], "an_n": [(5, 5)]}}}
+    DOC = {"clips": {"walk": {}, "run": {}, "aim": {"layer": "upper"}}}
+
+    def test_each_clip_is_taken_at_its_sharpest_bend_worst_first(self):
+        picks = visual_review.sharpest(self.TRACE, self.DOC, "kn_n", "hip_n", "an_n")
+        self.assertEqual([(p[1], p[2]) for p in picks], [("walk", 2), ("run", 0)])
+        self.assertAlmostEqual(picks[0][0], 90, places=0)
+
+    def test_a_clip_without_those_joints_is_left_out(self):
+        self.assertEqual(visual_review.sharpest({"x": {"skeleton": {}}}, {"clips": {"x": {}}}, "kn_n", "hip_n", "an_n"), [])
+
+    def test_a_verdict_that_skips_the_joint_sheet_is_refused(self):
+        tmp = tempfile.mkdtemp(prefix="joint_sheet_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        out = os.path.join(tmp, "set")
+        subprocess.run([sys.executable, os.path.join(SCRIPTS, "generate.py"), "--character", os.path.join(DEMO, "character.json"),
+                        "--preset", "pixel", "--clips", "idle,walk", "--no-fx", "--out", out], check=True, capture_output=True)
+        subprocess.run([sys.executable, os.path.join(SCRIPTS, "visual_review.py"), out], check=True, capture_output=True)
+        index = read_json(os.path.join(out, "review", "index.json"))
+        names = [e["sheet"] for e in index["sheets"]]
+        self.assertIn("joints_00.png", names)
+        self.assertTrue(os.path.isfile(os.path.join(out, "review", "joints_00.png")))
+
+        def record(sheets):
+            verdict = os.path.join(tmp, "verdict.json")
+            with open(verdict, "w", encoding="utf-8") as fh:
+                json.dump({"reviewer": "test", "sheets": {s: {"verdict": "pass"} for s in sheets}}, fh)
+            return subprocess.run([sys.executable, os.path.join(SCRIPTS, "visual_review.py"), out, "--record", verdict],
+                                  capture_output=True, text=True)
+
+        skipped = record([n for n in names if n != "joints_00.png"])
+        self.assertNotEqual(skipped.returncode, 0)
+        self.assertIn("joints_00.png", skipped.stderr)
+        self.assertEqual(record(names).returncode, 0)
+
+
+class TestFaceCheckFollowsTheArt(SourceCase):
+    """The face check sat where the procedural hero's big head is: above a real-proportioned head,
+    so a sword overhead failed QA with the face in plain view, and one across the face passed."""
+
+    @staticmethod
+    def over(point):
+        return (point[0] - 3, point[1]), (point[0] + 3, point[1]), 0.5
+
+    @staticmethod
+    def pose(body):
+        return solve(full_pose(build_clips()["idle"].sample(0.0)), body)
+
+    def test_head_size_is_measured_from_the_marks(self):
+        self.assertAlmostEqual(self.cut("hero_head")[0]["body"]["head_size"], 1.0, places=1)
+        small = self.cut("small_head", *small_head(self.img, self.joints))[0]
+        self.assertAlmostEqual(small["body"]["head_size"], 0.34, places=1)
+
+    def test_a_blade_across_a_small_face_fails_and_names_the_frames(self):
+        body = Body.from_spec({"head_size": 0.34})
+        sk = self.pose(body)
+        rows = [frame_metrics(sk, body, self.over(face_circle(sk, body)[0])) for _ in range(10)]
+        res, flags = summarize(rows, ("attack",))
+        self.assertEqual(res["clip"], "FAIL")
+        self.assertEqual(sorted(flags), list(range(10)))
+        self.assertIn("weapon held over face", flags[0][0])
+
+    def test_a_blade_above_a_small_head_passes(self):
+        body = Body.from_spec({"head_size": 0.34})
+        sk = self.pose(body)
+        hero_face = face_circle(sk, Body())[0]
+        rows = [frame_metrics(sk, body, self.over(hero_face)) for _ in range(10)]
+        self.assertEqual(summarize(rows, ("attack",))[0]["clip"], "PASS")
 
 
 class TestSourceFaults(SourceCase):

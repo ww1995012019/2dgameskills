@@ -19,9 +19,10 @@ check     re-runs that motion check on a character.json, e.g. after editing a pa
 
 How parts are cut: every bone is a capsule between two joints. A pixel goes to the bone it lies
 deepest inside; where capsules overlap, the part drawn in front wins unless the pixel's colour
-matches the part behind much better. Each part keeps a round cap of its neighbours' pixels at
-the joints, so bending never opens a gap, and pixels a front part hides are filled from the
-part's own colours. Nothing is painted past the picture's silhouette. Parts are then turned
+matches the part behind much better. A limb ends at its joint: what lies past it belongs to the
+next limb, whose round end carries the joint, so bending never opens a gap or leaves a nub. Pixels
+a front part hides are filled from the part's own colours, and nothing is painted past the
+picture's silhouette. Parts are then turned
 upright (limbs hanging down, feet flat) as the rig expects, and the bone lengths measured from
 the picture go into character.json, with where each part came from so QA can check it against
 the picture. A copy of the picture is kept as source.png beside them.
@@ -79,6 +80,10 @@ NEIGHBOURS = [("arm_f_up", "arm_f_lo"), ("arm_f_lo", "hand_f"), ("leg_f_up", "le
               ("pelvis", "torso"), ("torso", "head"), ("pelvis", "leg_n_up"), ("pelvis", "leg_f_up"),
               ("torso", "arm_n_up"), ("torso", "arm_f_up")]
 CAP_MAX = 4.0     # rig units: largest round cap two parts share at a joint
+CAP_MIN = 1.2     # rig units: smallest, the size of the check's disc on a joint
+SOFTEN = 40       # blur passes over a fill: enough to wash out stripes a few pixels wide
+BEHIND_CAP = 0.5  # of the cap: what the part behind a joint keeps
+HEAD_UNITS = 30.0 # rig units from head_base to head_top at head_size 1.0
 HEAD_CAP = 0.13   # of the head's height: the collar the head keeps. Matches CAP_MAX on the hero's head
 MIN_HEAD_PX = 20  # tall at the hd preset: below this the face is a few pixels and can't read
 FAR = {"arm_f_up": "arm_n_up", "arm_f_lo": "arm_n_lo", "hand_f": "hand_n",
@@ -210,6 +215,23 @@ def fill_from(rgba, own, region, steps):
         out[grow, 3] = 255
         have |= grow
         todo &= ~grow
+    # Growing draws each edge pixel straight across the gap, so the fill comes out striped, and the
+    # stripes show when the part in front moves away. Blur what was filled into a soft patch.
+    filled = have & ~own
+    if filled.any():
+        ys, xs = np.nonzero(filled)
+        box = (slice(max(ys.min() - 1, 0), ys.max() + 2), slice(max(xs.min() - 1, 0), xs.max() + 2))
+        patch, kept, soft = out[box], have[box], filled[box]
+        for _ in range(SOFTEN):
+            acc = patch.astype(np.float32)
+            cnt = np.ones(patch.shape[:2], np.float32)
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                src = np.roll(np.roll(kept, dy, 0), dx, 1)
+                col = np.roll(np.roll(patch, dy, 0), dx, 1).astype(np.float32)
+                acc[src] += col[src]
+                cnt += src
+            patch[soft] = (acc[soft] / cnt[soft, None]).astype(np.uint8)
+            patch[soft, 3] = 255
     return out, have
 
 
@@ -233,7 +255,7 @@ def template(spec, size):
     hs = art.body.head_size
     j = {k: sk[k] for k in ("head_base", "neck", "waist", "hip", "sh_n", "el_n", "wr_n", "sh_f", "el_f", "wr_f",
                              "hip_n", "kn_n", "an_n", "hip_f", "kn_f", "an_f")}
-    j["head_top"] = add(sk["head_base"], rot((0, 30 * hs), sk["head_rot"]))
+    j["head_top"] = add(sk["head_base"], rot((0, HEAD_UNITS * hs), sk["head_rot"]))
     for s in "nf":
         j["hand_" + s] = add(sk["wr_" + s], scale((sk["wr_" + s][0] - sk["el_" + s][0], sk["wr_" + s][1] - sk["el_" + s][1]), 0.42))
         j["heel_" + s], j["toe_" + s] = heel_world(sk, s), toe_world(sk, s)
@@ -311,6 +333,8 @@ def cut(img, joints, base=None):
         "thigh": length("hip_n", "kn_n") / ppu, "shin": length("kn_n", "an_n") / ppu,
         "up_arm": length("sh_n", "el_n") / ppu, "lo_arm": length("el_n", "wr_n") / ppu,
         "pelvis_len": length("hip", "waist") / ppu, "chest_len": length("waist", "neck") / ppu,
+        # QA's face check and the framing work from this, not from the head's image.
+        "head_size": length("head_base", "head_top") / ppu / HEAD_UNITS,
     }
     # Where the rig hangs arms, legs and head comes from these lengths, not from the marks, so fit
     # them to the marks: measured along the torso's own axis, the shoulder sets chest_len (the rig
@@ -398,6 +422,17 @@ def cut(img, joints, base=None):
     better = (alt != cur) & np.isfinite(own_cd) & (cds[alt, ys, xs] + 0.12 < own_cd)
     owner[ys[better], xs[better]] = alt[better]
 
+    # A limb ends at its joint. A capsule wider than the next limb's has a round end that wraps past
+    # the joint on either side of it; those pixels would stick out as a nub when the joint bends.
+    beyond = {}
+    for a_, b_ in NEIGHBOURS:
+        if PARTS[a_][3] == "limb" and a_ in z and b_ in z:
+            start, end = np.array(J[PARTS[a_][0]]), np.array(J[PARTS[a_][1]])
+            v = end - start
+            near_next = sd[b_] + radius.get(b_, PARTS[b_][2]) * ppu < radius.get(a_, PARTS[a_][2]) * ppu
+            beyond[a_] = ((xx - end[0]) * v[0] + (yy - end[1]) * v[1] > 0) & near_next     # not a skirt hanging clear of it
+            owner[(owner == z[a_]) & beyond[a_]] = z[b_]
+
     owner = drop_strays(owner, stack, order, fg)
     if "weapon" in z:
         pa, pb = J["weapon_grip"], J["weapon_tip"]
@@ -414,13 +449,36 @@ def cut(img, joints, base=None):
 
     report = {"px_per_unit": round(ppu, 3), "parts": {}, "warnings": []}
     masks = {n: (owner == z[n]) for n in order}
+    caps = {}     # joint: the round cap its limbs were given
+
+    def joint_width(limb, joint, mask, limit):
+        """Half the limb's width across its bone at a joint, in pixels. A round end can be no wider
+        than the limb. Past that the silhouette trims the cap into a square stub, which sticks out
+        beyond the bend as a nub on the far side of the joint."""
+        v = np.subtract(J[PARTS[limb][1]], J[PARTS[limb][0]])
+        across = np.array([-v[1], v[0]]) / (np.hypot(*v) or 1)
+        total = 0
+        for side in (1, -1):
+            t = 0
+            while t < limit:
+                x, y = np.round(np.add(J[joint], across * side * (t + 1))).astype(int)
+                if not (0 <= x < w and 0 <= y < h and mask[y, x]):
+                    break
+                t += 1
+            total += t
+        return min(max(total / 2, CAP_MIN * ppu), limit)
+
     for a_, b_ in NEIGHBOURS:     # round caps at shared joints
         if a_ not in masks or b_ not in masks:
             continue
         jx, jy = J[PIVOT.get(b_, PARTS[b_][0])]
         # Enough to bridge the joint while it bends, never a big shared patch: a cap the size of
         # the torso's would copy the face onto the chest, showing when the head turns.
-        cap = np.hypot(xx - jx, yy - jy) < min(radius.get(a_, PARTS[a_][2]), radius.get(b_, PARTS[b_][2]), CAP_MAX) * ppu
+        limit = min(radius.get(a_, PARTS[a_][2]), radius.get(b_, PARTS[b_][2]), CAP_MAX) * ppu
+        joint = PIVOT.get(b_, PARTS[b_][0])
+        if PARTS[a_][3] == "limb":
+            limit = caps[joint] = joint_width(a_, joint, masks[a_] | masks[b_], limit)
+        cap = np.hypot(xx - jx, yy - jy) < limit
         if b_ == "head":
             # One way only, sized from the head: the rig's units follow the legs, so on real
             # proportions a cap in units reaches the mouth. The head is drawn over the torso and
@@ -429,6 +487,14 @@ def cut(img, joints, base=None):
             masks[b_] = masks[b_] | (cap & masks[a_])
             continue
         both = cap & (masks[a_] | masks[b_])
+        if PARTS[a_][3] == "limb" and z[b_] > z[a_]:
+            # The part in front carries the joint: its round end is a disc on the pivot, so it covers
+            # the join at any angle. The part behind keeps just enough to bridge a length mismatch.
+            # As much cap as the one in front would stick out past it at a sharp bend.
+            tucked = np.hypot(xx - jx, yy - jy) < BEHIND_CAP * limit
+            masks[a_] = masks[a_] | (tucked & both)
+            masks[b_] = masks[b_] | both
+            continue
         masks[a_] = masks[a_] | both
         masks[b_] = masks[b_] | both
 
@@ -450,13 +516,16 @@ def cut(img, joints, base=None):
         hidden = capsule & ~own & fg & (owner > z[n])
         if "head" in z and n != "head":
             hidden &= owner != z["head"]     # the head always covers its own patch; filling it would paint skin under the chin
+        if n in beyond:
+            hidden &= ~beyond[n]     # the next limb in front is its own art, not a part of this one hidden
         pivot = J[PIVOT.get(n, a)]
         region = hidden | own
         if kind in ("limb", "hand", "foot"):
             # A limb ends in a round cap at its pivot, as cut-out puppets do: if the mark sits near
             # the body's edge, turning the limb would otherwise show its flat cut end. Only over
             # art: past the silhouette the fill has nothing but the outline to stretch into stripes.
-            region |= (np.hypot(xx - pivot[0], yy - pivot[1]) < 0.9 * r * ppu) & fg
+            reach = min(0.9 * r * ppu, caps.get(PIVOT.get(n, a), np.inf))
+            region |= (np.hypot(xx - pivot[0], yy - pivot[1]) < reach) & fg
         pix, have = fill_from(rgba, own, region, int(r * ppu) + 2)
         if hidden.sum() > 0.15 * max(capsule.sum(), 1):
             info["filled_px"] = int(hidden.sum())

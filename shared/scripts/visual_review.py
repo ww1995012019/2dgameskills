@@ -10,6 +10,8 @@ skill looks at the sheets itself, against references/visual-review.md.
 
 Each sheet shows key poses plus every frame QA flagged (red border). The bottom row of each clip is
 the same poses as black silhouettes: a pose that doesn't read in silhouette doesn't read in game.
+joints_00.png enlarges every knee and elbow at its sharpest bends, and the head beside the raised
+arms. A verdict has to cover it like any other sheet.
 """
 import argparse
 import glob
@@ -24,6 +26,8 @@ CELL = 180
 PER_SHEET = 6
 MAX_POSES = 8
 CROP_PAD = 4      # frame pixels kept around the art
+JOINT_UNITS = 28  # rig units shown around a joint in its close-up
+JOINTS = (("kn_n", "hip_n", "an_n"), ("kn_f", "hip_f", "an_f"), ("el_n", "sh_n", "wr_n"), ("el_f", "sh_f", "wr_f"))
 GROUND = (240, 184, 74, 255)
 BG = (58, 62, 74, 255)
 
@@ -102,6 +106,56 @@ def draw_clip(sheet, d, root, doc, name, flagged, y, zoom):
     return y + 16 + CELL * 2
 
 
+def bend(a, b, c):
+    """Inside angle at b in degrees: 180 is straight, small is sharply folded."""
+    u, v = np.subtract(a, b), np.subtract(c, b)
+    size = np.hypot(*u) * np.hypot(*v)
+    return float(np.degrees(np.arccos(np.clip(np.dot(u, v) / size, -1, 1)))) if size else 180.0
+
+
+def sharpest(traces, doc, joint, a, b):
+    """Each clip's most folded frame at a joint, most folded clip first."""
+    out = []
+    for name, tr in traces.items():
+        sk = tr.get("skeleton", {})
+        if doc["clips"].get(name, {}).get("layer") or not all(k in sk for k in (joint, a, b)):
+            continue
+        angle, frame = min((bend(sk[a][i], sk[joint][i], sk[b][i]), i) for i in range(len(sk[joint])))
+        out.append((angle, name, frame))
+    return sorted(out)
+
+
+def joint_sheet(root, doc, trace, out):
+    """Every joint at its worst, enlarged. Trouble at a joint only shows at its sharpest bend and is
+    a few pixels across, so a full-body cell can't show it."""
+    traces, unit = trace.get("traces", {}), trace.get("unit_px", 1.0)
+    rows = [(j, sharpest(traces, doc, j, a, b)[:MAX_POSES], JOINT_UNITS) for j, a, b in JOINTS]
+    # The head at the arms' sharpest frames, when a hand or weapon is most likely to reach the face.
+    head = 2 * (30 * trace.get("head_size", 1.0) + 6)
+    rows.append(("neck", rows[2][1], head))
+    rows = [r for r in rows if r[1]]
+    if not rows:
+        return None
+    sheet = Image.new("RGBA", (CELL * MAX_POSES, (16 + CELL) * len(rows)), BG)
+    d = ImageDraw.Draw(sheet)
+    size = doc["frame_size"]
+    for row, (joint, picks, units) in enumerate(rows):
+        y = row * (16 + CELL)
+        d.text((4, y + 2), f"{joint}: sharpest bends, {CELL / (units * unit):.1f}x", fill=(255, 255, 255, 255))
+        for k, (angle, name, frame) in enumerate(picks):
+            x0, y0 = traces[name]["skeleton"][joint][frame]
+            half = units * unit / 2
+            box = (int(x0 - half), int(y0 - half), int(x0 + half), int(y0 + half))
+            im = composite(root, doc, name, frame).crop(box).resize((CELL, CELL), Image.NEAREST)
+            cell = Image.new("RGBA", (CELL, CELL), BG)
+            cell.alpha_composite(im)
+            sheet.alpha_composite(cell, (k * CELL, y + 16))
+            d.text((k * CELL + 4, y + 19), f"{name} #{frame} {angle:.0f} deg", fill=(255, 255, 255, 255))
+    fn = "joints_00.png"
+    sheet.convert("RGB").save(os.path.join(out, fn))
+    return fn
+
+
 def build(root):
     with open(os.path.join(root, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -140,6 +194,12 @@ def build(root):
         fn = f"sheet_{len(index):02d}.png"
         sheet.convert("RGB").save(os.path.join(out, fn))
         index.append(dict(sheet=fn, clips=group))
+    tp = os.path.join(root, "rig_trace.json")
+    if os.path.exists(tp):
+        with open(tp, encoding="utf-8") as fh:
+            fn = joint_sheet(root, doc, json.load(fh), out)
+        if fn:     # listed like any sheet, so --record refuses a verdict that skips it
+            index.append(dict(sheet=fn, clips=["joints"]))
     with open(os.path.join(out, "index.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(sheets=index, skipped=sorted(set(doc["clips"]) - set(names)),
                        qa_flags={n: qa[n]["flags"] for n in names if qa.get(n, {}).get("flags")}), fh, ensure_ascii=False, indent=1)

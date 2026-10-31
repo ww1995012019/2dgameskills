@@ -41,6 +41,7 @@ bone empty and loose pieces of 4-49% of the part; whole parts had under 5% and n
 | Loose piece in a part | at least 1% of the part's art | Whole parts have none above 0.5% |
 | Art outside the picture | over 3% of the part, past 2 px of edge slack | The stretched cap measured 4-38%; a clean cut has none above the slack |
 | Head in the torso | over 8% of the head | The face-copying cap measured 30-31%; a neck join stays well under it |
+| Limb past its joint | over 2.5 rig units along the bone | A nub seen at a bent knee measured 3.7. `cut_parts.py` leaves the part behind a joint at most 2 units of cap, and marks a few pixels off add a little |
 
 A blade may be split by the fist: the weapon's pieces are joined across 6 rig units around the grip.
 
@@ -51,6 +52,7 @@ A blade may be split by the fist: the weapon's pieces are joined across 6 rig un
   of the body on purpose, and the check can't tell them from a broken scrap. `bones` still runs.
 - **Shooter layered clips:** `upper` clips are held to the arm and chest bones, `lower` clips to the leg
   and hip bones, because each draws half a body.
+- **Rigs cut before a limb ended at its joint:** they fail `parts` with a nub on most limbs. That is a real fault in those rigs: cut them again.
 - **Older sets:** a trace without `skeleton` reports `float` and `bones` as `n/a`. That is not a pass.
   Generate the set again. Cut-out rigs from before this check need cutting again too.
 
