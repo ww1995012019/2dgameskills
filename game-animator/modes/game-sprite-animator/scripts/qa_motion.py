@@ -13,6 +13,9 @@ Checks
   transition  pose jump where one clip hands over to the next
   limits    joints past their range, bones changing length, knees flipping direction
   clip      weapon through the head, weapon or body through the ground
+  float     art floating free of the body
+  bones     a bone with nothing drawn along it
+  parts     a cut-out part missing, broken along its bone, or in loose pieces
   bounds    art cut off by the frame edge
 Exit code 1 when anything FAILs.
 """
@@ -28,6 +31,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim.constraints import summarize  # noqa: E402
+from sprite_anim.integrity import frame_problems  # noqa: E402
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 RANK = {PASS: 0, WARN: 1, FAIL: 2}
@@ -143,6 +147,21 @@ def joint_seam(tr, height):
     return values, status
 
 
+def skeleton_flags(r, seq, tr, unit_px, bones, flags):
+    """Art floating free of the body and bones with nothing on them, per frame. A smear can leave
+    the blade behind on purpose, so its frames skip the floating check. Traces from before these
+    fields existed report n/a rather than a pass."""
+    if "skeleton" not in tr:
+        r["float"] = r["bones"] = "n/a"
+        return
+    skip = {i for i, on in enumerate(tr["smear"]) if on}
+    floating, empty = frame_problems(seq, unit_px, tr["skeleton"], bones, skip)
+    r["float"], r["bones"] = FAIL if floating else PASS, FAIL if empty else PASS
+    for found in (floating, empty):
+        for i, messages in found.items():
+            flags.setdefault(i, []).extend(messages)
+
+
 def run_set(root):
     with open(os.path.join(root, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -172,6 +191,7 @@ def run_set(root):
                         flags.setdefault(i, []).append("joint loop seam: last -> first pose")
             for i in r["cut_frames"]:
                 flags.setdefault(i, []).append("cut off by the frame edge")
+            skeleton_flags(r, seqs[name], tr, trace["unit_px"], trace.get("bones", []), flags)
             r["flags"] = {str(k): v for k, v in sorted(flags.items())}
         report[name] = r
     trans = []
@@ -197,8 +217,7 @@ def run_set(root):
                     for clip, frame in ((a, transition["a_frame"]), (b, b_frame)):
                         report[clip]["flags"].setdefault(str(frame), []).append(f"joint transition: {a} -> {b}")
             trans.append(transition)
-    out = dict(clips=report, transitions=trans)
-    cols = ["hold", "seam", "spike", "slide", "jitter", "limits", "clip", "bounds"]
+    cols = ["hold", "seam", "spike", "slide", "jitter", "limits", "clip", "float", "bones", "bounds"]
     print(f"{'clip':<14}{'frm':>4}  " + "".join(f"{c:<7}" for c in cols) + "detail")
     failed = 0
     for name, r in report.items():
@@ -211,6 +230,13 @@ def run_set(root):
         for t in trans:
             failed += t["status"] == FAIL
             print(f"  {t['a']:>13} -> {t['b']:<13} {t['status']:<5} ratio={t['ratio']} joints/height={t.get('joint_distance_height', 'unavailable')}")
+    problems = trace.get("part_problems", []) if trace else []
+    if problems:
+        print("\nbroken parts (every clip is affected)")
+        for p in problems:
+            print("  " + p)
+    out = dict(clips=report, transitions=trans, parts=dict(status=FAIL if problems else PASS, problems=problems))
+    failed += len(problems)
     with open(os.path.join(root, "qa_report.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, indent=1)
     warns = sum(1 for r in report.values() for c in cols if r.get(c) == WARN) + sum(t["status"] == WARN for t in trans)

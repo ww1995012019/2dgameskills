@@ -300,11 +300,13 @@ class Cutout:
         base = spec.get("_dir", ".")
         self.px_per_unit = float(spec.get("px_per_unit", 4.0))
         self.parts = {}
+        self.part_scales = {}
         for name, p in spec["parts"].items():
             if name not in CUTOUT_BONES:
                 raise ValueError(f"unknown part {name!r}, expected one of {list(CUTOUT_BONES)}")
             im = Image.open(os.path.join(base, p["image"])).convert("RGBA")
             self.parts[name] = (im, tuple(p["pivot"]), float(p.get("rest_angle", 0)))
+            self.part_scales[name] = float(p.get("scale", 1.0))
         # The art's own layering where it differs from the default: a weapon in the far hand puts
         # that upper arm behind the chest and the other arm in front, and the cut-out keeps it so.
         layers = spec.get("layers", {})
@@ -328,7 +330,7 @@ class Cutout:
             if name not in self.parts:
                 continue
             im, pivot, rest_angle = self.parts[name]
-            k = cv.s / self.px_per_unit
+            k = cv.s / self.px_per_unit * self.part_scales[name]
             a = math.radians(ang(sk) - rest_angle)
             # Inverse affine: output pixel -> source pixel. Clockwise on screen (y-down).
             ca, sa = math.cos(a), math.sin(a)
@@ -370,6 +372,12 @@ class CharacterArt:
         self.bulk = self.body.bulk
         front, back = WEAPON_REACH.get(self.spec["weapon"], (0, 0))
         grip = WEAPON_GRIP.get(self.spec["weapon"], 0)
+        # A cut-out weapon is as long as the art, not the drawn weapon of that name: framing,
+        # the ground clamp and clipping all have to see its real tip.
+        cut_length = self.spec.get("parts", {}).get("weapon", {}).get("length")
+        if cut_length:
+            front = cut_length + grip
+        self.weapon_reach = front
         # Measured from the unshifted origin just past the wrist, as the rig's ground clamp pivots.
         self.body.weapon_front = front - grip if front else 0
         self.body.weapon_back = back + grip
@@ -615,8 +623,7 @@ class CharacterArt:
 
     def blade_points(self, sk):
         """(hilt, tip) for smears, framing and clipping; the tip is the drawn one."""
-        front = WEAPON_REACH.get(self.spec["weapon"], (0, 0))[0]
-        return sk["wr_n"], add(self.weapon_origin(sk), scale(sk["wep_dir"], front))
+        return sk["wr_n"], add(self.weapon_origin(sk), scale(sk["wep_dir"], self.weapon_reach))
 
     primary = None
 

@@ -14,6 +14,8 @@ cut       splits the picture into the rig's parts. joints.json lists each joint'
           bind_preview.png (each part tinted, joints marked) and motion_check.png (the cut-out
           through the clips that bend it most). Exits 1 if a joint opens while moving.
 check     re-runs that motion check on a character.json, e.g. after editing a part by hand.
+          It also fails on a part that is missing or broken, art floating free of the body and a
+          bone with nothing on it: see references/skeleton-qa.md.
 
 How parts are cut: every bone is a capsule between two joints. A pixel goes to the bone it lies
 deepest inside; where capsules overlap, the part drawn in front wins unless the pixel's colour
@@ -38,7 +40,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim.art import Canvas, CharacterArt, hand_grip  # noqa: E402
 from sprite_anim.rig import Body, full_pose, heel_world, solve, toe_world  # noqa: E402
+from sprite_anim.integrity import HUMANOID_BONES, frame_problems  # noqa: E402
 from sprite_anim.mathx import add, rot, scale  # noqa: E402
+from sprite_anim.part_check import GRIP_REACH, check_parts  # noqa: E402
 from sprite_anim.render import GROUND_FRAC, UNIT_PX  # noqa: E402
 
 # Standing with every limb clear of the body: what template.png shows and the prompt asks for.
@@ -163,6 +167,22 @@ def drop_strays(owner, stack, order, fg):
         core = own & (stack[i] < 0)
         if own.any() and core.any():
             owner[own & ~reached(own, core)] = -1
+    return owner
+
+
+def drop_weapon_strays(owner, stack, order, blade, grip):
+    """The weapon's capsule runs back past the fist, far enough on a long blade to take in a piece
+    of sleeve. Unlike drop_strays' specks that piece is inside the capsule, so it counts as core and
+    stays, then swings around with the sword. Only what connects to the blade counts, with the fist
+    (grip, the disc it hides) as a bridge, as a pommel behind it is meant to be cut off."""
+    i = order.index("weapon")
+    own = owner == i
+    keep = reached(own | grip, blade) & own
+    stray = own & ~keep
+    if stray.any():
+        alt = stack.copy()
+        alt[i] = np.inf
+        owner[stray] = np.argmin(alt, axis=0)[stray]
     return owner
 
 
@@ -368,10 +388,25 @@ def cut(img, joints, base=None):
     cur = owner[ys, xs]
     own_cd = cds[cur, ys, xs]
     alt = best[ys, xs]
-    better = (alt != cur) & (cds[alt, ys, xs] + 0.12 < own_cd)
+    # A part fully overlapped by others (an upper arm across the chest) has no pixels of its own to
+    # learn colours from. No colours is no evidence, not a mismatch: it keeps what geometry gave it,
+    # or every neighbour outbids it and the limb is left with only its joint caps.
+    better = (alt != cur) & np.isfinite(own_cd) & (cds[alt, ys, xs] + 0.12 < own_cd)
     owner[ys[better], xs[better]] = alt[better]
 
     owner = drop_strays(owner, stack, order, fg)
+    if "weapon" in z:
+        pa, pb = J["weapon_grip"], J["weapon_tip"]
+        blade = fg & (seg_dist(xx, yy, pa, pb) < PARTS["weapon"][2] * ppu)
+        grip = np.hypot(xx - pa[0], yy - pa[1]) < GRIP_REACH * ppu
+        owner = drop_weapon_strays(owner, stack, order, blade, grip)
+
+    # "_head_polygon": the head's outline in picture pixels, for helmet fins or hair past the skull
+    # disc that would otherwise go to the broad chest capsule.
+    if joints.get("_head_polygon") and "head" in z:
+        head_mask = Image.new("1", (w, h))
+        ImageDraw.Draw(head_mask).polygon([tuple(p) for p in joints["_head_polygon"]], fill=1)
+        owner[np.asarray(head_mask, dtype=bool) & fg] = z["head"]
 
     report = {"px_per_unit": round(ppu, 3), "parts": {}, "warnings": []}
     masks = {n: (owner == z[n]) for n in order}
@@ -417,13 +452,19 @@ def cut(img, joints, base=None):
         pix[~have] = 0
         # Cutout turns a hand with the forearm, so it is set upright along the forearm too.
         ang = part_angle(kind, *((J["el_" + n[-1]], J["wr_" + n[-1]]) if kind == "hand" else (J[a], J[b])))
-        im = Image.fromarray(pix, "RGBA").rotate(ang, resample=Image.BICUBIC, center=pivot)
+        # Turning upright can swing a part past the picture's edge, a long blade most of all, so
+        # rotate on a canvas no part can leave.
+        margin = math.ceil(math.hypot(w, h))
+        roomy = Image.new("RGBA", (w + 2 * margin, h + 2 * margin))
+        roomy.paste(Image.fromarray(pix, "RGBA"), (margin, margin))
+        pivot = (pivot[0] + margin, pivot[1] + margin)
+        im = roomy.rotate(ang, resample=Image.BICUBIC, center=pivot)
         box = im.getbbox()
         if not box:
             report["warnings"].append(f"{n}: no pixels")
             continue
         pad = 2
-        box = (max(box[0] - pad, 0), max(box[1] - pad, 0), min(box[2] + pad, w), min(box[3] + pad, h))
+        box = (max(box[0] - pad, 0), max(box[1] - pad, 0), min(box[2] + pad, im.width), min(box[3] + pad, im.height))
         parts[n] = (im.crop(box), (round(pivot[0] - box[0], 2), round(pivot[1] - box[1], 2)))
         info["angle"] = round(ang, 1)
         report["parts"][n] = info
@@ -441,6 +482,8 @@ def cut(img, joints, base=None):
                 body={**base.get("body", {}), **{k: round(v, 3) for k, v in measured.items()}})
     spec.setdefault("weapon", "sword" if has_weapon else "none")
     spec["parts"] = {n: {"image": f"parts/{n}.png", "pivot": list(pv)} for n, (_, pv) in parts.items()}
+    if "weapon" in spec["parts"]:     # no body length to hold it to, so part_check gets this one
+        spec["parts"]["weapon"]["length"] = round(length("weapon_grip", "weapon_tip") / ppu, 2)
     if behind or front_parts:     # animate with the picture's layering, as it was cut
         spec["layers"] = {k: sorted(v) for k, v in (("behind", behind), ("front", front_parts)) if v}
     # Marking checks: a joint off the character, limbs that don't match, a foot of the wrong size.
@@ -472,13 +515,14 @@ def cut(img, joints, base=None):
 
 
 CHECK_CLIPS = ["idle", "walk", "run", "attack_1", "attack_3", "roll", "hurt", "death"]
-GAP_JOINTS = ("sh_n", "el_n", "wr_n", "sh_f", "el_f", "hip_n", "kn_n", "an_n", "hip_f", "kn_f", "an_f", "waist", "neck")
+GAP_JOINTS = ("sh_n", "el_n", "wr_n", "sh_f", "el_f", "wr_f", "hip_n", "kn_n", "an_n", "hip_f", "kn_f", "an_f", "waist", "neck")
 
 
 def check(spec, size=192, fps=15, clips=CHECK_CLIPS):
     """Animate the cut-out through the clips that bend it most. Returns (sheet image, gaps):
     gaps maps clip -> {joint: worst see-through share of a small disc on that joint}, listing
-    only joints that open. A part sitting off its neighbour shows through right at the joint."""
+    only joints that open. A part sitting off its neighbour shows through right at the joint.
+    "floating" and "bones" entries give the frame-level skeleton checks' first finding."""
     from sprite_anim.motions import build_clips
     from sprite_anim.render import Renderer, frame_count, frame_time
     lib = build_clips(spec.get("style"), spec.get("custom_clips"))
@@ -489,8 +533,10 @@ def check(spec, size=192, fps=15, clips=CHECK_CLIPS):
     sheet = Image.new("RGBA", (cols * size, len(picked) * (size + 14)), (58, 62, 74, 255))
     d = ImageDraw.Draw(sheet)
     gaps = {}
+    joints = sorted({j for bone in HUMANOID_BONES for j in bone})
     for row, (n, c) in enumerate(picked.items()):
         k = frame_count(c, fps)
+        frames, skeleton, smear = [], {j: [] for j in joints}, set()
         shown = {round(q * (k - 1) / (cols - 1)) for q in range(cols)}
         d.text((3, row * (size + 14) + 1), n, fill=(255, 255, 255, 255))
         for i in range(k):
@@ -501,6 +547,11 @@ def check(spec, size=192, fps=15, clips=CHECK_CLIPS):
             sk = solve(pose, r.art.body)
             cv = Canvas(size, 1, r.unit, GROUND_FRAC, 1, False, (0, 0, 0))
             cv.set_squash(pose["squash"], 0.0)
+            frames.append(f)
+            for j in joints:
+                skeleton[j].append(cv.T(sk[j]))
+            if pose["smear"] > 0.02:
+                smear.add(i)
             for j in GAP_JOINTS:
                 x, y = cv.T(sk[j])
                 disc = (xx - x) ** 2 + (yy - y) ** 2 <= (1.2 * r.unit) ** 2
@@ -510,6 +561,11 @@ def check(spec, size=192, fps=15, clips=CHECK_CLIPS):
             if i in shown:
                 im = Image.fromarray((np.clip(f, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA")
                 sheet.alpha_composite(im, (sorted(shown).index(i) * size, row * (size + 14) + 14))
+        floating, empty = frame_problems(frames, r.unit, skeleton, HUMANOID_BONES, smear)
+        for key, found in (("floating", floating), ("bones", empty)):
+            if found:
+                frame = min(found)
+                gaps.setdefault(n, {})[key] = f"frame {frame}: {found[frame][0]}"
     return sheet, gaps
 
 
@@ -582,18 +638,26 @@ def main():
 
 def run_check(spec, sheet_path, report=None, report_path=None):
     """Animate, save the sheet, print gaps; non-zero exit when a joint opens."""
+    broken = check_parts(spec, Body.from_spec(spec.get("body")))
+    for problem in broken:
+        print(f"  part: {problem}")
+    if any(problem.endswith("not found") for problem in broken):
+        return 1     # nothing to animate without the image
     sheet, gaps = check(spec)
     sheet.save(sheet_path)
     print(f"[check] motion sheet -> {sheet_path}")
     for clip, js in gaps.items():
-        print(f"  gap: {clip}: " + ", ".join(f"{j} {v:.0%}" for j, v in js.items()))
+        print(f"  gap: {clip}: " + ", ".join(f"{j} {v:.0%}" if isinstance(v, float) else f"{j} {v}" for j, v in js.items()))
     if report is not None:
         report["gaps"] = gaps
+        report["part_problems"] = broken
         with open(report_path, "w", encoding="utf-8") as fh:
             json.dump(report, fh, ensure_ascii=False, indent=1)
+    if broken:
+        print("  broken parts: check bind_preview.png, then fix the marks or _radius and cut again")
     if gaps:
         print("  joints open while moving: move those joints' marks onto the joint centres and cut again")
-    return 1 if gaps else 0
+    return 1 if gaps or broken else 0
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim.constraints import summarize  # noqa: E402
+from sprite_anim.integrity import frame_problems  # noqa: E402
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 RANK = {PASS: 0, WARN: 1, FAIL: 2}
@@ -174,6 +175,25 @@ def joint_seam(tr, height, layer="full"):
     return values, status
 
 
+def skeleton_flags(r, seq, tr, unit_px, bones, flags, layer, tags):
+    """Art floating free of the body and bones with nothing on them, per frame. Layered clips draw
+    half a body, so only that half's bones are held to it. Fire and action clips throw things clear
+    of the body on purpose (casings, a dropped magazine) and report float n/a, as do smear frames in
+    the rest. Traces from before these fields existed report n/a rather than a pass."""
+    if "skeleton" not in tr:
+        r["float"] = r["bones"] = "n/a"
+        return
+    if layer != "full":
+        bones = [b for b in bones if (b[0][:2] in ("sh", "el", "wa")) == (layer == "upper")]
+    props = "fire" in tags or "action" in tags
+    skip = set(range(len(seq))) if props else {i for i, on in enumerate(tr["smear"]) if on}
+    floating, empty = frame_problems(seq, unit_px, tr["skeleton"], bones, skip)
+    r["float"], r["bones"] = "n/a" if props else FAIL if floating else PASS, FAIL if empty else PASS
+    for found in (floating, empty):
+        for i, messages in found.items():
+            flags.setdefault(i, []).extend(messages)
+
+
 def run_set(root):
     with open(os.path.join(root, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -203,6 +223,7 @@ def run_set(root):
                         flags.setdefault(i, []).append("joint loop seam: last -> first pose")
             for i in r["cut_frames"]:
                 flags.setdefault(i, []).append("cut off by the frame edge")
+            skeleton_flags(r, seqs[name], tr, trace["unit_px"], trace.get("bones", []), flags, c.get("layer", "full"), c["tags"])
             r["flags"] = {str(k): v for k, v in sorted(flags.items())}
         report[name] = r
     trans = []
@@ -229,7 +250,7 @@ def run_set(root):
                         report[clip]["flags"].setdefault(str(frame), []).append(f"joint transition: {a} -> {b}")
             trans.append(transition)
     out = dict(clips=report, transitions=trans)
-    cols = ["hold", "seam", "spike", "slide", "jitter", "grip", "cadence", "limits", "clip", "bounds"]
+    cols = ["hold", "seam", "spike", "slide", "jitter", "grip", "cadence", "limits", "clip", "float", "bones", "bounds"]
     print(f"{'clip':<22}{'frm':>4}  " + "".join(f"{c:<7}" for c in cols) + "detail")
     failed = 0
     for name, r in report.items():

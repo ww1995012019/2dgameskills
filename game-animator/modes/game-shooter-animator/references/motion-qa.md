@@ -17,6 +17,8 @@
 | transitions | Pose jump where clips hand over | Clips that don't share a seam pose | Start the next clip from the pose the previous ends on |
 | `limits` | Joints asked past their range, bones changing length, knees flipping direction | A pose beyond anatomy. The rig eases it into the limit, so a large excess means the pose isn't what was authored | Re-pose it. Limits are in `sprite_anim/constraints.py` |
 | `clip` | Weapon held over the face, weapon or body through the ground | Reach or angle wrong for that pose | Move the pose. Crossing the face during a swing is fine; holding there isn't |
+| `float` | Art cut off from the body. `n/a` on fire and action clips, which throw casings and magazines clear on purpose | A drawing bug | See `references/skeleton-qa.md` |
+| `bones` | A bone with nothing drawn along it, in the half of the body the clip draws | A drawing bug | See `references/skeleton-qa.md` |
 | `bounds` | Art cut off by the frame edge | Art wider than the frame | The generator auto-fits the character to its widest pose and prints `[fit]`. This fires only for what fit can't see, mainly dust or bake-time cloth |
 
 Some clips are exempt where a check would be wrong: `fire` skips `spike`, `seam` and `hold`, because the

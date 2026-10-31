@@ -23,6 +23,8 @@ check, leg/joint and frame. Idle may hold rasterized breathing frames; locomotio
   are checked. Segments are six units with 0.08-unit interpolation tolerance. At non-integral simulation
   samples the whole interpolated shape is translated to the exact frame anchor. Tail width is included
   in floor clearance. This does not prove absence of all tail/body intersections.
+- **float, bones:** art cut off from the body, or a bone with nothing drawn along it. See
+  `skeleton-qa.md`.
 - **bounds:** visible alpha on the frame edge fails. All clips share one floor pivot.
 
 Build `visual_review.py <set>` and inspect every row in all four sheets. Look for leg attachment,

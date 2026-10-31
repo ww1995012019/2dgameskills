@@ -5,9 +5,13 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import sys
 
 import numpy as np
 from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "modes/game-sprite-animator/scripts"))
+from sprite_anim.integrity import frame_problems
 
 
 def rotate(point, degrees):
@@ -57,6 +61,7 @@ def inspect(out):
         entry = trace["clips"][name]
         poses = entry["poses"]
         flags = {}
+        images = []
 
         def mark(frame, message):
             flags.setdefault(str(frame), []).append(message)
@@ -82,6 +87,7 @@ def inspect(out):
             else:
                 with Image.open(path) as img:
                     rgba = img.convert("RGBA")
+                    images.append(np.asarray(rgba))
                     bbox = rgba.getchannel("A").getbbox()
                     if index < len(entry.get("frame_hashes", [])) and hashlib.sha256(rgba.tobytes()).hexdigest() != entry["frame_hashes"][index]:
                         mark(index, "frame pixels differ from recorded frame hash")
@@ -148,6 +154,20 @@ def inspect(out):
                     return pose[name][2] - (pose[parent][2] if parent is not None else 0)
                 if abs(local_angle(left) - local_angle(right)) > 2.0:
                     mark(index, f"{left}/{right}: configured wing pair out of phase")
+        # Older traces have no pivot, so their pixels can't be matched to bones.
+        if "pivot" in trace and len(images) == len(poses) and not any(b not in p for p in poses for b in bones):
+            ox, oy = trace["pivot"]
+            unit = trace["unit_px"]
+            skeleton = {}
+            segments = []
+            for bone in bones:
+                skeleton[bone + ".start"] = [[ox + p[bone][0][0] * unit, oy + p[bone][0][1] * unit] for p in poses]
+                skeleton[bone + ".end"] = [[ox + p[bone][1][0] * unit, oy + p[bone][1][1] * unit] for p in poses]
+                segments.append((bone + ".start", bone + ".end"))
+            for found in frame_problems(images, unit, skeleton, segments):
+                for index, messages in found.items():
+                    for message in messages:
+                        mark(index, message)
         # A driver-derived upper bound avoids treating a normal turning point as a jump.
         if len(poses) >= 2 and valid_times:
             for bone_name, bone in bones.items():
@@ -170,7 +190,9 @@ def inspect(out):
                             or math.dist(reference[bone][1], poses[0][bone][1]) > 1e-5):
                         mark(len(poses) - 1, f"{bone}: loop endpoint does not close")
         reports[name] = {"status": "FAIL" if flags else "PASS", "flags": flags, "frames": len(poses)}
-    return {"clips": reports, "scope": "geometry, explicit wing pairs, endpoint speed bounds, loop closure and frame bounds; not anatomy or visual quality"}
+    problems = trace.get("part_problems", [])
+    return {"clips": reports, "parts": {"status": "FAIL" if problems else "PASS", "problems": problems},
+            "scope": "geometry, explicit wing pairs, endpoint speed bounds, loop closure, frame bounds, floating art, bare bones and PNG part continuity; not anatomy or visual quality"}
 
 
 def main():
@@ -181,7 +203,9 @@ def main():
     (a.output / "qa_report.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     for name, report in result["clips"].items():
         print(f"{name}: {report['status']} ({len(report['flags'])} flagged frames)")
-    return int(any(x["status"] == "FAIL" for x in result["clips"].values()))
+    for problem in result["parts"]["problems"]:
+        print("part: " + problem)
+    return int(any(x["status"] == "FAIL" for x in result["clips"].values()) or bool(result["parts"]["problems"]))
 
 
 if __name__ == "__main__":

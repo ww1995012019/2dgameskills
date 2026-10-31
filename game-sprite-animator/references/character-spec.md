@@ -126,7 +126,8 @@ cuts the parts and writes this file for you: see `references/ai-art.md`. A worke
 ```
 
 Part names, drawn back to front: `arm_f_up arm_f_lo hand_f leg_f_up leg_f_lo foot_f leg_n_up leg_n_lo
-foot_n pelvis torso head weapon arm_n_up arm_n_lo hand_n`. Omit any you don't have.
+foot_n pelvis torso head weapon arm_n_up arm_n_lo hand_n`. Supply all of them, except `weapon` with
+`"weapon": "none"`: the rig draws nothing on a bone with no part, so QA fails a missing one.
 
 Rules for the layers:
 
@@ -140,6 +141,11 @@ Rules for the layers:
   standard orientation for that part. For example, an arm pointing right instead of down has
   `rest_angle: -90`. The renderer subtracts this angle from the rig angle. It defaults to 0.
 - Let parts overlap generously at joints so bending doesn't open a gap.
+- On the `weapon` part, `length` is grip to tip in rig units. Framing, the ground clamp and clipping use
+  it instead of the drawn weapon's reach, and QA checks the art really reaches that far. `cut_parts.py`
+  writes it.
+- Optionally set `scale` on a part to draw it larger or smaller than `px_per_unit` says, such as a
+  swapped-in weapon drawn at another size. It defaults to 1.
 - `px_per_unit` is source pixels per rig unit. Standing height is 100 units, so art 400 px tall is 4.0.
 - Set `body` lengths (`thigh`, `shin`, `up_arm`, `lo_arm`, `pelvis_len`, `chest_len`, `neck_len`) to the
   art's own, in rig units, or parts hang off their neighbours. `cut_parts.py` measures them.

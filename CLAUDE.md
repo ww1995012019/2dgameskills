@@ -55,6 +55,17 @@ python3 dev/package_skills.py                    # 改了 skill 里的文件后�
 - 不做一次性大重写。分步改，每步保持全量回归 0 FAIL。
 - 汇报时写清改了哪些文件、跑了什么命令、真实结果和没解决的问题。
 
+## 骨骼完整性 QA
+
+关节数字正确不代表画面正确：部件丢了中段，rig 照样解得出来。所以五个模式都在像素上检查，规则和阈值见
+`shared/references/skeleton-qa.md`，共用代码是 `shared/scripts/sprite_anim/integrity.py`。
+
+- `float`（逐帧，碎块脱离身体）、`bones`（逐帧，骨段上没有画面）、`parts`（整套一次，切块部件缺失、骨段断裂、
+  有孤块、枢轴不在图上）。`part_check.py` 只在横版 RPG 里。
+- 只看合成帧不够：肢体叠在身体上时，躯干会把洞盖住，所以部件要单独检查。
+- 刀光帧、射击的 fire/action 动作不判 `float`；后者显示 `n/a`，不算通过。旧数据同样是 `n/a`。
+- 新增切块功能时，改完要确认 `cutout_demo` 的 `cut_parts.py check` 仍是 exit 0。
+
 ## 关节连续性 QA
 
 两个 `qa_motion.py` 已补上基于 `rig_trace.json` 的循环接缝与动作衔接检查。

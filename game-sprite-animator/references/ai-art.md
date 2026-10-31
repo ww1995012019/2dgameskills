@@ -78,6 +78,8 @@ it:
 - `_behind` / `_front`: parts that sit behind / in front of the body in this picture. The cut gives
   overlapping pixels to the part really in front, and `character.json` gets a `layers` entry so the
   animation draws them the same way.
+- `_head_polygon`: the head's outline in picture pixels, as `[[x, y], ...]`, for helmet fins or hair
+  past the skull that would otherwise be cut into the chest.
 - `_radius`: a part's half-width in rig units where the art is much bulkier or slimmer than the
   defaults (an armoured skirt, a thin staff). Raise it when a wide part's edges end up on its
   neighbour in `bind_preview.png` (a skirt riding on the thigh).
@@ -99,6 +101,10 @@ python scripts/cut_parts.py cut --image knight.png --joints knight_joints.json -
   any joint that opens while moving and exits 1; move that joint's mark onto the joint centre and cut
   again.
 
+The same command exits 1 on a part that is broken on its own: missing, with a hole along its bone or
+in loose pieces. A limb lying over the body looks whole in every frame, so don't rely on the pictures
+for this. See `references/skeleton-qa.md`.
+
 Warnings in the output and in `bind_report.json`:
 
 | Warning | Meaning | Do |
@@ -110,6 +116,9 @@ Warnings in the output and in `bind_report.json`:
 | `foot is N units` | heel and toe marks are far off | re-mark them on the sole |
 | `an_n is N units above the sole` | the ankle mark is too low or too high for the rig's foot | move it as the message says, or the foot sinks or floats |
 | `gap: clip: joint N%` | that joint shows through while moving | re-mark it on the joint centre |
+| `gap: clip: floating frame N` | a piece of art moves apart from the body | find which part owns it in `bind_preview.png`, then fix the marks or `_radius` |
+| `gap: clip: bones frame N` | a bone has nothing drawn along it there | a part is missing or too short |
+| `part: name: ...` | that part image is broken on its own | the message says how; cut again, or redraw `parts/<name>.png` |
 
 ## 4. Generate as usual
 

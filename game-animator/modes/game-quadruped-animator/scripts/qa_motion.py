@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sprite_anim.integrity import frame_problems
 from sprite_anim.rig import LEGS, LENGTHS, GAITS, ACTIONS
 
 CHECKS = (
@@ -22,6 +23,8 @@ CHECKS = (
     "limits",
     "tail",
     "gait",
+    "float",
+    "bones",
     "bounds",
 )
 
@@ -76,6 +79,14 @@ def run(root):
             flag("structure", 0, "joint count mismatch")
         for i in np.flatnonzero(~np.isfinite(joints).all(axis=(1, 2))):
             flag("structure", int(i), "non-finite joint position")
+        px, py = doc["pivot"]
+        skeleton = {j: [[px + x, py - y] for x, y in track] for j, track in tr["joints"].items()}
+        bones = [bone.split("->") for bone in LENGTHS]
+        floating, empty = frame_problems(frames, unit, skeleton, bones)
+        for check, found in (("float", floating), ("bones", empty)):
+            for i, messages in found.items():
+                for message in messages:
+                    flag(check, i, message)
         deltas = [rms(a, b) for a, b in zip(joints, joints[1:])]
         typical = float(np.mean(deltas))
         seam = rms(joints[-1], joints[0])

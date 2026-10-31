@@ -15,10 +15,13 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim import export  # noqa: E402
+from sprite_anim.art import Canvas  # noqa: E402
 from sprite_anim.rig_data import JointRecorder  # noqa: E402
 from sprite_anim.constraints import frame_metrics  # noqa: E402
 from sprite_anim.fx import build_fx  # noqa: E402
 from sprite_anim.motions import SEAMS, build_clips  # noqa: E402
+from sprite_anim.integrity import HUMANOID_BONES  # noqa: E402
+from sprite_anim.part_check import check_parts  # noqa: E402
 from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_time, to_u8  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
 
@@ -35,7 +38,7 @@ def parse_overrides(text):
     return out
 
 
-def rig_trace(clip, n, fps, art, unit_px):
+def rig_trace(clip, n, fps, art, unit_px, size):
     """Per-frame joint positions (in output pixels) for the QA pass."""
     body = art.body
     recorder = JointRecorder(TRACE_JOINTS, unit_px)
@@ -43,17 +46,27 @@ def rig_trace(clip, n, fps, art, unit_px):
     metrics = []
     feet = {"n": dict(heel=[], ball=[]), "f": dict(heel=[], ball=[])}
     contacts = {"n": [], "f": []}
+    # Where each joint lands in the frame, squash included, for the bone-coverage check.
+    skeleton = {j: [] for bone in HUMANOID_BONES for j in bone}
+    smear = []
+    cv = Canvas(size, 1, unit_px, GROUND_FRAC, 1, False, (0, 0, 0))
     for i in range(n):
         t = frame_time(clip, i, n, fps)
-        sk = solve(full_pose(clip.sample(t)), body)
+        pose = full_pose(clip.sample(t))
+        sk = solve(pose, body)
         recorder.append(sk)
+        cv.set_squash(pose["squash"], 0.0)
+        for j, track in skeleton.items():
+            track.append([round(v, 2) for v in cv.T(sk[j])])
+        smear.append(pose["smear"] > 0.02)
         metrics.append(frame_metrics(sk, body, art.weapon_span(sk)))
         c = clip.contacts(t)
         for s in "nf":
             for key, pt in (("heel", heel_world(sk, s)), ("ball", toe_world(sk, s))):
                 feet[s][key].append([round(pt[0] * unit_px, 3), round(pt[1] * unit_px, 3)])
             contacts[s].append(bool(c.get(s, False)))
-    return dict(joints=tr, feet=feet, contacts=contacts, metrics=metrics, frame_dt=clip.duration / (n if clip.loop else n - 1))
+    return dict(joints=tr, skeleton=skeleton, smear=smear, feet=feet, contacts=contacts, metrics=metrics,
+                frame_dt=clip.duration / (n if clip.loop else n - 1))
 
 
 def main():
@@ -121,7 +134,7 @@ def main():
             next=c.next if not c.loop else None, prev=c.prev,
             chain_frame=int(round(c.chain_at / step)) if c.chain_at else None,
             tags=sorted(c.tags))
-        traces[nm] = rig_trace(c, n, cfps, r.art, unit_px)
+        traces[nm] = rig_trace(c, n, cfps, r.art, unit_px, size)
         print(f"[clip] {nm:<14} {n:>3}f @ {cfps}fps {'loop' if c.loop else 'once'}")
 
     for nm in names:
@@ -165,7 +178,8 @@ def main():
             if pair[0] in names and pair[1] in names and pair[0] != pair[1] and pair not in seams:
                 seams.append(pair)
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
-        json.dump(dict(traces=traces, seams=seams,
+        json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
+                       part_problems=check_parts(spec, r.art.body) if spec.get("parts") else [],
                        unit_px=unit_px, speeds={n: clips[n].speed * unit_px for n in names}), fh)
 
     export.preview_html(root, os.path.join(SKILL_ROOT, "assets", "preview_template.html"),

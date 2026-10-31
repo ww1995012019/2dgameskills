@@ -16,10 +16,12 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim import export  # noqa: E402
+from sprite_anim.art import Canvas  # noqa: E402
 from sprite_anim.rig_data import JointRecorder  # noqa: E402
 from sprite_anim.constraints import frame_metrics  # noqa: E402
 from sprite_anim.fx import build_fx  # noqa: E402
 from sprite_anim.motions import AIMS_9, DEFAULT_COMBOS, SEAMS, aim_tag, build_clips  # noqa: E402
+from sprite_anim.integrity import HUMANOID_BONES  # noqa: E402
 from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_time, to_u8  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
 from sprite_anim.weapons import WEAPONS  # noqa: E402
@@ -37,7 +39,7 @@ def parse_overrides(text):
     return out
 
 
-def trace_clip(clip, n, fps, art, unit_px, rest_waist, pixel):
+def trace_clip(clip, n, fps, art, unit_px, rest_waist, pixel, size):
     """Per-frame data the game needs (anchors, muzzle) and the QA pass reads (hands, feet)."""
     feet = {"n": dict(heel=[], ball=[]), "f": dict(heel=[], ball=[])}
     contacts = {"n": [], "f": []}
@@ -46,11 +48,19 @@ def trace_clip(clip, n, fps, art, unit_px, rest_waist, pixel):
     joints = recorder.joints
     art.active = clip.weapon or art.spec["weapons"][0]
     round_px = (lambda v: int(round(v))) if pixel else (lambda v: round(v, 2))
+    # Where each joint lands in the frame, squash included, for the bone-coverage check.
+    skeleton = {j: [] for bone in HUMANOID_BONES for j in bone}
+    smear = []
+    cv = Canvas(size, 1, unit_px, GROUND_FRAC, 1, False, (0, 0, 0))
     for i in range(n):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t))
         sk = solve(pose, art.body)
         recorder.append(sk)
+        cv.set_squash(pose["squash"], 0.0)
+        for j, track in skeleton.items():
+            track.append([round(v, 2) for v in cv.T(sk[j])])
+        smear.append(pose["smear"] > 0.02)
         metrics.append(frame_metrics(sk, art.body, art.weapon_span(sk)))
         c = clip.contacts(t)
         for s in "nf":
@@ -65,7 +75,7 @@ def trace_clip(clip, n, fps, art, unit_px, rest_waist, pixel):
         flash.append(pose["flash"])
     step = clip.duration / n if clip.loop else clip.duration / (n - 1)
     shots = sorted(int(round(t / step)) for t, e in clip.events if e == "shot")
-    return dict(joints=joints, feet=feet, contacts=contacts, gaps=gaps, flash=flash, shots=shots, metrics=metrics, frame_dt=step), anchors, muzzle
+    return dict(joints=joints, skeleton=skeleton, smear=smear, feet=feet, contacts=contacts, gaps=gaps, flash=flash, shots=shots, metrics=metrics, frame_dt=step), anchors, muzzle
 
 
 def main():
@@ -136,7 +146,7 @@ def main():
             export.write_frames(root, nm, frames)
         sheets[nm] = export.write_sheet(root, nm, frames, size)
         step = c.duration / n if c.loop else c.duration / (n - 1)
-        trace, anchors, muzzle = trace_clip(c, n, cfps, r.art, unit_px, rest_waist, pixel)
+        trace, anchors, muzzle = trace_clip(c, n, cfps, r.art, unit_px, rest_waist, pixel, size)
         m = dict(fps=cfps, loop=c.loop, duration=round(c.duration, 4), speed_px_s=round(c.speed * unit_px, 2),
                  events=[dict(frame=min(n - 1, int(round(t / step))), name=e) for t, e in c.events],
                  next=c.next if not c.loop else None, tags=sorted(c.tags), layer=c.layer)
@@ -182,7 +192,7 @@ def main():
             export.write_sheet(os.path.join(root, "fx"), k, v["frames"], size)
 
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
-        json.dump(dict(traces=traces, seams=[s for s in SEAMS if s[0] in names and s[1] in names],
+        json.dump(dict(traces=traces, bones=HUMANOID_BONES, seams=[s for s in SEAMS if s[0] in names and s[1] in names],
                        unit_px=unit_px, speeds={n: clips[n].speed * unit_px for n in names}), fh)
 
     export.preview_html(root, os.path.join(SKILL_ROOT, "assets", "preview_template.html"),

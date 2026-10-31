@@ -22,6 +22,8 @@ by a zero-test run; missing required directions or trace data is an error.
 - **limits:** legs remain 18+18 units, arms 14+14 units, the blade remains 23 units, and foot heights cannot penetrate the ground.
   IK fails generation for unreachable targets rather than stretching bones. This is not a general
   mesh/weapon collision solver; it does not prove that every limb overlap is visually correct.
+- **float, bones:** art cut off from the body, or a bone with nothing drawn along it. Soft foot
+  shadows are below the solid-art alpha. See `skeleton-qa.md`.
 - **bounds:** nonzero alpha on the cell edge fails. All directions share the same feet pivot.
 - **transitions:** attack/hurt end poses must meet idle within 10% of standing height. Death stays
   down until revived; gait switches preserve phase instead of using a fixed last-to-first handover.

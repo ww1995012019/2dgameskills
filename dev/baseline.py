@@ -26,10 +26,11 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASELINE = os.path.join(HERE, "baseline.json")
-STATUS = ("integrity", "tail", "gait", "structure", "direction", "phase", "hold", "seam", "spike", "slide", "jitter", "grip", "cadence", "limits", "clip", "bounds")
+STATUS = ("integrity", "tail", "gait", "structure", "direction", "phase", "hold", "seam", "spike", "slide", "jitter", "grip", "cadence", "limits", "clip", "float", "bones", "bounds")
 NUMBERS = ("tail_length_error", "seam_ratio", "joint_seam_ratio", "joint_seam_height", "joint_gait_seam_ratio", "spike_ratio", "slide_px", "hover_px", "foot_wobble_px", "excess_deg",
            "bone_err", "weapon_head", "weapon_ground", "body_ground", "grip_px", "shots")
-RANK = {"PASS": 0, "WARN": 1, "FAIL": 2}
+# n/a ranks below PASS so a check that stops running counts as a regression, not as no change.
+RANK = {"PASS": 0, "n/a": 1, "WARN": 1, "FAIL": 2}
 
 
 def pixels_hash(paths):

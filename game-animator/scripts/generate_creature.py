@@ -80,7 +80,8 @@ def main():
     (out / "animations.json").write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
     (out / "rig_trace.json").write_text(json.dumps({"bones": rig.bones, "wing_pairs": rig.wing_pairs,
                                                     "motion": {"period": rig.period, "bob": rig.bob, "pitch": rig.pitch},
-                                                    "unit_px": renderer.unit, "clips": traces}, ensure_ascii=False), encoding="utf-8")
+                                                    "unit_px": renderer.unit, "pivot": renderer.pivot, "part_problems": renderer.part_problems(),
+                                                    "clips": traces}, ensure_ascii=False), encoding="utf-8")
     export.texturepacker_json(str(out), sprites, refs, pages, a.size, pivot)
     export.godot_tres(str(out), doc)
     export.cocos_plist(str(out), doc)

@@ -14,9 +14,10 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sprite_anim.integrity import frame_problems
 from sprite_anim.topdown import DIRECTIONS, LOOPS, BONES
 
-CHECKS = ("structure", "direction", "phase", "hold", "seam", "slide", "limits", "bounds")
+CHECKS = ("structure", "direction", "phase", "hold", "seam", "slide", "limits", "float", "bones", "bounds")
 
 
 def distance(a, b):
@@ -74,6 +75,13 @@ def run(root):
         joints = np.stack([tr["joints"][j] for j in sorted(tr["joints"])], axis=1)
         if len(joints) != n:
             flag("structure", 0, "joint frame count mismatch")
+        px, py = doc["pivot"]
+        skeleton = {j: [[px + x, py + y] for x, y in track] for j, track in tr["joints"].items()}
+        floating, empty = frame_problems(frames, trace["unit_px"], skeleton, BONES)
+        for check, found in (("float", floating), ("bones", empty)):
+            for i, messages in found.items():
+                for message in messages:
+                    flag(check, i, message)
         if c["loop"] and len(joints) > 2:
             step = np.mean([distance(a, b) for a, b in zip(joints, joints[1:])])
             ratio = distance(joints[-1], joints[0]) / max(float(step), height * 0.002)

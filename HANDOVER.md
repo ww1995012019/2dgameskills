@@ -1,5 +1,49 @@
 # 交接文档
 
+## 骨骼完整性校验（本地工作，未提交）
+
+用户发现角色骨骼丢了还能通过验证。复现用的是 `Desktop/tstgame/swordsman-source/rig-fixed`，QA 原本全绿。
+
+**盲区：** `cut_parts check` 只在关节点取小圆，骨段中段不查；`rig_trace` 只记 9 个关节；缺部件时 `Cutout.draw`
+直接跳过，`character-spec.md` 还写着可以省略；`qa_creature` 只查数字。只沿骨线看合成帧也不够：剑客坏掉的上臂
+逐帧覆盖率是 100%，洞被躯干盖住了。
+
+**切块 bug（都在 `cut_parts.py`，已修，有回归测试）：**
+- 部件完全叠在别的部件上时没有自己的调色板，`cds` 是 `inf`，任何邻居都能按颜色抢走它的像素，肢体只剩两个关节圆头。
+  `cutout_demo` 也中招（上臂中段缺 46%），示例已重新生成
+- 武器切块向后延长 28%，长剑会把袖子和护腕切进来，碎片跟着剑转，就是用户截图里飘着的那块。现在只保留和剑身相连的部分（握剑的手可以隔开）
+- 部件转正时超出画布被裁掉，长剑被截短。现在所有部件先加边距再旋转
+
+**新增：** `integrity.py`（五个模式共用）、`part_check.py`、QA 的 `float`/`bones`/`parts`、`references/skeleton-qa.md`、
+`dev/tests/test_skeleton_integrity.py`。`weapon` 部件新增 `length` 字段供长度检查。缺部件现在是 FAIL。
+
+**从 `tstgame/2dgameskills` 的本地改动移植：** 部件 `scale`、`_head_polygon`（用户的 `rig-gun` 和机甲在用）。
+那份副本的预览模板改动没有移植。
+
+**真实角色：** 两版剑客旧部件现在都不通过；机甲 4 版通过。用修好的工具重切（临时目录，没动 `tstgame`）：机甲通过，
+剑客报 `arm_f_lo` 有 6% 孤块（前臂里混入的头发），`_radius.arm_f_lo` 设 2.4 后通过。整套 QA 的 `attack_2`、`attack_3`
+剑挡脸 FAIL 是修改前就有的，没动。
+
+**已重出：** 用户确认后，新产物写到 `tstgame/swordsman-source/rig-v2`（`joints-v2.json`）和 `tstgame/output/crystal-swordsman-v2`，旧版都保留。
+29 个动作 `float`/`bones`/`parts` 全过，试玩页 Q、E 实测可触发且控制台无报错。用户的预览补丁脚本依赖 `tstgame` 那份预览模板，本仓库模板缺注入点，`assert` 会失败，所以这次用的是 `tstgame` 的模板。
+
+**第二个真实角色（红衣枪客，`xly/spear-maiden-source`，产物 `xly/spear-maiden`）：** GPT 生图，Q 版比例、长枪、握枪手在远侧。
+生图工具带参考图时把上传的模板当结果存了下来，要看文件确认；提前返回时页面还在生成，等它结束再发。
+暴露的工具 bug 已修：切块武器的取景、落地约束和碰撞用了同名程序武器的固定长度，长枪枪头出画（4 个 bounds FAIL）。现在读 `parts.weapon.length`。
+`crystal-swordsman-v2` 是这项修复之前生成的，QA 没有裁切问题，但重新生成后取景和落地约束可能有变化。
+枪尾被身体隔开，切块时进了腿部件，属于已知盲区，所以用 `reference_clean.png` 擦掉了，动作里枪身向后只到裙边。
+背后残留一小片红金袖口，观感问题，需复核。`attack_3` 枪挡脸 FAIL 没动。角色因长枪被缩到 0.706。
+
+**验证：** Windows 本地 153 项单元测试通过（9 项因 Playwright、Godot 缺失跳过，2 项为预期失败）；引擎实测没跑。 26 套全量回归 0 FAIL、0 回退；`cutout_demo-hd` 仍有 1 个已知 `idle_look` WARN。
+`--strict` 的变化只有 `cutout_demo` 两套和 `ninja` 的 `wall_slide`；`ninja` 用 HEAD 重新生成后逐帧相同，是基准里已有的跨平台差异。
+基准已 `--update`。
+
+**一项旧测试的前提改了：** “腰标高 16px 时脖子开裂”原来是靠调色板 bug 才通过的（躯干被抢光像素），修好后 16px 不再露缝，
+要到 32px 才会。逐项关闭切块改动确认过是这个原因。现在 32px 是正常测试，16px 写成 `expectedFailure` 记录缺口。
+
+**没解决：** 16px 级别的铰链错位查不出；连在部件上的异物（比如没断开的头发）查不出；手、脚没有单根骨可走，只查是否为空、枢轴和孤块；
+射击的 fire/action 动作不判悬浮，有 `expectedFailure` 测试记录。用户已有产物要重切重出才会变好。
+
 ## 统一入口与自定义动作（本地工作）
 
 - 横版预览按源帧尺寸调整高清角色显示比例；试玩页可选择任意非内置名称的自定义动作，

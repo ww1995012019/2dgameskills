@@ -31,18 +31,11 @@
   "hip_w": 2.201
  },
  "parts": {
-  "hand_f": {
-   "image": "parts/hand_f.png",
-   "pivot": [
-    20.26,
-    12.34
-   ]
-  },
   "leg_f_up": {
    "image": "parts/leg_f_up.png",
    "pivot": [
-    23.07,
-    16.18
+    20.07,
+    15.18
    ]
   },
   "leg_f_lo": {
@@ -62,8 +55,8 @@
   "leg_n_up": {
    "image": "parts/leg_n_up.png",
    "pivot": [
-    20.78,
-    9.18
+    17.78,
+    16.18
    ]
   },
   "leg_n_lo": {
@@ -83,7 +76,7 @@
   "pelvis": {
    "image": "parts/pelvis.png",
    "pivot": [
-    24.0,
+    34.0,
     51.18
    ]
   },
@@ -106,7 +99,8 @@
    "pivot": [
     22.77,
     132.4
-   ]
+   ],
+   "length": 47.0
   },
   "arm_n_up": {
    "image": "parts/arm_n_up.png",
@@ -118,8 +112,8 @@
   "arm_n_lo": {
    "image": "parts/arm_n_lo.png",
    "pivot": [
-    17.95,
-    13.65
+    15.95,
+    11.65
    ]
   },
   "hand_n": {
@@ -139,8 +133,15 @@
   "arm_f_lo": {
    "image": "parts/arm_f_lo.png",
    "pivot": [
-    17.95,
-    13.65
+    15.95,
+    11.65
+   ]
+  },
+  "hand_f": {
+   "image": "parts/hand_f.png",
+   "pivot": [
+    13.98,
+    12.0
    ]
   }
  }

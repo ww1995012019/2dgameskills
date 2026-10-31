@@ -2,21 +2,20 @@
  "px_per_unit": 2.695,
  "parts": {
   "arm_f_up": {
-   "coverage": 0.28,
+   "coverage": 0.23,
    "source": "near limb, darkened"
   },
   "arm_f_lo": {
-   "coverage": 0.12,
+   "coverage": 0.15,
    "source": "near limb, darkened"
   },
   "hand_f": {
-   "coverage": 0.79,
-   "filled_px": 229,
-   "angle": 10.0
+   "coverage": 0.43,
+   "source": "near limb, darkened"
   },
   "leg_f_up": {
-   "coverage": 0.65,
-   "filled_px": 762,
+   "coverage": 0.67,
+   "filled_px": 757,
    "angle": -1.6
   },
   "leg_f_lo": {
@@ -24,12 +23,12 @@
    "angle": 24.0
   },
   "foot_f": {
-   "coverage": 1.63,
+   "coverage": 1.64,
    "angle": 0.0
   },
   "leg_n_up": {
    "coverage": 0.74,
-   "filled_px": 619,
+   "filled_px": 637,
    "angle": -24.2
   },
   "leg_n_lo": {
@@ -41,28 +40,29 @@
    "angle": 0.0
   },
   "pelvis": {
-   "coverage": 0.15,
-   "filled_px": 1905,
+   "coverage": 0.5,
+   "filled_px": 1526,
    "angle": 0.0
   },
   "torso": {
-   "coverage": 1.0,
+   "coverage": 0.79,
+   "filled_px": 808,
    "angle": 0.0
   },
   "head": {
-   "coverage": 1.06,
+   "coverage": 1.05,
    "angle": 0.0
   },
   "weapon": {
-   "coverage": 1.08,
+   "coverage": 1.09,
    "angle": 70.0
   },
   "arm_n_up": {
-   "coverage": 0.52,
+   "coverage": 0.98,
    "angle": -30.0
   },
   "arm_n_lo": {
-   "coverage": 1.32,
+   "coverage": 1.24,
    "angle": -48.0
   },
   "hand_n": {
@@ -71,12 +71,14 @@
   }
  },
  "warnings": [
-  "arm_f_up: only 28% visible, rebuilt from arm_n_up; better art would help",
-  "arm_f_lo: only 12% visible, rebuilt from arm_n_lo; better art would help",
-  "hand_f: 229 hidden pixels filled from its own colours; check bind_preview.png",
-  "leg_f_up: 762 hidden pixels filled from its own colours; check bind_preview.png",
-  "leg_n_up: 619 hidden pixels filled from its own colours; check bind_preview.png",
-  "pelvis: 1905 hidden pixels filled from its own colours; check bind_preview.png"
+  "arm_f_up: only 23% visible, rebuilt from arm_n_up; better art would help",
+  "arm_f_lo: only 15% visible, rebuilt from arm_n_lo; better art would help",
+  "hand_f: only 43% visible, rebuilt from hand_n; better art would help",
+  "leg_f_up: 757 hidden pixels filled from its own colours; check bind_preview.png",
+  "leg_n_up: 637 hidden pixels filled from its own colours; check bind_preview.png",
+  "pelvis: 1526 hidden pixels filled from its own colours; check bind_preview.png",
+  "torso: 808 hidden pixels filled from its own colours; check bind_preview.png"
  ],
- "gaps": {}
+ "gaps": {},
+ "part_problems": []
 }

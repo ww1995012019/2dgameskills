@@ -5,8 +5,13 @@ pixels_per_unit relates the source drawing to rig units. Parts are composited in
 """
 import math
 from pathlib import Path
+import sys
 
+import numpy as np
 from PIL import Image, ImageDraw
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "modes/game-sprite-animator/scripts"))
+from sprite_anim.integrity import PART_GAP_SHARE, SOLID, islands, strip_gap
 
 
 def _positive(value, name):
@@ -56,6 +61,26 @@ class CreatureRenderer:
             else:
                 width = _positive(part.get("width", 3), f"parts.{name}.width")
                 self.parts[name] = (part.get("color", "#b5ccd6"), width)
+
+    def part_problems(self):
+        """PNG parts that would leave their bone bare or float: the bone is walked along +x from
+        the pivot through the part's own image, as a frame can't see a part under another."""
+        out = []
+        for name, part in self.parts.items():
+            if len(part) == 2:
+                continue
+            bitmap, pivot, source_unit = part
+            solid = np.asarray(bitmap)[..., 3] > SOLID
+            if not solid.any():
+                out.append(f"{name}: image is empty")
+                continue
+            gap = strip_gap(solid, pivot, (1.0, 0.0), self.rig.bones[name]["length"] * source_unit, 1.2 * source_unit)
+            if gap > PART_GAP_SHARE:
+                out.append(f"{name}: {gap:.0%} of the bone has no art in its own image")
+            loose = islands(solid)
+            if loose:
+                out.append(f"{name}: {len(loose)} piece(s) cut off from the part ({loose[0]:.0%} of it)")
+        return out
 
     def render(self, pose):
         canvas = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))

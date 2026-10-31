@@ -17,6 +17,9 @@ sprites from anywhere: `python scripts/qa_motion.py path/to/frames --loop`.
 | transitions | Pose jump at a clip hand-over | Clips that don't share a seam pose | Start the next clip from the pose the previous ends on |
 | `limits` | Joints asked past their range, bones changing length, knees flipping direction | A pose beyond anatomy. The rig eases it into the limit, so a large excess means the pose isn't what was authored | Re-pose it. Limits are in `sprite_anim/constraints.py` |
 | `clip` | Weapon held over the face, weapon or body through the ground | Reach or angle wrong for that pose | Move the pose. Crossing the face during a swing is fine; holding there isn't |
+| `float` | Art cut off from the body | A scrap of another part inside a part image, or a broken part | Find it in `bind_preview.png` and cut again. `references/skeleton-qa.md` has the thresholds |
+| `bones` | A bone with nothing drawn along it | A part missing or too short | As above |
+| `parts` | Cut-out part images on their own, once per set | Part missing, hole along its bone, loose pieces, pivot off the art | The message names the part. A failure here breaks every clip |
 | `bounds` | Art cut off by the frame edge | Art wider than the frame | The generator auto-fits the character to its widest pose and prints `[fit]`. This fires only for what fit can't see, mainly dust or bake-time cloth |
 
 Attacks allow a higher `spike`: a strike is supposed to accelerate hard, and the smear carries it.

@@ -15,6 +15,9 @@ python scripts/generate_creature.py --config assets/creatures/flight_example.jso
 python scripts/qa_creature.py out/flight
 ```
 
+`qa_creature.py` also fails art floating free of the body, a bone with nothing drawn along it and a
+PNG part with a hole along its bone or loose pieces: see `modes/game-sprite-animator/references/skeleton-qa.md`.
+
 `--out` must be a new or empty directory. Open `preview.html` to play and switch clips; this preview
 does not simulate game movement or collision. The generator emits frames, sheets, an atlas and
 metadata, plus Godot, Cocos and web files. These new-mode files have structural tests only; they have
