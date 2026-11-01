@@ -30,9 +30,16 @@ cell: the outside of a bend must be one smooth curve, with no step, nub, square 
 forward/backward extremes. The upper row is the art; the lower row adds the shoulder seats and
 upper-arm bones (near cyan, far orange). Inspect both together: a sleeve cap is not an anatomical
 joint, and a joint can be numerically valid while the arm appears to emerge from the back.
-For a strict side-view puppet, both shoulder hinges share a projected seat, the far arm stays
-behind the torso, and the near arm stays in front. Check that the far sleeve is occluded at the
+The two arms keep their own measured attachment seats; screen-space coincidence alone is neither
+required nor proof of correct anatomy. The far arm stays behind the torso and the near arm stays
+in front. Check that the far sleeve is occluded at the
 shoulder and reappears naturally below it as the arm moves. The verdict must cover these sheets.
+
+`arms_*.png` extends the crop and coloured paths through both elbows and wrists, including the
+frames where upper arms or hands come closest. Trace each complete shoulder -> elbow -> wrist
+path against the art. A readable shoulder cap is insufficient if the second forearm appears to
+branch out of the first arm. Inspect the complete carried pose, including the weapon arm, before
+marking idle or recovery poses as passing. These sheets are mandatory when both arms are traced.
 
 Check a QA flag the same way before acting on it. Open the frame enlarged and confirm the problem is
 there: a flag is a measurement, and a measurement can be wrong.

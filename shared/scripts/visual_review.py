@@ -11,8 +11,8 @@ skill looks at the sheets itself, against references/visual-review.md.
 Each sheet shows key poses plus every frame QA flagged (red border). The bottom row of each clip is
 the same poses as black silhouettes: a pose that doesn't read in silhouette doesn't read in game.
 joints_00.png enlarges every knee and elbow at its sharpest bends, and the head beside the raised
-arms. shoulders_*.png shows shoulder attachment and occlusion at rest, arm extremes and recovery,
-with art and bone overlays. A verdict has to cover all of them.
+arms. shoulders_*.png shows shoulder attachment and occlusion; arms_*.png follows both complete
+arm paths, including their closest-spacing frames. A verdict has to cover all of them.
 """
 import argparse
 import glob
@@ -168,15 +168,26 @@ def shoulder_frames(sk):
     return sorted(picks)
 
 
-def shoulder_sheets(root, doc, trace, out):
+def shoulder_sheets(root, doc, trace, out, full_arms=False):
     """Shoulder connections need torso context, with both art and joint seats visible."""
     required = ("neck", "waist", "sh_n", "el_n", "sh_f", "el_f")
+    if full_arms:
+        required += ("wr_n", "wr_f")
     rows = []
     for name, tr in trace.get("traces", {}).items():
         sk = tr.get("skeleton", {})
         if doc["clips"].get(name, {}).get("layer") or not all(sk.get(k) for k in required):
             continue
-        rows.append((name, sk, shoulder_frames(sk)))
+        picks = set(shoulder_frames(sk))
+        if full_arms:
+            # Also inspect where hands/upper arms come closest, not only the
+            # poses with the largest motion. Fused arms can be worst at rest.
+            hands = np.asarray(sk["wr_n"]) - np.asarray(sk["wr_f"])
+            upper = ((np.asarray(sk["sh_n"]) - np.asarray(sk["sh_f"])) * 0.25
+                     + (np.asarray(sk["el_n"]) - np.asarray(sk["el_f"])) * 0.75)
+            picks.update((int(np.linalg.norm(hands, axis=1).argmin()),
+                          int(np.linalg.norm(upper, axis=1).argmin())))
+        rows.append((name, sk, sorted(picks)))
     files = []
     for start in range(0, len(rows), PER_SHEET):
         group = rows[start:start + PER_SHEET]
@@ -184,7 +195,8 @@ def shoulder_sheets(root, doc, trace, out):
         d = ImageDraw.Draw(sheet)
         for row, (name, sk, picks) in enumerate(group):
             y = row * (20 + 2 * CELL)
-            d.text((4, y + 2), f"{name}: shoulders, art / bones; near cyan, far orange", fill="white")
+            title = "full arm paths / closest spacing" if full_arms else "shoulders"
+            d.text((4, y + 2), f"{name}: {title}, art / bones; near cyan, far orange", fill="white")
             for col, frame in enumerate(picks):
                 pts = np.array([sk[k][frame] for k in required])
                 pad = max(4, trace.get("unit_px", 1) * 5)
@@ -207,11 +219,17 @@ def shoulder_sheets(root, doc, trace, out):
                 for arm, color in (("n", (40, 235, 225)), ("f", (255, 145, 55))):
                     a, b = point("sh_" + arm), point("el_" + arm)
                     draw.line((*a, *b), fill=color, width=2)
+                    if full_arms:
+                        wrist = point("wr_" + arm)
+                        draw.line((*b, *wrist), fill=color, width=2)
+                        draw.ellipse((wrist[0] - 3, wrist[1] - 3, wrist[0] + 3, wrist[1] + 3), outline=color, width=2)
+                        draw.text((wrist[0] + 3, wrist[1]), arm.upper(), fill=color)
                     radius = 4 if arm == "n" else 2
                     draw.ellipse((a[0] - radius, a[1] - radius, a[0] + radius, a[1] + radius), outline=color, width=2)
                 sheet.alpha_composite(overlay, (col * CELL, y + 20 + CELL))
                 d.text((col * CELL + 4, y + 23), f"#{frame}", fill="white")
-        fn = f"shoulders_{len(files):02d}.png"
+        prefix = "arms" if full_arms else "shoulders"
+        fn = f"{prefix}_{len(files):02d}.png"
         sheet.convert("RGB").save(os.path.join(out, fn))
         files.append(dict(sheet=fn, clips=[name for name, _, _ in group]))
     return files
@@ -263,6 +281,7 @@ def build(root):
         if fn:     # listed like any sheet, so --record refuses a verdict that skips it
             index.append(dict(sheet=fn, clips=["joints"]))
         index.extend(shoulder_sheets(root, doc, trace, out))
+        index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True))
     with open(os.path.join(out, "index.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(sheets=index, skipped=sorted(set(doc["clips"]) - set(names)),
                        qa_flags={n: qa[n]["flags"] for n in names if qa.get(n, {}).get("flags")}), fh, ensure_ascii=False, indent=1)

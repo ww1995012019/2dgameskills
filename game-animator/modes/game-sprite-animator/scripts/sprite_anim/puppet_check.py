@@ -6,7 +6,9 @@
     kink   a cloth chain breaks into straight pieces (a cape in segments)
     crouch the standing leg stays bent in the walk (a stroll on folded knees)
     hole   background shows through the body below the belt (no layer behind a split robe)
-    shoulder  far arm drawn over the torso, or separate side-view shoulder projections
+    shoulder  far arm drawn over the torso
+    arm_chain  an arm layer follows the other arm's joints
+    arm_spacing  separated reference arms collapsed together in idle
 
 Thresholds and how each was set are in references/layered-art.md.
 """
@@ -25,6 +27,7 @@ SMEAR_STEEP = 0.16    # steepest step between neighbours, as a share of the tile
 SMEAR_SHARE = 0.03    # of a layer's filled tiles
 HAND_DETAIL = 0.55    # of the reference's edge energy at the same size
 HAND_FRAMES = 4       # frames sampled over the clip
+ARM_SPACING_SHARE = 0.5  # gross compression relative to readable reference arms, idle only
 FOLD_SHARE = 0.002    # of a layer's drawn mesh area inverted in any frame
 KINK_DEG = 42.0       # between neighbouring segments of a cloth chain
 CORE_END = 0.85       # of the way from waist to hip
@@ -60,6 +63,10 @@ def check_layers(puppet):
     if "arm_far" in names and "torso" in names and names.index("arm_far") > names.index("torso"):
         out.append("shoulder: arm_far is in front of the torso; rebind with side-view depth order")
     for layer in puppet.layers:
+        if layer.name in ("arm_near", "arm_far"):
+            side = "n" if layer.name == "arm_near" else "f"
+            if tuple(getattr(layer, "bones", ()) or ()) != ("sh_" + side, "el_" + side, "wr_" + side):
+                out.append(f"arm_chain: {layer.name} does not follow its own shoulder, elbow and wrist")
         bad, filled = smear_tiles(layer.image)
         if filled and bad / filled > SMEAR_SHARE:
             out.append(f"smear: {layer.name}: {bad} of {filled} tiles are blurred with no drawn edge; make this layer again")
@@ -156,6 +163,14 @@ def inverted(verts, cells):
     return float(-areas[areas < 0].sum() / (np.abs(areas).sum() + 1e-9))
 
 
+def arm_spacing(near, far):
+    """Distal upper-arm centres and wrists: two independent visibility cues."""
+    near, far = np.asarray(near), np.asarray(far)
+    return np.array([np.linalg.norm((near[0] * 0.25 + near[1] * 0.75)
+                                    - (far[0] * 0.25 + far[1] * 0.75)),
+                     np.linalg.norm(near[2] - far[2])])
+
+
 def check_motion(renderer, clip, n, fps):
     """Mesh folds, cloth kinks and the planted knee across one clip."""
     from .art import Canvas
@@ -164,13 +179,25 @@ def check_motion(renderer, clip, n, fps):
     body = renderer.art.body
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     out, worst_fold, worst_kink, planted = [], {}, {}, []
-    if (body.sh_n_at is not None and body.sh_f_at is not None
-            and not np.allclose(body.sh_n_at, body.sh_f_at, atol=0.001, rtol=0)):
-        out.append(f"shoulder: {clip.name}: side-view shoulder seats do not share a projection; rebind the puppet")
+    arms = {layer.name: layer for layer in getattr(puppet, "layers", [])
+            if layer.name in ("arm_near", "arm_far")}
+    reference_spacing = None
+    if clip.name == "idle" and len(arms) == 2:
+        reference_spacing = arm_spacing(arms["arm_near"].rest, arms["arm_far"].rest) / puppet.px_per_unit
+        width = (arms["arm_near"].radius + arms["arm_far"].radius) / puppet.px_per_unit
+        # Judge only spacing that the source actually makes readable. Coincident
+        # joints and intentional source overlaps are not inherently invalid.
+        reference_spacing = np.where(reference_spacing > width, reference_spacing, 0.0)
+    spacing_ratios = []
     for i in range(n):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t))
         sk = solve(pose, body)
+        if reference_spacing is not None:
+            actual = arm_spacing([sk[k] for k in ("sh_n", "el_n", "wr_n")],
+                                 [sk[k] for k in ("sh_f", "el_f", "wr_f")])
+            spacing_ratios.append(np.divide(actual, reference_spacing,
+                                           out=np.ones(2), where=reference_spacing > 0))
         cloth = renderer.cloth_at(clip, t)
         cv.set_squash(pose["squash"], 0.0)
         for layer, verts in puppet.meshes(cv, sk, cloth):
@@ -187,6 +214,11 @@ def check_motion(renderer, clip, n, fps):
                 a = np.subtract(sk["kn_" + side], sk["hip_" + side])
                 b = np.subtract(sk["an_" + side], sk["kn_" + side])
                 planted.append(np.degrees(np.arccos(np.clip(a @ b / (np.hypot(*a) * np.hypot(*b) + 1e-9), -1, 1))))
+    if spacing_ratios:
+        ratios = np.median(spacing_ratios, axis=0)
+        if float(ratios.min()) < ARM_SPACING_SHARE:
+            out.append(f"arm_spacing: {clip.name}: separated reference arms collapse together "
+                       f"(upper arms {ratios[0]:.0%}, wrists {ratios[1]:.0%} of reference); review both carried arms")
     for name, (share, i) in worst_fold.items():
         if share > FOLD_SHARE:
             out.append(f"fold: {name}: {clip.name} frame {i}: {share:.1%} of the mesh turned inside out; the bend is too sharp for this art")

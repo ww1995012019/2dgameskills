@@ -131,7 +131,9 @@ These run in `qa_motion.py` under "broken parts", and any one fails the set:
 | `fold` | mesh creased at a joint | a layer's drawn mesh area turned inside out in any frame | 0.2% |
 | `kink` | cloth reads as segments | angle between neighbouring chain segments | 42 degrees |
 | `hole` | background shows through the body | see-through pixels on the line from waist to hip, as wide as 60% of the waist | 1% in any frame |
-| `shoulder` | far arm appears attached to the back or in front of the torso | projected shoulder seats and layer order | same side-view seat; far arm behind torso |
+| `shoulder` | far arm drawn over the torso | layer order | far arm behind torso |
+| `arm_chain` | an arm follows the other arm's joints | each arm layer's bone path | its own shoulder, elbow, wrist |
+| `arm_spacing` | distinct reference arms collapse together at rest | median distal-upper-arm and wrist spacing relative to reference | at least 50% where reference spacing exceeds sleeve widths |
 | `crouch` | walk on folded legs | mean knee bend in `walk` while the planted foot is ahead of or under the hip | 30 degrees |
 
 `crouch` skips the part of stance with the foot behind the hip, because a knee bends 40 to 50 degrees
@@ -145,12 +147,13 @@ A set that passes has passed these measures only. The art may still be wrong, so
 reporting: open every frame of `review/` at full size and check each row of the table at the top of
 this file by eye. Report it as needing human review in motion.
 
-Shoulder binding is checked separately: the far arm must precede the torso in the layer stack,
-and explicitly measured near/far shoulder seats must share the strict side-view projection.
-The source sleeve caps stay intact and are deformed to that common joint; colour matching never
-changes their depth order. Rebind older layered rigs to obtain these seats and layer order.
-Review the mandatory `shoulders_*.png` sheets as well as the elbow/knee sheets before recording
-a visual verdict. Passing numerical limits does not establish that a shoulder connection looks right.
+Arm binding is checked separately: the far arm must precede the torso in the layer stack and
+each arm must follow its own joint chain. Preserve both measured shoulder seats; do not force
+them to coincide. The complete idle carry comes from both arms and the weapon in the reference.
+`arm_spacing` flags a formerly readable reference pose being compressed in idle; it does not
+establish that every overlap looks natural. Review mandatory `shoulders_*.png` and `arms_*.png`
+sheets as well as elbow/knee sheets before recording a verdict. Passing numerical limits does
+not establish that an arm connection looks right. Rebind older rigs to get the complete carry.
 
 ## How the clips fit a character
 
@@ -170,8 +173,8 @@ character:
 | Floor contact and spins use the character's own body | `build_clips(body=...)` | a big head goes through the floor |
 | An attack key that covers the face takes the smallest turn of arm and weapon that clears it | `motions.py` `clear_face` | a shaft parked across a short-armed figure's face |
 | A stance sinks until the knee stops short of its soft end | `motions.py` `STANCE_REACH` | planted feet creep as the hip moves |
-| Idle keeps the reference's free-arm rest direction, with elbow-safe breathing; shared stance keys use that same pose | `gait.idle`, `motions.py` | the free hand moves across the belly at rest or jumps there on recovery |
-| In strict side view, both shoulder hinges project to the near arm's shoulder seat; the far arm remains behind the torso | `layer_parts.py`, `puppet_check.py` | a rear sleeve cap is treated as a joint on the back, then drawn over the torso |
+| Idle keeps both reference arms and the weapon, with elbow-safe breathing; shared stance keys use that complete pose | `gait.idle`, `motions.py` | adapting only the free arm collapses it against the default weapon arm |
+| Each arm keeps its measured attachment and own joint chain; the far arm remains behind the torso | `layer_parts.py`, `puppet_check.py` | coalesced attachments and upper-arm paths make a forearm look like a branch |
 
 A new fault belongs in this table, as a rule, not in one character's data.
 

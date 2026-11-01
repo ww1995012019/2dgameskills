@@ -44,9 +44,11 @@ tone for each. `ink` is the outline. A dark, slightly saturated ink looks better
 An optional `gait.idle` sets `arm_n` and/or `arm_f` as
 `[upper_arm_rest, upper_arm_sway, elbow_rest, elbow_sway]` in degrees. For example,
 `"gait": {"idle": {"arm_f": [-20, 1.8, 8, 2.6]}}` leaves the free arm behind the body.
-The rest angles also update shared stance keys so attacks and casts recover to the same idle.
+Optional `wep` and nonnegative `wep_sway` set the carried weapon angle and its sway. The rest
+angles also update shared stance keys so attacks and casts recover to the same idle.
 Breathing sway is scaled by `style.bounce` and bounded to keep the authored elbow inside its limits.
-The layered-art binder writes this profile from the reference's free arm. Omitting it retains the
+The layered-art binder writes the complete profile from both reference arms and the weapon.
+Adapting only one arm can compress the two arm paths together. Omitting the profile retains the
 existing default poses. Locomotion profiles such as `gait.walk` remain separate.
 
 ## Custom clips

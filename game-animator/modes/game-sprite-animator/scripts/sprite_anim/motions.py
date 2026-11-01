@@ -191,7 +191,7 @@ def clear_face(clip, body):
 def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=None):
     """style: {'speed': time multiplier > 1 = snappier, 'bounce': amplitude multiplier}.
     gait: {clip: {arm_n, arm_f, wep, wep_sway, bob, stride}} replaces a gait's carried pose, hip bob and stride.
-    gait.idle accepts arm_n/arm_f = [upper rest, upper sway, elbow rest, elbow sway];
+    gait.idle accepts arm_n/arm_f = [upper rest, upper sway, elbow rest, elbow sway], wep and wep_sway;
     its rest angles also set shared stance poses and clip handovers.
     body: the character's own proportions, for rules that fit a clip to them. Without it every clip is
     written for the default body."""
@@ -211,7 +211,15 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
     STANCE = dict(root_y=-3.0, pelvis=4, spine=5, head=-6, arm_n_up=-4, arm_n_lo=30, wep=56,
                   arm_f_up=14, arm_f_lo=26, foot_n_x=8, foot_f_x=-9, foot_f_p=0)
     idle_arms = dict(arm_n=(-4, 1.6, 30, 2.4), arm_f=(14, 1.8, 26, 2.6))
-    for key, values in (gait or {}).get("idle", {}).items():
+    idle_carry = (gait or {}).get("idle", {})
+    for key, values in idle_carry.items():
+        if key in ("wep", "wep_sway"):
+            if (isinstance(values, bool) or not isinstance(values, (int, float))
+                    or not math.isfinite(values) or key == "wep_sway" and values < 0):
+                raise ValueError(f"gait.idle.{key}: expected a finite angle or nonnegative sway")
+            if key == "wep":
+                STANCE["wep"] = values
+            continue
         if (key not in idle_arms or not isinstance(values, (list, tuple)) or len(values) != 4
                 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in values)
                 or values[1] < 0 or values[3] < 0 or not LIMITS["elbow"][0] <= values[2] <= LIMITS["elbow"][1]):
@@ -293,7 +301,7 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
         p["arm_n_lo"] += idle_arms["arm_n"][3] * s(0.26) * bn
         p["arm_f_up"] += idle_arms["arm_f"][1] * s(0.2) * bn
         p["arm_f_lo"] += idle_arms["arm_f"][3] * s(0.3) * bn
-        p["wep"] += 1.4 * s(0.34)
+        p["wep"] += idle_carry.get("wep_sway", 1.4) * s(0.34)
         p["sh"] = 0.25 * s(0.1)
         p["eye"] = blink
         return p

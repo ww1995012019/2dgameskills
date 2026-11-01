@@ -524,10 +524,9 @@ def bind(ref, layers):
                 hip_h=round(ANKLE_UP + GAIT_DROP + (mid + low) / 2 - seat_up, 3),
                 pelvis_len=round(np.hypot(*(waist - hip)) / ppu, 3), chest_len=round(along(head_base)[1], 3), neck_len=0.0,
                 head_size=round(np.hypot(*(head_top - head_base)) / ppu / 30.0, 3), leg_soft=IK_SOFT, foot_wrap=True,
-                # In the required side view the two shoulder hinges project to
-                # the same seat. Separate sleeve-cap centres are not a shoulder
-                # span: using them as joint seats attaches the far arm to the back.
-                sh_n_at=round2(an["shoulder"]), sh_f_at=round2(an["shoulder"]), hip_n_at=[seat_x(ln["hip"]), round(seat_up, 3)], hip_f_at=[seat_x(lf["hip"]), round(seat_up, 3)])
+                # Preserve each measured attachment. Coincident screen-space
+                # shoulders are allowed, but must not be forced onto the art.
+                sh_n_at=round2(an["shoulder"]), sh_f_at=round2(af["shoulder"]), hip_n_at=[seat_x(ln["hip"]), round(seat_up, 3)], hip_f_at=[seat_x(lf["hip"]), round(seat_up, 3)])
 
     joints = dict(hip=hip, waist=waist, neck=neck, head_base=head_base, wr_n=an["wrist"], el_n=an["elbow"])
     def half(name):
@@ -612,12 +611,16 @@ def bind(ref, layers):
     # forward keeps holding it forward. chest_rot of the walk is pelvis 3 + lean 5.
     lean = 8.0
     # Idle's default chest is pelvis 4 + spine 5. Preserve the reference's
-    # free-arm direction there too, rather than pulling it across the belly.
-    gait = dict(idle=dict(arm_f=[round(arm_far_up + 9.0, 2), 1.8, round(arm_far_lo - arm_far_up, 2), 2.6]),
+    # whole carried pose there too. Adapting only the free arm can collapse both
+    # upper arms onto one path while the weapon arm keeps the default stance.
+    gait = dict(idle=dict(arm_n=[round(arm_near_up + 9.0, 2), 2.5 if wep_rest is not None else 1.6,
+                                 round(arm_near_lo - arm_near_up, 2), 1.5 if wep_rest is not None else 2.4],
+                          arm_f=[round(arm_far_up + 9.0, 2), 1.8, round(arm_far_lo - arm_far_up, 2), 2.6]),
                 walk=dict(stride=round(STRIDE * legs, 2), bob=round((mid - low) / 2, 3), arm_n=[round(arm_near_up + lean, 2), 2.5 if wep_rest is not None else 15.0, round(arm_near_lo - arm_near_up, 2), 1.5 if wep_rest is not None else 3.0],
                           arm_f=[round(arm_far_up + lean, 2), 15.0, round(arm_far_lo - arm_far_up, 2), 5.0]))
     if wep_rest is not None:
         gait["walk"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)     # a carried blade stays steady
+        gait["idle"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)
     puppet = dict(px_per_unit=round(float(ppu), 4), joints={k: [round(float(x), 2) for x in v] for k, v in joints.items()},
                   rest_angles={k: round(float(v), 3) for k, v in rest_angles.items()}, skirt_len=round(float(skirt_len / ppu), 3),
                   core_radius=round(core_px / ppu, 3),

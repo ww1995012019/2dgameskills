@@ -76,9 +76,24 @@ class IdleCarriedArm(unittest.TestCase):
         for profile in ({'bob': 1}, {'arm_f': [1, 2, 3]},
                         {'arm_f': [1, -2, 3, 4]}, {'arm_f': [1, 2, -3, 4]},
                         {'arm_f': [1, 2, 169, 4]}, {'arm_f': [1, 2, 3, math.inf]},
-                        {'arm_f': [True, 2, 3, 4]}):
+                        {'arm_f': [True, 2, 3, 4]}, {'wep': math.inf},
+                        {'wep': True}, {'wep_sway': -1}):
             with self.subTest(profile=profile), self.assertRaises(ValueError):
                 build_clips(gait={'idle': profile})
+
+    def test_both_carried_arms_and_weapon_share_action_recovery(self):
+        profile = {'arm_n': [35, 2.5, 44, 1.5], 'arm_f': [-20, 1.8, 8, 2.6],
+                   'wep': 64, 'wep_sway': 0.5}
+        clips = build_clips(gait={'idle': profile})
+        idle = clips['idle']
+        p = idle.sample(0)
+        self.assertGreater(p['arm_n_up'] - p['arm_f_up'], 50)
+        values = [idle.sample(idle.duration * i / 100)['wep'] for i in range(101)]
+        self.assertLessEqual(max(values)-min(values), 1.0+1e-9)
+        for name in ('attack_1', 'cast'):
+            for channel in ('arm_n_up', 'arm_n_lo', 'arm_f_up', 'arm_f_lo', 'wep'):
+                self.assertEqual(clips[name].curve.v[0, CH.index(channel)], p[channel])
+                self.assertEqual(clips[name].curve.v[-1, CH.index(channel)], p[channel])
 
 
 if __name__ == '__main__':
