@@ -39,6 +39,16 @@ Colour keys: `skin hair tunic tunic2 pants boots belt metal accent cape glove ey
 `dust2` for the effect sheets. Shadow and highlight tones are derived with a hue shift, so pick a mid
 tone for each. `ink` is the outline. A dark, slightly saturated ink looks better than pure black.
 
+## Carried arms at rest
+
+An optional `gait.idle` sets `arm_n` and/or `arm_f` as
+`[upper_arm_rest, upper_arm_sway, elbow_rest, elbow_sway]` in degrees. For example,
+`"gait": {"idle": {"arm_f": [-20, 1.8, 8, 2.6]}}` leaves the free arm behind the body.
+The rest angles also update shared stance keys so attacks and casts recover to the same idle.
+Breathing sway is scaled by `style.bounce` and bounded to keep the authored elbow inside its limits.
+The layered-art binder writes this profile from the reference's free arm. Omitting it retains the
+existing default poses. Locomotion profiles such as `gait.walk` remain separate.
+
 ## Custom clips
 
 For a character whose proportions make a built-in keyed action awkward, an optional

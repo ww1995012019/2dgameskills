@@ -75,6 +75,22 @@ result as `hero/layers/<slot>.png`. Use the image tool at hand; otherwise give t
 Skip an optional slot the character doesn't have. Do not reword the prompts: a fix found for one
 character belongs in `layer_slots.py`, for all of them.
 
+For wide sleeves, also use the optional `hand_near_hint.txt` and `hand_far_hint.txt` prompts.
+Edit the finished `arm_near.png` or `arm_far.png` respectively, keeping only the hand at its exact
+canvas position, and save `layers/hand_near_hint.png` or `layers/hand_far_hint.png`. These images
+are landmarks only and are never drawn. They prevent a hanging sleeve tip from being mistaken
+for the wrist; the binder rejects hints that do not overlap their arm.
+
+When two planted shoes are unambiguously visible, leg registration uses their sole positions
+instead of matching pale trousers to a similarly coloured robe. Hidden hip art can be aligned
+to the measured waist and crotch to correct modest redraw drift; this does not fill holes or
+relax the solid-core check.
+
+A tiny arch gap in one sole is treated as part of that footprint; separate shoes or ambiguous
+extra footprints are not merged. For wraparound robes, `cloth_back` holds only the trailing rear
+fabric. Short front panels, belts and front ornaments belong to `torso`, which also retains the
+exposed neck above the collar. Keeping the whole skirt in both layers duplicates it in motion.
+
 ```bash
 python scripts/layer_parts.py bind --image hero.png --layers hero/layers --name Hero --out hero/rig
 python scripts/generate.py --character hero/rig/character.json --preset hd512 --clips walk --no-fx --out hero/build
@@ -115,6 +131,7 @@ These run in `qa_motion.py` under "broken parts", and any one fails the set:
 | `fold` | mesh creased at a joint | a layer's drawn mesh area turned inside out in any frame | 0.2% |
 | `kink` | cloth reads as segments | angle between neighbouring chain segments | 42 degrees |
 | `hole` | background shows through the body | see-through pixels on the line from waist to hip, as wide as 60% of the waist | 1% in any frame |
+| `shoulder` | far arm appears attached to the back or in front of the torso | projected shoulder seats and layer order | same side-view seat; far arm behind torso |
 | `crouch` | walk on folded legs | mean knee bend in `walk` while the planted foot is ahead of or under the hip | 30 degrees |
 
 `crouch` skips the part of stance with the foot behind the hip, because a knee bends 40 to 50 degrees
@@ -127,6 +144,13 @@ cell shows no art whichever way it winds, while counting cells failed legs that 
 A set that passes has passed these measures only. The art may still be wrong, so look before
 reporting: open every frame of `review/` at full size and check each row of the table at the top of
 this file by eye. Report it as needing human review in motion.
+
+Shoulder binding is checked separately: the far arm must precede the torso in the layer stack,
+and explicitly measured near/far shoulder seats must share the strict side-view projection.
+The source sleeve caps stay intact and are deformed to that common joint; colour matching never
+changes their depth order. Rebind older layered rigs to obtain these seats and layer order.
+Review the mandatory `shoulders_*.png` sheets as well as the elbow/knee sheets before recording
+a visual verdict. Passing numerical limits does not establish that a shoulder connection looks right.
 
 ## How the clips fit a character
 
@@ -146,6 +170,8 @@ character:
 | Floor contact and spins use the character's own body | `build_clips(body=...)` | a big head goes through the floor |
 | An attack key that covers the face takes the smallest turn of arm and weapon that clears it | `motions.py` `clear_face` | a shaft parked across a short-armed figure's face |
 | A stance sinks until the knee stops short of its soft end | `motions.py` `STANCE_REACH` | planted feet creep as the hip moves |
+| Idle keeps the reference's free-arm rest direction, with elbow-safe breathing; shared stance keys use that same pose | `gait.idle`, `motions.py` | the free hand moves across the belly at rest or jumps there on recovery |
+| In strict side view, both shoulder hinges project to the near arm's shoulder seat; the far arm remains behind the torso | `layer_parts.py`, `puppet_check.py` | a rear sleeve cap is treated as a joint on the back, then drawn over the torso |
 
 A new fault belongs in this table, as a rule, not in one character's data.
 

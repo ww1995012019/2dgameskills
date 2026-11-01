@@ -83,10 +83,16 @@ def soft_ik(l1, l2, d):
 def two_bone(root, target, l1, l2, bend):
     """Returns (mid, end). bend=+1 keeps the mid joint on the +x side of root->target."""
     dx, dy = target[0] - root[0], target[1] - root[1]
-    d = math.hypot(dx, dy) or 1e-6
+    d = math.hypot(dx, dy)
+    # A coincident target has no direction. Use the rest limb's downward axis
+    # for it and subprecision noise, rather than normalizing a zero vector or
+    # letting tiny sign changes flip the folded limb.
+    if d <= (l1 + l2) * 1e-8:
+        ux, uy = 0.0, -1.0
+    else:
+        ux, uy = dx / d, dy / d
     ds = soft_ik(l1, l2, min(d, l1 + l2 + 30))
-    ds = max(ds, abs(l1 - l2) + 0.1)
-    ux, uy = dx / d, dy / d
+    ds = max(ds, abs(l1 - l2) + min(0.1, l1, l2))
     a = (l1 * l1 - l2 * l2 + ds * ds) / (2 * ds)
     h = math.sqrt(max(l1 * l1 - a * a, 0.0))
     # Normal chosen so that for a leg pointing down, +bend goes forward.
@@ -175,7 +181,11 @@ def solve(pose, b: Body):
     kn_n, an_n, fr_n = leg(hip_n, g("foot_n_x"), g("foot_n_y"), g("foot_n_p"))
     kn_f, an_f, fr_f = leg(hip_f, g("foot_f_x"), g("foot_f_y"), g("foot_f_p"))
 
-    wep_a = ground_clamp(fa_n + g("wep"), wr_n[1], b.weapon_front, b.weapon_back, b.weapon_margin)
+    weapon_input = fa_n + g("wep")
+    contact_angle = pose.get("_weapon_angle") if not g("gun_ik") else None
+    wep_a = ground_clamp(weapon_input if contact_angle is None else contact_angle,
+                         wr_n[1], b.weapon_front, b.weapon_back, b.weapon_margin,
+                         reference=contact_angle)
     gaps = (0.0, 0.0)
     ik = g("gun_ik")
     if ik > 0:
@@ -209,6 +219,7 @@ def solve(pose, b: Body):
         hip_n=hip_n, kn_n=kn_n, an_n=an_n, fr_n=fr_n,
         hip_f=hip_f, kn_f=kn_f, an_f=an_f, fr_f=fr_f,
         wep_a=wep_a, wep_dir=gd, gun_n=gn, hand_gaps=gaps, excess=excess,
+        weapon_input=weapon_input, weapon_pivot_y=wr_n[1],
     )
 
 

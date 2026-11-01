@@ -6,6 +6,7 @@
     kink   a cloth chain breaks into straight pieces (a cape in segments)
     crouch the standing leg stays bent in the walk (a stroll on folded knees)
     hole   background shows through the body below the belt (no layer behind a split robe)
+    shoulder  far arm drawn over the torso, or separate side-view shoulder projections
 
 Thresholds and how each was set are in references/layered-art.md.
 """
@@ -55,6 +56,9 @@ def smear_tiles(rgba):
 
 def check_layers(puppet):
     out = []
+    names = [layer.name for layer in puppet.layers]
+    if "arm_far" in names and "torso" in names and names.index("arm_far") > names.index("torso"):
+        out.append("shoulder: arm_far is in front of the torso; rebind with side-view depth order")
     for layer in puppet.layers:
         bad, filled = smear_tiles(layer.image)
         if filled and bad / filled > SMEAR_SHARE:
@@ -160,6 +164,9 @@ def check_motion(renderer, clip, n, fps):
     body = renderer.art.body
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     out, worst_fold, worst_kink, planted = [], {}, {}, []
+    if (body.sh_n_at is not None and body.sh_f_at is not None
+            and not np.allclose(body.sh_n_at, body.sh_f_at, atol=0.001, rtol=0)):
+        out.append(f"shoulder: {clip.name}: side-view shoulder seats do not share a projection; rebind the puppet")
     for i in range(n):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t))

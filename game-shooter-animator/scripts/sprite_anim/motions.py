@@ -117,8 +117,12 @@ class Gait(Clip):
             x, y = xf - L * s, 0.0
         else:
             s = (ph - d) / (1 - d)
-            m = -L * (1 - d) / d * self.tan
+            m = -L * (1 - d) / d
             x = hermite(xb, m, xf, m, s)
+            # Match stance velocity at both contacts. Shape the swing internally:
+            # this term has zero value and slope at either end, while retaining
+            # the old tan-controlled velocity at mid-swing.
+            x += 4 * m * (self.tan - 1) * s * s * (1 - s) ** 2 * (1 - 2 * s)
             y = self.lift * math.sin(math.pi * s ** self.peak) ** 1.6
         return x, y, float(self.pitch(ph)[0])
 
@@ -193,6 +197,8 @@ class Combo(Clip):
 
     def sample(self, t):
         p = dict(self.lower.sample(t * self.ratio))
+        # A lower-body contact bake does not own the combined weapon pose.
+        p.pop("_weapon_angle", None)
         u = self.upper.sample(t % self.upper.duration if self.upper.loop else min(t, self.upper.duration))
         for c in UPPER_CH:
             p[c] = u[c]

@@ -48,19 +48,102 @@ def ankle_angle(knee, ankle, foot_rot):
     return math.degrees(math.acos(max(-1.0, min(1.0, (shin[0] * toe[0] + shin[1] * toe[1]) / ln))))
 
 
-def ground_clamp(angle, wrist_y, front, back, margin=2.8):
+def ground_clamp(angle, wrist_y, front, back, margin=2.8, reference=None):
     """Rotate a held weapon about the wrist so neither end enters the ground. angle: 0 points down,
     90 forward, -90 back. The allowed cone narrows toward level as the hand nears the floor, so
     a blade rests on the ground instead of sinking into it. Eased like the joint limits."""
+    room = max(wrist_y - margin, 0.0)
+    if reference is not None:
+        # Project onto the connected legal arc nearest the previous orientation.
+        # Choosing by the desired angle's sign would teleport across the floor.
+        angle = reference + (angle - reference + 180) % 360 - 180
+        lo = math.degrees(math.acos(room / front)) if front > room else 0.0
+        hi = 180.0 - math.degrees(math.acos(room / back)) if back > room else 180.0
+        if lo == 0 and hi == 180:
+            return angle
+        arcs = [(lo, hi), (-hi, -lo)]
+        if lo == 0:
+            arcs = [(-hi, hi)]
+        elif hi == 180:
+            arcs = [(lo, 360 - lo)]
+        turn = math.floor(reference / 360)
+        arcs = [(a + 360 * k, b + 360 * k)
+                for a, b in arcs for k in range(turn - 2, turn + 3)]
+        a, b = min(arcs, key=lambda ab: abs(reference - max(ab[0], min(ab[1], reference))))
+        return max(a, min(b, angle))
     a = (angle + 180.0) % 360.0 - 180.0
     side = -1.0 if a < 0 else 1.0
     b = abs(a)
-    room = max(wrist_y - margin, 0.0)
     if front > room:
         b = _lower(b, math.degrees(math.acos(room / front)))
     if back > room:
         b = _upper(b, 180.0 - math.degrees(math.acos(room / back)))
     return side * b
+
+
+def bake_weapon_contacts(clips, body, solve, full_pose, hz=240):
+    """Bake only clips whose old stateless clamp jumps across the forbidden cone.
+
+    Fixed-rate baking keeps random-access rendering, motion blur and QA identical.
+    The grip never moves: a blocked weapon stops, then resumes when there is room.
+    Unaffected clips and gun IK retain their original sampling exactly.
+    """
+    from .mathx import Curve
+
+    if not (body.weapon_front or body.weapon_back):
+        return
+    prepared = []
+    for clip in clips.values():
+        sample = getattr(clip, "_weapon_source", clip.sample)
+        n = max(2, math.ceil(clip.duration * hz))
+        dt = clip.duration / n
+        times = [i * dt for i in range(n + 1)]
+        rows = []
+        for t in times:
+            pose = full_pose(sample(t))
+            if pose.get("gun_ik", 0) > 0:
+                rows = []
+                break
+            sk = solve(pose, body)
+            rows.append((sk["weapon_input"], sk["weapon_pivot_y"], sk["wep_a"]))
+        def delta(a, b):
+            return (a - b + 180) % 360 - 180
+        if not any(a[2] * b[2] < 0 and
+                   abs(delta(b[2], a[2])) > max(1e-5, 2 * abs(delta(b[0], a[0])))
+                   for a, b in zip(rows, rows[1:])):
+            continue
+        previous = rows[0][2]
+        for cycle in range(8 if clip.loop else 1):
+            angles = [previous]
+            for i, (desired, height, _) in enumerate(rows[1:], 1):
+                # Follow authored angular speed; use a bounded catch-up speed
+                # after contact releases instead of snapping to the authored pose.
+                step = max(abs(delta(desired, rows[i - 1][0])), 720 * dt)
+                goal = delta(desired, previous)
+                candidate = previous + max(-step, min(step, goal))
+                previous = ground_clamp(candidate, height, body.weapon_front,
+                                        body.weapon_back, body.weapon_margin,
+                                        reference=previous)
+                angles.append(previous)
+            if not clip.loop or abs(delta(angles[-1], angles[0])) < 1e-5:
+                break
+        if clip.loop:
+            if abs(delta(angles[-1], angles[0])) >= 1e-5:
+                raise ValueError(f"{clip.name}: weapon contact cannot close the loop; lift the grip before crossing the floor")
+            # Keep winding for full rotations, but close numerical endpoint noise.
+            angles[-1] = angles[0] + 360 * round((angles[-1] - angles[0]) / 360)
+        prepared.append((clip, sample, times, angles))
+    # Do not wrap a clip while another clip is still being sampled (combos and
+    # reversed clips may delegate to it).
+    for clip, sample, times, angles in prepared:
+        curve = Curve(times, [[a] for a in angles])
+        def corrected(t, source=sample, curve=curve, clip=clip):
+            p = dict(source(t))
+            at = t % clip.duration if clip.loop else t
+            p["_weapon_angle"] = float(curve(at)[0])
+            return p
+        clip._weapon_source = sample
+        clip.sample = corrected
 
 
 def _lower(v, lo, band=5.0):

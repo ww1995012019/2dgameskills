@@ -13,7 +13,7 @@ across those same seams.
 """
 import math
 
-from .constraints import face_circle, low_points
+from .constraints import LIMITS, face_circle, low_points
 from .mathx import Curve, hermite, lerp, rot
 from .rig import LAG, REST, Body, full_pose, solve
 
@@ -118,8 +118,12 @@ class Gait(Clip):
             x, y = xf - L * s, 0.0
         else:
             s = (ph - d) / (1 - d)
-            m = -L * (1 - d) / d * self.tan
+            m = -L * (1 - d) / d
             x = hermite(xb, m, xf, m, s)
+            # Match stance velocity at both contacts. Shape the swing internally:
+            # this term has zero value and slope at either end, while retaining
+            # the old tan-controlled velocity at mid-swing.
+            x += 4 * m * (self.tan - 1) * s * s * (1 - s) ** 2 * (1 - 2 * s)
             y = self.lift * math.sin(math.pi * s ** self.peak) ** 1.6
         return x, y, float(self.pitch(ph)[0])
 
@@ -187,6 +191,8 @@ def clear_face(clip, body):
 def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=None):
     """style: {'speed': time multiplier > 1 = snappier, 'bounce': amplitude multiplier}.
     gait: {clip: {arm_n, arm_f, wep, wep_sway, bob, stride}} replaces a gait's carried pose, hip bob and stride.
+    gait.idle accepts arm_n/arm_f = [upper rest, upper sway, elbow rest, elbow sway];
+    its rest angles also set shared stance poses and clip handovers.
     body: the character's own proportions, for rules that fit a clip to them. Without it every clip is
     written for the default body."""
     fitted = body is not None
@@ -204,6 +210,18 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
     # ---- shared seam poses ------------------------------------------------------------
     STANCE = dict(root_y=-3.0, pelvis=4, spine=5, head=-6, arm_n_up=-4, arm_n_lo=30, wep=56,
                   arm_f_up=14, arm_f_lo=26, foot_n_x=8, foot_f_x=-9, foot_f_p=0)
+    idle_arms = dict(arm_n=(-4, 1.6, 30, 2.4), arm_f=(14, 1.8, 26, 2.6))
+    for key, values in (gait or {}).get("idle", {}).items():
+        if (key not in idle_arms or not isinstance(values, (list, tuple)) or len(values) != 4
+                or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in values)
+                or values[1] < 0 or values[3] < 0 or not LIMITS["elbow"][0] <= values[2] <= LIMITS["elbow"][1]):
+            raise ValueError(f"gait.idle.{key}: expected finite [upper rest, sway >= 0, legal elbow rest, sway >= 0]")
+        upper, upper_sway, elbow, elbow_sway = values
+        # Breathing must not drive an almost straight reference elbow backward.
+        margin = min(elbow - LIMITS["elbow"][0], LIMITS["elbow"][1] - elbow)
+        elbow_sway = min(elbow_sway, 0.9 * margin / max(abs(bn), 1e-9))
+        idle_arms[key] = (upper, upper_sway, elbow, elbow_sway)
+        STANCE[key + "_up"], STANCE[key + "_lo"] = upper, elbow
     # A stance is written for the default leg. On a longer one the same height leaves the knees locked,
     # where the leg's soft reach shifts a planted foot as the hip moves: sink until they are not.
     sink = 0.0
@@ -271,10 +289,10 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
         p["spine"] += 1.1 * s(0.08) * bn
         p["pelvis"] += 0.3 * s(0.2)
         p["head"] += -0.9 * s(0.2)
-        p["arm_n_up"] += 1.6 * s(0.16) * bn
-        p["arm_n_lo"] += 2.4 * s(0.26) * bn
-        p["arm_f_up"] += 1.8 * s(0.2) * bn
-        p["arm_f_lo"] += 2.6 * s(0.3) * bn
+        p["arm_n_up"] += idle_arms["arm_n"][1] * s(0.16) * bn
+        p["arm_n_lo"] += idle_arms["arm_n"][3] * s(0.26) * bn
+        p["arm_f_up"] += idle_arms["arm_f"][1] * s(0.2) * bn
+        p["arm_f_lo"] += idle_arms["arm_f"][3] * s(0.3) * bn
         p["wep"] += 1.4 * s(0.34)
         p["sh"] = 0.25 * s(0.1)
         p["eye"] = blink
@@ -285,7 +303,8 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
 
     def breathe(t, p):
         p["spine"] += 0.5 * math.sin(TAU * t / (2.5 * tm))
-        p["arm_f_lo"] += 0.8 * math.sin(TAU * t / (1.25 * tm))
+        margin = max(0.0, min(p["arm_f_lo"] - LIMITS["elbow"][0], LIMITS["elbow"][1] - p["arm_f_lo"]))
+        p["arm_f_lo"] += min(0.8, 0.9 * margin) * math.sin(TAU * t / (1.25 * tm))
 
     idle_look = Keyed("idle_look", keys(
         (0, idle0), (0.35, P(STANCE, head=-16, spine=2, arm_f_up=22, root_y=-2.4 - sink)),
@@ -535,6 +554,8 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
              death]
     out = {c.name: c for c in clips}
     for name, pose in (gait or {}).items():
+        if name == "idle":  # already applied before the shared seam poses were built
+            continue
         for key, value in pose.items():
             if key == "stride":     # the feet must keep the ground speed, so the speed changes with it
                 out[name].stride(value)
@@ -546,7 +567,8 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
     for name, spec in (custom or {}).items():
         ks = [(t * tm, P(idle0, **pose)) for t, pose in spec["keys"]]
         loop = bool(spec.get("loop"))
-        out[name] = Keyed(name, ks, loop=loop, period=spec.get("period", ks[-1][0]) if loop else None,
+        period = spec["period"] * tm if loop and "period" in spec else ks[-1][0]
+        out[name] = Keyed(name, ks, loop=loop, period=period if loop else None,
                           prev=spec.get("prev", "idle"), next=spec.get("next", "idle"),
                           events=[(t * tm, n) for t, n in spec.get("events", [])],
                           tags=tuple(spec.get("tags", ())))

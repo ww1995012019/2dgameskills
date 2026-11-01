@@ -21,8 +21,9 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sprite_anim.layer_slots import KEY_COLOR, SLOTS, prompt  # noqa: E402
+from sprite_anim.layer_slots import HAND_HINTS, KEY_COLOR, SLOTS, hand_prompt, prompt  # noqa: E402
 from sprite_anim.puppet_check import HOLE_SHARE, core_mask  # noqa: E402
+from sprite_anim.constraints import BAND, LIMITS  # noqa: E402
 
 MIN_HEIGHT = 900         # px: tall enough to give a sharp hd512 frame
 MAX_FILL = 0.97          # of the canvas height: a figure touching the edge is cropped
@@ -191,6 +192,42 @@ def placed(layer, fit, size):
     return (np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8)
 
 
+def place_leg(layer, ref, side):
+    """Anchor separated legs to the two planted shoes, not similarly coloured robes.
+
+    The reference contract puts both soles on one ground line. Only use this
+    landmark when exactly two substantial, separate footprints are visible;
+    ambiguous silhouettes retain the normal colour-based registration.
+    """
+    seen = ref[..., 3] > 128
+    ys, xs = np.nonzero(seen)
+    band = max(3, round((ys.max() - ys.min()) * 0.02))
+    bottom = int(ys.max())
+    occupied = seen[max(0, bottom - band):bottom + 1].any(axis=0)
+    # A boot's raised arch can split its sole into heel and toe. Join only
+    # tiny gaps in the landmark signal; never alter the source pixels.
+    edges = np.diff(np.r_[True, occupied, True].astype(int))
+    for a, b in zip(np.flatnonzero(edges == -1), np.flatnonzero(edges == 1)):
+        if a > 0 and b < len(occupied) and b - a <= max(2, round(band * 0.15)):
+            occupied[a:b] = True
+    edges = np.diff(np.r_[False, occupied, False].astype(int))
+    spans = [(a, b) for a, b in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1))
+             if b - a >= max(8, ref.shape[1] * 0.02)]
+    if len(spans) != 2 or spans[1][0] - spans[0][1] < min(b - a for a, b in spans) * 0.25:
+        return place(layer, ref)
+    left, right = spans[0 if side == "far" else 1]
+    target_y = float(np.nonzero(seen[:, left:right])[0].max())
+    leg = read_leg(layer[..., 3] > 128)
+    width = leg["toe"][0] - leg["heel"][0]
+    if width <= 0:
+        return place(layer, ref)
+    s = (right - 1 - left) / width
+    dx = float(left - leg["heel"][0] * s)
+    dy = float(target_y - leg["heel"][1] * s)
+    return dict(s=float(s), deg=0.0, dx=dx, dy=dy, cx=0.0, cy=0.0,
+                error=score(small(layer, 8), small(ref, 8), (s, 0, dx / 8, dy / 8), 0, 0))
+
+
 # -- reading the skeleton off the layers -----------------------------------------------------------
 
 def band_mid(mask, a, u, lo, hi):
@@ -253,10 +290,56 @@ def read_leg(mask):
     return dict(hip=root, knee=knee, ankle=ankle, heel=heel, toe=toe)
 
 
-def read_arm(mask):
+def read_arm(mask, hand_mask=None):
     root, tip = root_and_tip(mask)
+    if hand_mask is not None:
+        # The hand's proximal strip locates the wrist, even when a sleeve tail
+        # is much farther from the shoulder than the fingertips are.
+        ys, xs = np.nonzero(hand_mask)
+        center = np.array([xs.mean(), ys.mean()])
+        axis = (center - root) / max(float(np.hypot(*(center - root))), 1e-9)
+        distances = (xs - root[0]) * axis[0] + (ys - root[1]) * axis[1]
+        lo, hi = float(distances.min()), float(distances.max())
+        wrist = band_mid(hand_mask, root, axis, lo, lo + max(1, (hi - lo) * 0.18))
+        tip = np.array([float(xs[distances.argmax()]), float(ys[distances.argmax()])])
+        line = medial(mask, root, wrist, 9)
+        shoulder = np.array(at_length(line, 0.05))
+        elbow = legal_elbow(mask, shoulder, at_length(line, 0.47), wrist)
+        return dict(shoulder=shoulder, elbow=elbow, wrist=wrist, tip=tip)
     line = medial(mask, root, tip, 9)
     return dict(shoulder=np.array(at_length(line, 0.05)), elbow=at_length(line, 0.47), wrist=at_length(line, 0.86), tip=tip)
+
+
+def legal_elbow(mask, shoulder, elbow, wrist):
+    """Choose a supported elbow on the rig's bending side under a loose sleeve.
+
+    The sleeve centreline is not necessarily the arm centreline. Correct only
+    invalid inferred bends, keeping the hand and shoulder fixed and choosing
+    the closest legal joint inside the actual sleeve artwork.
+    """
+    lo, hi = LIMITS["elbow"]
+    axis = wrist - shoulder
+    length2 = float(axis @ axis)
+    if length2 <= 1e-9:
+        raise Rejected("arm: the shoulder and hand overlap; remake the arm with a clear forearm")
+    bend = (angle_down(elbow, wrist) - angle_down(shoulder, elbow) + 180) % 360 - 180
+    if lo <= bend <= hi:
+        return elbow
+    ys, xs = np.nonzero(mask)
+    points = np.column_stack((xs, ys)).astype(float)
+    along = (points - shoulder) @ axis / length2
+    upper = points - shoulder
+    lower = wrist - points
+    angles = (np.degrees(np.arctan2(lower[:, 0], lower[:, 1])
+                         - np.arctan2(upper[:, 0], upper[:, 1])) + 180) % 360 - 180
+    valid = (along >= 0.2) & (along <= 0.8) & (angles >= lo) & (angles <= hi)
+    comfortable = valid & (angles >= lo + BAND) & (angles <= hi - BAND)
+    if comfortable.any():
+        valid = comfortable
+    if not valid.any():
+        raise Rejected("arm: the sleeve has no supported elbow on the rig's bending side; remake the arm")
+    candidates = points[valid]
+    return candidates[np.argmin(((candidates - elbow) ** 2).sum(axis=1))]
 
 
 def angle_down(a, b):
@@ -284,23 +367,52 @@ def trimmed(layer, waist, hip, half):
     return out
 
 
+def align_hips(layer, waist, hip):
+    """Place a hidden undergarment from the measured waist/crotch, not colour.
+
+    Hidden art cannot be registered against the reference because it is covered
+    there. Permit modest redraw drift, but never enlarge a scrap into a torso.
+    All original solid-core checks still run after the transform.
+    """
+    ys, xs = np.nonzero(layer[..., 3] > 128)
+    height = float(ys.max() - ys.min())
+    distance = float(np.hypot(*(hip - waist)))
+    if height <= 0 or distance <= 0:
+        return layer, None
+    s = distance * (1 + HIPS_ABOVE + HIPS_FADE) / height
+    if not 0.6 <= s <= 1.6:
+        return layer, None
+    top = waist - (hip - waist) * HIPS_ABOVE
+    cx, cy = float((xs.min() + xs.max()) / 2), float(ys.min())
+    deg = -math.degrees(math.atan2(hip[0] - waist[0], hip[1] - waist[1]))
+    fit = dict(s=s, deg=deg, dx=float(top[0] - cx), dy=float(top[1] - cy),
+               cx=cx, cy=cy, error=0.0)
+    return placed(layer, fit, (layer.shape[1], layer.shape[0])), fit
+
+
 def bind(ref, layers):
     """Places every layer and works out the rig. Returns (placed layers, spec's puppet + body, report)."""
     size = (ref.shape[1], ref.shape[0])
     missing = [n for n, s in SLOTS.items() if s[2] and n not in layers]
     if missing:
         raise Rejected(f"missing layers: {', '.join(missing)}; make them from the prompts of `plan`")
-    out, fits = {}, {}
+    out, fits, placements = {}, {}, {}
     seen = ref[..., 3] > 128
     for name in SLOTS:
         if name not in layers:
             continue
         if not (layers[name][..., 3] > 128).any():
             raise Rejected(f"{name}: the layer is empty; make it again")
-        # A hidden layer has no shown art to line up on, so it stays where the model drew it and the
-        # see-through check below judges the result.
-        fit = dict(s=1.0, deg=0.0, dx=0.0, dy=0.0, cx=0.0, cy=0.0, error=0.0) if name in HIDDEN else place(layers[name], ref)
+        # Hidden art has no shown colour to register. Start at the authored
+        # position; the measured waist/crotch can correct modest drift below.
+        if name in HIDDEN:
+            fit = dict(s=1.0, deg=0.0, dx=0.0, dy=0.0, cx=0.0, cy=0.0, error=0.0)
+        elif name in ("leg_near", "leg_far"):
+            fit = place_leg(layers[name], ref, name.removeprefix("leg_"))
+        else:
+            fit = place(layers[name], ref)
         out[name] = placed(layers[name], fit, size)
+        placements[name] = fit
         fits[name] = {k: round(v, 3) for k, v in fit.items() if k not in ("cx", "cy")}
     # An image model can read "near" and "far" as the same limb. Two layers on one limb cover the same
     # pixels, and no threshold on either layer alone would show it.
@@ -334,7 +446,16 @@ def bind(ref, layers):
         if name in masks and (masks[name] & masks["torso"]).sum() > MAX_SHARED * masks[name].sum():
             raise Rejected(f"torso: it also holds the art of {name}, so that cloth would be drawn twice; make torso again")
     ln, lf = read_leg(masks["leg_near"]), read_leg(masks["leg_far"])
-    an, af = read_arm(masks["arm_near"]), read_arm(masks["arm_far"])
+    hand_masks = {}
+    for hint, arm in HAND_HINTS.items():
+        if hint not in layers:
+            continue
+        hand = placed(layers[hint], placements[arm], size)[..., 3] > 128
+        if not hand.any() or (hand & masks[arm]).sum() < 0.8 * hand.sum():
+            raise Rejected(f"{hint}: the hand does not overlap its arm; remake the hint from the finished {arm} layer without moving it")
+        hand_masks[arm] = hand
+    an = read_arm(masks["arm_near"], hand_masks.get("arm_near"))
+    af = read_arm(masks["arm_far"], hand_masks.get("arm_far"))
     if ln["toe"][0] - ln["heel"][0] < 30 or lf["toe"][0] - lf["heel"][0] < 30:
         raise Rejected("legs: no foot found at the bottom of a leg layer; make it again with the boot complete")
     near_px = np.hypot(*(ln["knee"] - ln["hip"])) + np.hypot(*(ln["ankle"] - ln["knee"]))
@@ -357,6 +478,14 @@ def bind(ref, layers):
     solid = masks["torso"] | masks["hips"] | masks["leg_near"] | masks["leg_far"]
     core = core_mask(size, waist, hip, core_px)
     open_share = float((~solid[core]).mean())
+    if open_share > HOLE_SHARE:
+        aligned, fit = align_hips(layers["hips"], waist, hip)
+        if fit is not None:
+            out["hips"] = trimmed(aligned, waist, hip, HIPS_WIDTH * waist_half)
+            masks["hips"] = out["hips"][..., 3] > 128
+            solid = masks["torso"] | masks["hips"] | masks["leg_near"] | masks["leg_far"]
+            open_share = float((~solid[core]).mean())
+            fits["hips"].update({k: round(v, 3) for k, v in fit.items() if k not in ("cx", "cy")})
     if open_share > HOLE_SHARE:
         raise Rejected(f"hips: {open_share:.0%} of the body below the belt is see-through; make hips again, solid from the waist to the crotch")
 
@@ -395,7 +524,10 @@ def bind(ref, layers):
                 hip_h=round(ANKLE_UP + GAIT_DROP + (mid + low) / 2 - seat_up, 3),
                 pelvis_len=round(np.hypot(*(waist - hip)) / ppu, 3), chest_len=round(along(head_base)[1], 3), neck_len=0.0,
                 head_size=round(np.hypot(*(head_top - head_base)) / ppu / 30.0, 3), leg_soft=IK_SOFT, foot_wrap=True,
-                sh_n_at=round2(an["shoulder"]), sh_f_at=round2(af["shoulder"]), hip_n_at=[seat_x(ln["hip"]), round(seat_up, 3)], hip_f_at=[seat_x(lf["hip"]), round(seat_up, 3)])
+                # In the required side view the two shoulder hinges project to
+                # the same seat. Separate sleeve-cap centres are not a shoulder
+                # span: using them as joint seats attaches the far arm to the back.
+                sh_n_at=round2(an["shoulder"]), sh_f_at=round2(an["shoulder"]), hip_n_at=[seat_x(ln["hip"]), round(seat_up, 3)], hip_f_at=[seat_x(lf["hip"]), round(seat_up, 3)])
 
     joints = dict(hip=hip, waist=waist, neck=neck, head_base=head_base, wr_n=an["wrist"], el_n=an["elbow"])
     def half(name):
@@ -468,15 +600,10 @@ def bind(ref, layers):
     if "cloth_back" in out:
         chain("cloth_back", "hip", "body_rot", hip, body_rest, 7, gravity=320, drag=6.0, stiff=0.05, flutter=520, ground=True, max_bend=CLOTH_BEND, max_curl=CLOTH_CURL)
 
-    # A rear arm that crosses the chest in the picture is drawn over the torso, or the arm-hole the
-    # image model painted there shows. The art itself says which: whichever matches where they overlap.
-    both = masks["arm_far"] & masks["torso"] & seen
+    # Depth is part of the side-view contract. Matching a sleeve's colour in
+    # the reference cannot promote the far arm in front of the torso, especially
+    # when the arm rotates away from the reference pose.
     order = list(SLOTS)
-    if both.any():
-        gap = lambda name: float(np.abs(out[name][..., :3].astype(np.float32)[both] - ref[..., :3][both]).mean())
-        if gap("arm_far") < gap("torso"):
-            order.remove("arm_far")
-            order.insert(order.index("torso") + 1, "arm_far")
     ordered = {n: data[n] for n in order if n in data}
     rest_angles = dict(head_rot=0.0, wep_a=wep_rest if wep_rest is not None else 0.0, chest_rot=chest_rest, body_rot=body_rest)
     arm_near_up, arm_near_lo = angle_down(an["shoulder"], an["elbow"]), angle_down(an["elbow"], an["wrist"])
@@ -484,7 +611,10 @@ def bind(ref, layers):
     # The walk keeps the picture's carried pose and swings around it: a character holding a sword
     # forward keeps holding it forward. chest_rot of the walk is pelvis 3 + lean 5.
     lean = 8.0
-    gait = dict(walk=dict(stride=round(STRIDE * legs, 2), bob=round((mid - low) / 2, 3), arm_n=[round(arm_near_up + lean, 2), 2.5 if wep_rest is not None else 15.0, round(arm_near_lo - arm_near_up, 2), 1.5 if wep_rest is not None else 3.0],
+    # Idle's default chest is pelvis 4 + spine 5. Preserve the reference's
+    # free-arm direction there too, rather than pulling it across the belly.
+    gait = dict(idle=dict(arm_f=[round(arm_far_up + 9.0, 2), 1.8, round(arm_far_lo - arm_far_up, 2), 2.6]),
+                walk=dict(stride=round(STRIDE * legs, 2), bob=round((mid - low) / 2, 3), arm_n=[round(arm_near_up + lean, 2), 2.5 if wep_rest is not None else 15.0, round(arm_near_lo - arm_near_up, 2), 1.5 if wep_rest is not None else 3.0],
                           arm_f=[round(arm_far_up + lean, 2), 15.0, round(arm_far_lo - arm_far_up, 2), 5.0]))
     if wep_rest is not None:
         gait["walk"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)     # a carried blade stays steady
@@ -522,9 +652,13 @@ def main():
             for slot in SLOTS:
                 with open(os.path.join(folder, slot + ".txt"), "w", encoding="utf-8") as fh:
                     fh.write(prompt(slot))
-            print(f"[plan] {len(SLOTS)} prompts -> {folder}. Edit the reference with each one and save it as layers/<slot>.png")
+            for slot in HAND_HINTS:
+                with open(os.path.join(folder, slot + ".txt"), "w", encoding="utf-8") as fh:
+                    fh.write(hand_prompt())
+            print(f"[plan] {len(SLOTS)} art prompts + {len(HAND_HINTS)} optional hand hints -> {folder}. "
+                  "Make art layers from the reference; make each hand hint from its finished arm layer.")
             return
-        layers = {n: key_out(os.path.join(a.layers, n + ".png")) for n in SLOTS if os.path.isfile(os.path.join(a.layers, n + ".png"))}
+        layers = {n: key_out(os.path.join(a.layers, n + ".png")) for n in (*SLOTS, *HAND_HINTS) if os.path.isfile(os.path.join(a.layers, n + ".png"))}
         out, spec, report = bind(ref, layers)
     except Rejected as e:
         sys.exit(f"[rejected] {e}")

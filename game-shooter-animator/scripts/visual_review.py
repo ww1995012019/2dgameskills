@@ -11,7 +11,8 @@ skill looks at the sheets itself, against references/visual-review.md.
 Each sheet shows key poses plus every frame QA flagged (red border). The bottom row of each clip is
 the same poses as black silhouettes: a pose that doesn't read in silhouette doesn't read in game.
 joints_00.png enlarges every knee and elbow at its sharpest bends, and the head beside the raised
-arms. A verdict has to cover it like any other sheet.
+arms. shoulders_*.png shows shoulder attachment and occlusion at rest, arm extremes and recovery,
+with art and bone overlays. A verdict has to cover all of them.
 """
 import argparse
 import glob
@@ -156,6 +157,66 @@ def joint_sheet(root, doc, trace, out):
     return fn
 
 
+def shoulder_frames(sk):
+    """Rest/recovery plus each upper arm's forward/back extremes."""
+    n = len(sk["neck"])
+    picks = {0, n - 1}
+    for side in "nf":
+        delta = np.asarray(sk["el_" + side]) - np.asarray(sk["sh_" + side])
+        angles = np.unwrap(np.arctan2(delta[:, 1], delta[:, 0]))
+        picks.update((int(angles.argmin()), int(angles.argmax())))
+    return sorted(picks)
+
+
+def shoulder_sheets(root, doc, trace, out):
+    """Shoulder connections need torso context, with both art and joint seats visible."""
+    required = ("neck", "waist", "sh_n", "el_n", "sh_f", "el_f")
+    rows = []
+    for name, tr in trace.get("traces", {}).items():
+        sk = tr.get("skeleton", {})
+        if doc["clips"].get(name, {}).get("layer") or not all(sk.get(k) for k in required):
+            continue
+        rows.append((name, sk, shoulder_frames(sk)))
+    files = []
+    for start in range(0, len(rows), PER_SHEET):
+        group = rows[start:start + PER_SHEET]
+        sheet = Image.new("RGBA", (CELL * MAX_POSES, (20 + 2 * CELL) * len(group)), BG)
+        d = ImageDraw.Draw(sheet)
+        for row, (name, sk, picks) in enumerate(group):
+            y = row * (20 + 2 * CELL)
+            d.text((4, y + 2), f"{name}: shoulders, art / bones; near cyan, far orange", fill="white")
+            for col, frame in enumerate(picks):
+                pts = np.array([sk[k][frame] for k in required])
+                pad = max(4, trace.get("unit_px", 1) * 5)
+                span = np.ptp(pts, axis=0)
+                side = max(span) + 2 * pad
+                center = (pts.min(0) + pts.max(0)) / 2
+                left, top = center - side / 2
+                box = (int(left), int(top), int(left + side + 1), int(top + side + 1))
+                im = composite(root, doc, name, frame).crop(box).resize((CELL, CELL), Image.NEAREST)
+                cell = Image.new("RGBA", im.size, BG)
+                cell.alpha_composite(im)
+                sheet.alpha_composite(cell, (col * CELL, y + 20))
+                overlay = cell.copy()
+                draw = ImageDraw.Draw(overlay)
+                def point(key):
+                    x, yy = sk[key][frame]
+                    return ((x - box[0]) * CELL / (box[2] - box[0]),
+                            (yy - box[1]) * CELL / (box[3] - box[1]))
+                draw.line((*point("waist"), *point("neck")), fill=(220, 220, 220), width=1)
+                for arm, color in (("n", (40, 235, 225)), ("f", (255, 145, 55))):
+                    a, b = point("sh_" + arm), point("el_" + arm)
+                    draw.line((*a, *b), fill=color, width=2)
+                    radius = 4 if arm == "n" else 2
+                    draw.ellipse((a[0] - radius, a[1] - radius, a[0] + radius, a[1] + radius), outline=color, width=2)
+                sheet.alpha_composite(overlay, (col * CELL, y + 20 + CELL))
+                d.text((col * CELL + 4, y + 23), f"#{frame}", fill="white")
+        fn = f"shoulders_{len(files):02d}.png"
+        sheet.convert("RGB").save(os.path.join(out, fn))
+        files.append(dict(sheet=fn, clips=[name for name, _, _ in group]))
+    return files
+
+
 def build(root):
     with open(os.path.join(root, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -197,9 +258,11 @@ def build(root):
     tp = os.path.join(root, "rig_trace.json")
     if os.path.exists(tp):
         with open(tp, encoding="utf-8") as fh:
-            fn = joint_sheet(root, doc, json.load(fh), out)
+            trace = json.load(fh)
+        fn = joint_sheet(root, doc, trace, out)
         if fn:     # listed like any sheet, so --record refuses a verdict that skips it
             index.append(dict(sheet=fn, clips=["joints"]))
+        index.extend(shoulder_sheets(root, doc, trace, out))
     with open(os.path.join(out, "index.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(sheets=index, skipped=sorted(set(doc["clips"]) - set(names)),
                        qa_flags={n: qa[n]["flags"] for n in names if qa.get(n, {}).get("flags")}), fh, ensure_ascii=False, indent=1)

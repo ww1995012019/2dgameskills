@@ -26,6 +26,14 @@ joint is a few pixels across and only appears at a sharp bend, so a full-body ce
 cell: the outside of a bend must be one smooth curve, with no step, nub, square end, stripe or hole.
 `--record` refuses a verdict that leaves this sheet out.
 
+`shoulders_*.png` shows the neck, torso and both upper arms at rest, recovery and each arm's
+forward/backward extremes. The upper row is the art; the lower row adds the shoulder seats and
+upper-arm bones (near cyan, far orange). Inspect both together: a sleeve cap is not an anatomical
+joint, and a joint can be numerically valid while the arm appears to emerge from the back.
+For a strict side-view puppet, both shoulder hinges share a projected seat, the far arm stays
+behind the torso, and the near arm stays in front. Check that the far sleeve is occluded at the
+shoulder and reappears naturally below it as the arm moves. The verdict must cover these sheets.
+
 Check a QA flag the same way before acting on it. Open the frame enlarged and confirm the problem is
 there: a flag is a measurement, and a measurement can be wrong.
 
@@ -43,6 +51,8 @@ Look at each clip for these, in this order. Name the clip and frame when somethi
 - Weapon stops at the ground
 
 **Anatomy**
+- Both arms connect at the shoulder region; neither begins on the back, neck or waist
+- The far shoulder remains behind the torso in rest, raised-arm and recovery poses
 - Limbs bend the right way, with no reversed knee or elbow
 - Joints not folded past what a body can do
 - Neck not twisted, head attached to the shoulders

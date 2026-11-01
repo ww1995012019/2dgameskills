@@ -80,10 +80,16 @@ def soft_ik(l1, l2, d, soft=0.965):
 def two_bone(root, target, l1, l2, bend, soft=0.965):
     """Returns (mid, end). bend=+1 keeps the mid joint on the +x side of root->target."""
     dx, dy = target[0] - root[0], target[1] - root[1]
-    d = math.hypot(dx, dy) or 1e-6
+    d = math.hypot(dx, dy)
+    # A coincident target has no direction. Use the rest limb's downward axis
+    # for it and subprecision noise, rather than normalizing a zero vector or
+    # letting tiny sign changes flip the folded limb.
+    if d <= (l1 + l2) * 1e-8:
+        ux, uy = 0.0, -1.0
+    else:
+        ux, uy = dx / d, dy / d
     ds = soft_ik(l1, l2, min(d, l1 + l2 + 30), soft)
-    ds = max(ds, abs(l1 - l2) + 0.1)
-    ux, uy = dx / d, dy / d
+    ds = max(ds, abs(l1 - l2) + min(0.1, l1, l2))
     a = (l1 * l1 - l2 * l2 + ds * ds) / (2 * ds)
     h = math.sqrt(max(l1 * l1 - a * a, 0.0))
     # Normal chosen so that for a leg pointing down, +bend goes forward.
@@ -182,7 +188,11 @@ def solve(pose, b: Body):
     # The weapon's line passes through its drawing origin just past the wrist (art.weapon_origin),
     # and that point's height depends only on the forearm, so clamp about it.
     pivot_y = wr_n[1] + (wr_n[1] - el_n[1]) * 0.14
-    wep_a = ground_clamp(fa_n + g("wep"), pivot_y, b.weapon_front, b.weapon_back, b.weapon_margin)
+    weapon_input = fa_n + g("wep")
+    contact_angle = pose.get("_weapon_angle")
+    wep_a = ground_clamp(weapon_input if contact_angle is None else contact_angle,
+                         pivot_y, b.weapon_front, b.weapon_back, b.weapon_margin,
+                         reference=contact_angle)
     return dict(
         hip=hip, waist=waist, neck=neck, head_base=head_base,
         body_rot=body_rot, chest_rot=chest_rot, head_rot=head_rot,
@@ -190,7 +200,7 @@ def solve(pose, b: Body):
         sh_f=sh_f, el_f=el_f, wr_f=wr_f, fa_f=fa_f,
         hip_n=hip_n, kn_n=kn_n, an_n=an_n, fr_n=fr_n,
         hip_f=hip_f, kn_f=kn_f, an_f=an_f, fr_f=fr_f,
-        wep_a=wep_a, excess=excess,
+        wep_a=wep_a, excess=excess, weapon_input=weapon_input, weapon_pivot_y=pivot_y,
         wep_dir=(math.sin(math.radians(wep_a)), -math.cos(math.radians(wep_a))),
     )
 

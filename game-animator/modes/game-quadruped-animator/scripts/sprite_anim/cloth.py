@@ -147,8 +147,13 @@ def simulate(defn, clip, body, start=None, settle_seconds=6.0, state_at=None):
                 p[below, 0] = q[below, 0] * 0.6 + p[below, 0] * 0.4
             elif below.any():   # a sheet on the floor slides out flat: gripped, it piles up on its tip
                 for _ in range(4):
+                    before = p.copy()
                     p[1:-1] = p[1:-1] * 0.5 + (p[:-2] + p[2:]) * 0.25
                     p[:] = _keep_lengths(p, defn.seg)
+                    # Repacking is a geometric correction, not motion. Move the
+                    # previous positions with it, or Verlet turns each correction
+                    # into a fresh lateral impulse on the next step.
+                    q += p - before
                     pushed = _ground(p, defn)
                     q[pushed, 1] = p[pushed, 1]
         if i >= keep_from:

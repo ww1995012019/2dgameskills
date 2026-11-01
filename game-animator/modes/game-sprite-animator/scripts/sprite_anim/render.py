@@ -3,6 +3,7 @@ import numpy as np
 
 from .art import Canvas, CharacterArt, chain_defs
 from .cloth import bake_all
+from .constraints import bake_weapon_contacts
 from .mathx import catmull_open
 from .rig import full_pose, solve
 
@@ -40,6 +41,7 @@ class Renderer:
         self.motion_blur = motion_blur
         self.defs = chain_defs(self.art.spec)
         self.clips = clips
+        bake_weapon_contacts(clips, self.art.body, solve, full_pose)
         self.bakes = bake_all(clips, self.art.body, self.defs)
         self.fit = self.fit_scale()
         self.unit = size * UNIT_PX * self.fit
