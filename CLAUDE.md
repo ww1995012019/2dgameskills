@@ -25,7 +25,11 @@
 - 四足仅复用 exporter、Unity importer、mathx、cloth 和 rig_data。尾巴给共用 `simulate` 传
   `state_at(t)`，人形保留原路径。`JointRecorder` 接收命名二维关节映射，人形与四足共用记录格式；
   骨骼求解和接触规则仍按解剖分别实现，不要把这个小接口描述成完整通用骨骼框架。
-- AI 美术流程（阶段 A）：`game-sprite-animator/scripts/cut_parts.py`（template / cut / check），流程见该 skill 的
+- **AI 美术的正式流程是分层人偶**（`layer_parts.py`、`sprite_anim/puppet.py`、`puppet_check.py`、`layer_slots.py`，文档 `references/layered-art.md`）。
+  用户 2026-11-01 明确要求：这是商用产品，只能固定输入条件和通用流程，不准为单张图手调；一张图只是测试数据，修问题要改通用规则并用两个不同角色验收；
+  新角色先做走路，用户审核通过再出全套 27 个动作。不合规的图由 `plan`/`bind` 拒绝并说明重做什么。
+  动作适配角色身材的规则集中在 `layered-art.md` 的“How the clips fit a character”，遇到新问题加规则，不改单个角色数据。
+- AI 美术流程（阶段 A，现仅用于贴身角色的快速测试）：`game-sprite-animator/scripts/cut_parts.py`（template / cut / check），流程见该 skill 的
   `references/ai-art.md`。剪纸模式的武器挂在 `art.hand_grip`，和程序画法共用，改它要跑严格基准。
   示例 `assets/characters/cutout_demo/` 必须是工具对 `source.png` + `joints.json` 的当前输出（测试会比对），
   改了 `cut_parts.py` 就重新生成它。`dev/cutout_match.py` 量切块后和原版的相似度。

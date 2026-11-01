@@ -48,6 +48,14 @@ class Body:
     weapon_front: float = 0.0   # reach past / behind the weapon origin, for the ground clamp
     weapon_back: float = 0.0
     weapon_margin: float = 2.8  # weapon half-thickness plus clearance
+    foot_wrap: bool = False     # blend a foot toward a spinning body the short way round
+    # Measured joint seats for art that sets its own proportions, as (forward, up) in the chest frame
+    # from the waist, and in the pelvis frame from the hip. None keeps the fitted sh_w and hip_w.
+    leg_soft: float = 0.965     # share of the leg's reach where its IK starts to ease off
+    sh_n_at: tuple = None
+    sh_f_at: tuple = None
+    hip_n_at: tuple = None
+    hip_f_at: tuple = None
 
     @classmethod
     def from_spec(cls, spec):
@@ -58,22 +66,22 @@ class Body:
         return b
 
 
-def soft_ik(l1, l2, d):
+def soft_ik(l1, l2, d, soft=0.965):
     """Soft reach limit: approaching full extension the knee would snap straight
     (angular velocity -> infinity). Compress the last few percent exponentially."""
     full = l1 + l2
-    start = full * 0.965
+    start = full * soft
     if d <= start:
         return d
     span = full - start
     return start + span * (1 - math.exp(-(d - start) / span))
 
 
-def two_bone(root, target, l1, l2, bend):
+def two_bone(root, target, l1, l2, bend, soft=0.965):
     """Returns (mid, end). bend=+1 keeps the mid joint on the +x side of root->target."""
     dx, dy = target[0] - root[0], target[1] - root[1]
     d = math.hypot(dx, dy) or 1e-6
-    ds = soft_ik(l1, l2, min(d, l1 + l2 + 30))
+    ds = soft_ik(l1, l2, min(d, l1 + l2 + 30), soft)
     ds = max(ds, abs(l1 - l2) + 0.1)
     ux, uy = dx / d, dy / d
     a = (l1 * l1 - l2 * l2 + ds * ds) / (2 * ds)
@@ -113,6 +121,10 @@ def solve(pose, b: Body):
     sh_top = add(waist, rot((0, b.chest_len - 3.0), chest_rot))
     sh_n = add(sh_top, scale(sh_axis, g("sh") - b.sh_w * 0.4))
     sh_f = add(sh_top, scale(sh_axis, -g("sh") + b.sh_w))
+    if b.sh_n_at:
+        sh_n = add(add(waist, rot(tuple(b.sh_n_at), chest_rot)), scale(sh_axis, g("sh")))
+    if b.sh_f_at:
+        sh_f = add(add(waist, rot(tuple(b.sh_f_at), chest_rot)), scale(sh_axis, -g("sh")))
 
     def arm(s, up, lo):
         a1 = up - chest_rot
@@ -127,6 +139,10 @@ def solve(pose, b: Body):
     hip_axis = rot((1, 0), body_rot)
     hip_n = add(hip, scale(hip_axis, g("hp") + b.hip_w * 0.3))
     hip_f = add(hip, scale(hip_axis, -g("hp") - b.hip_w))
+    if b.hip_n_at:
+        hip_n = add(add(hip, rot(tuple(b.hip_n_at), body_rot)), scale(hip_axis, g("hp")))
+    if b.hip_f_at:
+        hip_f = add(add(hip, rot(tuple(b.hip_f_at), body_rot)), scale(hip_axis, -g("hp")))
 
     k = g("ik_body")
 
@@ -141,8 +157,9 @@ def solve(pose, b: Body):
                 local = (ground[0], ground[1] - b.hip_h)
                 carried = add(hip, rot(local, g("root_rot")))
                 ground = (ground[0] * (1 - k) + carried[0] * k, ground[1] * (1 - k) + carried[1] * k)
-            knee, ank = two_bone(hj, ground, b.thigh, b.shin, 1.0)
-            return knee, ank, -pitch + g("root_rot") * k
+            knee, ank = two_bone(hj, ground, b.thigh, b.shin, 1.0, b.leg_soft)
+            spin = (g("root_rot") + 180.0) % 360.0 - 180.0 if b.foot_wrap else g("root_rot")
+            return knee, ank, -pitch + spin * k
 
         knee, ank, foot_rot = reach(fp)
         # An ankle only closes so far: past that a real heel lifts and the ball stays planted.

@@ -13,12 +13,13 @@ across those same seams.
 """
 import math
 
-from .constraints import low_points
+from .constraints import face_circle, low_points
 from .mathx import Curve, hermite, lerp, rot
 from .rig import LAG, REST, Body, full_pose, solve
 
 CH = list(REST)
-HIP_H = 40.5
+STANCE_REACH = 0.968   # a standing leg stops short of the soft end of its reach (Body.leg_soft)
+WEAPON_HALF = 2.5      # half the thickness of a weapon, plus a little air
 IDX = {c: i for i, c in enumerate(CH)}
 TAU = math.tau
 
@@ -95,10 +96,15 @@ class Gait(Clip):
         self.hip, self.bob, self.bob_at, self.lean, self.pelvis = hip, bob, bob_at, lean, pelvis
         self.head, self.arm_n, self.arm_f, self.wep = head, arm_n, arm_f, wep
         self.peak, self.tan, self.sh, self.hp, self.surge = peak, tan, sh, hp, surge
+        self.wep_sway = 4.0
         d = duty
         self.pitch = Curve(
             [0, 0.17 * d, 0.5 * d, d, d + 0.3 * (1 - d), d + 0.72 * (1 - d)],
             [[heel], [0], [0], [-toe], [swing_pitch], [heel * 0.7]], loop=True, period=1.0)
+
+    def stride(self, L):
+        self.L, self.speed = L, L / (self.duty * self.T)
+        self._vel = Curve([0, self.T], [(self.speed, 0), (self.speed, 0)])
 
     def contacts(self, t):
         ph = (t / self.T) % 1
@@ -135,14 +141,56 @@ class Gait(Clip):
             arm_n_lo=an[2] + an[3] * math.cos(TAU * (lag("arm_n_lo") - 0.62)),
             arm_f_up=af[0] + af[1] * c1,
             arm_f_lo=af[2] + af[3] * math.cos(TAU * (lag("arm_f_lo") - 0.12)),
-            wep=self.wep + 4 * math.cos(TAU * (lag("wep") - 0.6)),
+            wep=self.wep + self.wep_sway * math.cos(TAU * (lag("wep") - 0.6)),
             foot_n_x=nx, foot_n_y=ny, foot_n_p=np_, foot_f_x=fx, foot_f_y=fy, foot_f_p=fp,
         )
         return p
 
 
-def build_clips(style=None, custom=None, key_overrides=None):
-    """style: {'speed': time multiplier > 1 = snappier, 'bounce': amplitude multiplier}."""
+def stance_reach(pose, body):
+    """How far the longer leg is stretched in a pose, as a share of its whole length."""
+    sk = solve(full_pose(pose), body)
+    return max(math.dist(sk["hip_" + s], sk["an_" + s]) for s in "nf") / (body.thigh + body.shin)
+
+
+def face_gap(pose, body):
+    """Clearance in rig units between the whole weapon, butt to tip, and the face."""
+    sk = solve(full_pose(pose), body)
+    hand = (sk["wr_n"][0] + (sk["wr_n"][0] - sk["el_n"][0]) * 0.14, sk["wr_n"][1] + (sk["wr_n"][1] - sk["el_n"][1]) * 0.14)
+    centre, radius = face_circle(sk, body)
+    a = (hand[0] - sk["wep_dir"][0] * body.weapon_back, hand[1] - sk["wep_dir"][1] * body.weapon_back)
+    b = (hand[0] + sk["wep_dir"][0] * body.weapon_front, hand[1] + sk["wep_dir"][1] * body.weapon_front)
+    u = (b[0] - a[0], b[1] - a[1])
+    s = max(0.0, min(1.0, ((centre[0] - a[0]) * u[0] + (centre[1] - a[1]) * u[1]) / (u[0] ** 2 + u[1] ** 2 + 1e-9)))
+    return math.dist(centre, (a[0] + u[0] * s, a[1] + u[1] * s)) - radius - WEAPON_HALF
+
+
+def clear_face(clip, body):
+    """Attack poses are written for a body whose arm lifts a sword clear of the head. Short arms or a
+    long shaft park the weapon over the face instead, so each such key pose takes the smallest turn of
+    the arm and weapon that uncovers it. Working on keys keeps the curves between them smooth, and a
+    pose shared by two clips changes the same way in both, so the seam between them holds."""
+    values = clip.curve.v.copy()
+    for row in values:
+        pose = dict(zip(CH, row.tolist()))
+        if face_gap(pose, body) >= 0:
+            continue
+        turns = sorted(((a, w) for a in range(0, 121, 6) for w in range(-120, 121, 6)), key=lambda t: t[0] + 0.4 * abs(t[1]))
+        for arm, wep in turns:
+            if face_gap(dict(pose, arm_n_up=pose["arm_n_up"] - arm, wep=pose["wep"] + wep), body) >= 0:
+                row[IDX["arm_n_up"]] -= arm
+                row[IDX["wep"]] += wep
+                break
+    clip.curve = Curve(clip.curve.t, values)
+
+
+def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=None):
+    """style: {'speed': time multiplier > 1 = snappier, 'bounce': amplitude multiplier}.
+    gait: {clip: {arm_n, arm_f, wep, wep_sway, bob, stride}} replaces a gait's carried pose, hip bob and stride.
+    body: the character's own proportions, for rules that fit a clip to them. Without it every clip is
+    written for the default body."""
+    fitted = body is not None
+    body = body or Body()
     style = style or {}
     tm = 1.0 / style.get("speed", 1.0)
     bn = style.get("bounce", 1.0)
@@ -156,6 +204,13 @@ def build_clips(style=None, custom=None, key_overrides=None):
     # ---- shared seam poses ------------------------------------------------------------
     STANCE = dict(root_y=-3.0, pelvis=4, spine=5, head=-6, arm_n_up=-4, arm_n_lo=30, wep=56,
                   arm_f_up=14, arm_f_lo=26, foot_n_x=8, foot_f_x=-9, foot_f_p=0)
+    # A stance is written for the default leg. On a longer one the same height leaves the knees locked,
+    # where the leg's soft reach shifts a planted foot as the hip moves: sink until they are not.
+    sink = 0.0
+    while fitted and sink < 6.0 and stance_reach(P(STANCE, root_y=STANCE["root_y"] + 0.8 - sink), body) > STANCE_REACH:
+        sink += 0.25
+    STANCE["root_y"] -= sink
+
     CROUCH = dict(root_y=-12, root_x=-1.5, pelvis=16, spine=18, neck=0, head=-26, arm_n_up=-40,
                   arm_n_lo=44, arm_f_up=-26, arm_f_lo=40, foot_n_x=8, foot_f_x=-9, squash=sq(0.93),
                   wep=70, eye=0.9, brow=0.6)
@@ -228,14 +283,18 @@ def build_clips(style=None, custom=None, key_overrides=None):
     idle0 = idle_fn(0.0)
     idle = Proc("idle", T_idle, idle_fn, vel=None, tags=("ground", "hold_feet"))
 
+    def breathe(t, p):
+        p["spine"] += 0.5 * math.sin(TAU * t / (2.5 * tm))
+        p["arm_f_lo"] += 0.8 * math.sin(TAU * t / (1.25 * tm))
+
     idle_look = Keyed("idle_look", keys(
-        (0, idle0), (0.35, P(STANCE, head=-16, spine=2, arm_f_up=22, root_y=-2.4)),
-        (0.8, P(STANCE, head=-18, spine=1, root_y=-2.2, eye=0.95)),
-        (1.0, P(STANCE, head=-18, spine=1, root_y=-2.2, eye=0.1)),
-        (1.12, P(STANCE, head=-14, spine=2, root_y=-2.2)),
-        (1.45, P(STANCE, head=14, spine=10, root_y=-4, arm_n_up=0, eye=0.8)),
-        (1.95, P(STANCE, head=12, spine=10, root_y=-4, arm_n_up=0, eye=0.8)),
-        (2.5, idle0)), prev="idle", next="idle", tags=("ground", "hold_feet"))
+        (0, idle0), (0.35, P(STANCE, head=-16, spine=2, arm_f_up=22, root_y=-2.4 - sink)),
+        (0.8, P(STANCE, head=-18, spine=1, root_y=-2.2 - sink, eye=0.95)),
+        (1.0, P(STANCE, head=-18, spine=1, root_y=-2.2 - sink, eye=0.1)),
+        (1.12, P(STANCE, head=-14, spine=2, root_y=-2.2 - sink)),
+        (1.45, P(STANCE, head=14, spine=10, root_y=-4 - sink, arm_n_up=0, eye=0.8)),
+        (1.95, P(STANCE, head=12, spine=10, root_y=-4 - sink, arm_n_up=0, eye=0.8)),
+        (2.5, idle0)), add=breathe if fitted else None, prev="idle", next="idle", tags=("ground", "hold_feet"))
 
     # ---- locomotion ---------------------------------------------------------------------
     walk = Gait("walk", 0.84 * tm, 32, 7.5 * min(bn, 1.3), 0.6, hip=-2.2, bob=1.1 * bn, lean=5,
@@ -295,8 +354,6 @@ def build_clips(style=None, custom=None, key_overrides=None):
         vel=[(0, 20, -320), (0.06 * tm, 0, 0), (0.44 * tm, 0, 0)], prev="fall", next="idle",
         tags=("ground",), events=[(0.0, "land_dust")])
 
-    body = Body()
-
     def stay_above_floor(t, p):
         """A collapsing body can't sink: lift the whole thing when any part would go under."""
         for _ in range(2):
@@ -312,7 +369,7 @@ def build_clips(style=None, custom=None, key_overrides=None):
             off = rot(center, p["root_rot"])
             w = p["ik_body"]
             p["root_x"] = lerp(p["root_x"], -off[0], w)
-            p["root_y"] = lerp(p["root_y"], height - off[1] - HIP_H, w)
+            p["root_y"] = lerp(p["root_y"], height - off[1] - body.hip_h, w)
             if floor:
                 # Contact constraint: a tucked body changes shape as it turns, so no fixed height
                 # works. The lowest part rests on the ground on every frame.
@@ -477,6 +534,14 @@ def build_clips(style=None, custom=None, key_overrides=None):
              wall_slide, attack_1, attack_2, attack_3, air_attack, cast, block, block_hit, hurt,
              death]
     out = {c.name: c for c in clips}
+    for name, pose in (gait or {}).items():
+        for key, value in pose.items():
+            if key == "stride":     # the feet must keep the ground speed, so the speed changes with it
+                out[name].stride(value)
+            elif key in ("arm_n", "arm_f", "wep", "wep_sway", "bob"):
+                setattr(out[name], key, tuple(value) if isinstance(value, list) else value)
+            else:
+                raise ValueError(f"gait.{name}: unknown field {key!r}")
 
     for name, spec in (custom or {}).items():
         ks = [(t * tm, P(idle0, **pose)) for t, pose in spec["keys"]]
@@ -485,6 +550,11 @@ def build_clips(style=None, custom=None, key_overrides=None):
                           prev=spec.get("prev", "idle"), next=spec.get("next", "idle"),
                           events=[(t * tm, n) for t, n in spec.get("events", [])],
                           tags=tuple(spec.get("tags", ())))
+
+    if fitted and body.weapon_front:
+        for clip in out.values():
+            if isinstance(clip, Keyed) and not clip.loop and "attack" in clip.tags:
+                clear_face(clip, body)
 
     # Optional character-specific corrections to existing keyed poses. Keeping the
     # clip object retains its events, velocity, combo timing and transition metadata.

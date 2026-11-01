@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .cloth import ChainDef
+from .puppet import Puppet
 from .mathx import add, catmull_closed, catmull_open, rot, scale
 from .rig import Body, FOOT_BALL
 
@@ -234,6 +235,11 @@ def chain_defs(spec):
     b = Body.from_spec(spec.get("body"))
     hs = b.head_size
     out = []
+    for name, c in spec.get("puppet", {}).get("chains", {}).items():
+        out.append(ChainDef(name, (c["joint"], c["frame"], tuple(c["offset"])), c["n"], c["seg"], gravity=c["gravity"],
+                            drag=c["drag"], stiff=c["stiff"], rest=tuple(c["rest"]), follow=1.0, flutter=c["flutter"],
+                            ground=c["ground"], rest_frame=c["frame"], max_bend=c["max_bend"], max_curl=c["max_curl"],
+                            swing=tuple(c["swing"]) if "swing" in c else None))
     cloth = spec["cloth"]
     if "cape" in cloth:
         out.append(ChainDef("cape", ("neck", "chest_rot", (-6.0, -1.0)), 8, 6.6, gravity=620, drag=5.0,
@@ -374,17 +380,20 @@ class CharacterArt:
         grip = WEAPON_GRIP.get(self.spec["weapon"], 0)
         # A cut-out weapon is as long as the art, not the drawn weapon of that name: framing,
         # the ground clamp and clipping all have to see its real tip.
-        cut_length = self.spec.get("parts", {}).get("weapon", {}).get("length")
+        cut_length = self.spec.get("parts", {}).get("weapon", {}).get("length") or self.spec.get("puppet", {}).get("weapon_length")
         if cut_length:
             front = cut_length + grip
         self.weapon_reach = front
         # Measured from the unshifted origin just past the wrist, as the rig's ground clamp pivots.
         self.body.weapon_front = front - grip if front else 0
-        self.body.weapon_back = back + grip
+        self.body.weapon_back = self.spec.get("puppet", {}).get("weapon_back", back + grip)
         self.cutout = Cutout(self.spec) if self.spec.get("parts") else None
+        self.puppet = Puppet(self.spec) if self.spec.get("puppet") else None
 
     def palette(self):
         """All flat colours used: pixel mode quantizes to exactly this list."""
+        if self.puppet:
+            return self.puppet.palette()
         if self.cutout:
             return self.cutout.palette()
         cols = {self.ink}
@@ -641,6 +650,8 @@ class CharacterArt:
         if self.spec["weapon"] == "none":
             return None
         h, t = self.blade_points(sk)
+        if self.puppet:     # a staff or spear reaches behind the hand as well
+            h = add(hand_grip(sk), scale(sk["wep_dir"], -self.body.weapon_back))
         return h, t, 2.5
 
     def weapon(self, cv, sk, pose):
@@ -774,6 +785,11 @@ class CharacterArt:
     def draw(self, cv, sk, pose, cloth, smear_hist=None):
         c = self.c
         cv.set_squash(pose["squash"], 0.0)
+        if self.puppet:
+            if smear_hist:
+                self.smear(cv, smear_hist[0], smear_hist[1], pose["smear"])
+            self.puppet.draw(cv, sk, cloth)
+            return
         if self.cutout:
             if smear_hist:
                 self.smear(cv, smear_hist[0], smear_hist[1], pose["smear"])

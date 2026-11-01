@@ -44,7 +44,7 @@ class Renderer:
         self.fit = self.fit_scale()
         self.unit = size * UNIT_PX * self.fit
         self.pal = np.array(self.art.palette(), dtype=np.float32) if pixel else None
-        self.ss = 4 if size >= 128 else 5
+        self.ss = 2 if self.art.puppet else 4 if size >= 128 else 5     # a puppet is resampled art, not drawn edges
         if pixel:
             self.stroke = 0.62
         else:
@@ -78,7 +78,9 @@ class Renderer:
                 up = max(up, float(bake.pos[..., 1].max()) + 8.0)
         # 4 units of pad cover the outline and the blade's own width; the points are exact.
         frame_half, frame_up = 0.5 / UNIT_PX, GROUND_FRAC / UNIT_PX
-        return min(1.0, (frame_half - 3) / max(half + 4, 1), (frame_up - 3) / max(up + 4, 1))
+        fit = min((frame_half - 3) / max(half + 4, 1), (frame_up - 3) / max(up + 4, 1))
+        # A puppet's art is far finer than the frame, so it fills the frame instead of the rig's 100 units.
+        return fit if self.art.puppet else min(1.0, fit)
 
     def cloth_at(self, clip, t):
         return {d.name: self.bakes[clip.name][d.name].at(t) for d in self.defs}

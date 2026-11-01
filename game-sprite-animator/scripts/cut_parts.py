@@ -85,6 +85,8 @@ SOFTEN = 40       # blur passes over a fill: enough to wash out stripes a few pi
 BEHIND_CAP = 0.5  # of the cap: what the part behind a joint keeps
 HEAD_UNITS = 30.0 # rig units from head_base to head_top at head_size 1.0
 HEAD_CAP = 0.13   # of the head's height: the collar the head keeps. Matches CAP_MAX on the hero's head
+LOOSE_REACH = 1.0 # of a part's radius past its edge: art further than this hangs free of every bone
+LOOSE_SHARE = 0.1 # of the figure's pixels
 MIN_HEAD_PX = 20  # tall at the hd preset: below this the face is a few pixels and can't read
 FAR = {"arm_f_up": "arm_n_up", "arm_f_lo": "arm_n_lo", "hand_f": "hand_n",
        "leg_f_up": "leg_n_up", "leg_f_lo": "leg_n_lo", "foot_f": "foot_n"}
@@ -580,6 +582,14 @@ def cut(img, joints, base=None):
             if 0.5 <= wide < 0.7 * PARTS[n][2]:     # under 0.5 the bone's middle isn't on the art at all
                 report["warnings"].append(f"{n}: art is about {wide:.1f} units wide each side, the cut assumes {PARTS[n][2]}, "
                                           f"so a sharp bend shows a square end; add \"_radius\": {{\"{n}\": {wide + 0.3:.1f}}}")
+
+    # Art far from every bone is loose: a robe, a cape, a wide sleeve, long hair. Rigid parts can only
+    # tear or stiffen it, so say so at once rather than leave it to be found in the frames.
+    far_out = np.min([sd[n] - LOOSE_REACH * radius.get(n, PARTS[n][2]) * ppu for n in order], axis=0)
+    loose = float((fg & (far_out > 0)).sum() / max(fg.sum(), 1))
+    if loose > LOOSE_SHARE:
+        report["warnings"].append(f"{loose:.0%} of the art is loose (robe, cape, wide sleeve or long hair); rigid parts will tear it, "
+                                  "use layer_parts.py and references/layered-art.md")
 
     # How far the rig's own joints land from the picture's, once lengths are measured: a big gap
     # means a part will hang off its neighbour. Compared in the reference pose's angles.

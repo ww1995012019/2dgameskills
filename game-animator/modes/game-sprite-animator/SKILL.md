@@ -23,6 +23,16 @@ supplied as layered art.
 
 Requires Python 3 with `pillow` and `numpy`. Scripts are in `scripts/`, run from the skill root.
 
+
+## AI-generated characters: read this first
+
+When the character comes from an image model and will ship, follow `references/layered-art.md` from
+start to finish. It fixes the input (one reference picture to a contract, then a fixed list of layers
+from fixed prompts) and refuses what doesn't meet it. Do not mark joints, write masks, or tune
+anything for one picture: there would be no end to it. A fault found on one character is fixed in the
+general rule and tested on two. Build `walk` first and wait for the user's approval before any other
+clip. `cut_parts.py` is only for quick tests of tight-fitting characters.
+
 ## Workflow
 
 1. **Pin down four choices.** Ask only about what the user left open and that changes the output:
@@ -120,6 +130,7 @@ These are the rules behind the numbers. `references/smoothness.md` has the reaso
 
 Read these when the task reaches them:
 
+- `references/layered-art.md`: the production route for AI art: input contract, fixed layers, gates, QA
 - `references/character-spec.md`: every spec field, cut-out mode for the user's own layered art, custom clips
 - `references/ai-art.md`: AI-generated characters: the prompt, marking joints, cutting and checking
 - `references/smoothness.md`: QA checks, skeleton constraints, causes and fixes; diagnosing stutter

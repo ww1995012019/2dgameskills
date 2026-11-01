@@ -15,13 +15,14 @@ import numpy as np
 from .mathx import rot, smooth
 
 SIM_HZ = 180
+FLOOR_TOUCH = 1.5   # rig units above the floor at which a chain counts as lying on it
 DT = 1.0 / SIM_HZ
 
 
 class ChainDef:
     def __init__(self, name, attach, n, seg, gravity=520.0, drag=5.0, stiff=0.0, rest=(-0.3, -1.0),
                  flutter=0.0, ground=True, follow=0.0, rest_frame="chest_rot", max_bend=62.0,
-                 width=(0.0, 0.0), max_curl=140.0):
+                 width=(0.0, 0.0), max_curl=140.0, swing=None):
         self.name, self.attach, self.n, self.seg = name, attach, n, seg
         self.gravity, self.drag, self.stiff = gravity, drag, stiff
         self.rest = np.array(rest, dtype=float) / (math.hypot(*rest) or 1)
@@ -30,6 +31,7 @@ class ChainDef:
         self.max_bend = max_bend    # degrees between neighbouring segments; stops knots
         self.max_curl = max_curl    # degrees summed root to tip; stops the chain rolling into a loop
         self.width = np.linspace(width[0], width[1], n)     # drawn strip width, root to tip
+        self.swing = swing          # (low, high) degrees a segment may turn from rest in its frame, or None
 
 
 def _anchor_fn(attach):
@@ -141,7 +143,14 @@ def simulate(defn, clip, body, start=None, settle_seconds=6.0, state_at=None):
             # Inelastic floor: moving p alone would leave Verlet an upward velocity and bounce
             # the cloth. Then ground friction.
             q[below, 1] = p[below, 1]
-            p[below, 0] = q[below, 0] * 0.6 + p[below, 0] * 0.4
+            if not defn.swing:
+                p[below, 0] = q[below, 0] * 0.6 + p[below, 0] * 0.4
+            elif below.any():   # a sheet on the floor slides out flat: gripped, it piles up on its tip
+                for _ in range(4):
+                    p[1:-1] = p[1:-1] * 0.5 + (p[:-2] + p[2:]) * 0.25
+                    p[:] = _keep_lengths(p, defn.seg)
+                    pushed = _ground(p, defn)
+                    q[pushed, 1] = p[pushed, 1]
         if i >= keep_from:
             out[k] = p
             k += 1
@@ -202,7 +211,26 @@ def _constrain(p, defn, frame_rot):
             else:
                 p[i] += delta * diff * 0.5
                 p[i + 1] -= delta * diff * 0.5
+    if defn.swing:
+        _limit_swing(p, defn, frame_rot)
     _limit_bend(p, defn.seg, defn.max_bend, defn.max_curl)
+
+
+def _limit_swing(p, defn, frame_rot):
+    """Each segment stays inside a fan around the rest direction, which turns with the body. Cloth
+    behind a figure stays behind it through a flip, and hair never falls across the face. A chain on
+    the floor lies where it fell: the body turning above it can't drag it through the ground."""
+    if defn.ground and p[1:, 1].min() < FLOOR_TOUCH:
+        return
+    low, high = math.radians(defn.swing[0]), math.radians(defn.swing[1])
+    d = rot(tuple(defn.rest), frame_rot * defn.follow)
+    base = math.atan2(d[1], d[0])
+    for i in range(len(p) - 1):
+        s = p[i + 1] - p[i]
+        turn = (math.atan2(s[1], s[0]) - base + math.pi) % math.tau - math.pi
+        fixed = max(low, min(high, turn))
+        if fixed != turn:
+            p[i + 1] = p[i] + np.array((math.cos(base + fixed), math.sin(base + fixed))) * defn.seg
 
 
 def _limit_bend(p, seg, max_bend, max_curl=360.0):
@@ -222,12 +250,26 @@ def _limit_bend(p, seg, max_bend, max_curl=360.0):
             p[i + 1] = p[i] + np.array((math.cos(base), math.sin(base))) * seg
 
 
-def blend_to(bake, target, seg, frac=0.55):
+def turn_to(pos, target, w, seg):
+    """A chain shape part way to another, each segment turned the short way round. Averaging points
+    instead would crumple a chain whose body is still mid-flip, far from the shape it's heading for."""
+    a, b = np.diff(pos, axis=0), np.diff(target, axis=0)
+    from_ang, to_ang = np.arctan2(a[:, 1], a[:, 0]), np.arctan2(b[:, 1], b[:, 0])
+    ang = from_ang + ((to_ang - from_ang + math.pi) % math.tau - math.pi) * w
+    steps = np.stack([np.cos(ang), np.sin(ang)], 1) * seg
+    return pos[0] + np.concatenate([np.zeros((1, 2)), np.cumsum(steps, axis=0)])
+
+
+def blend_to(bake, target, seg, frac=0.55, turning=None):
     """Ease the tail of a non-loop bake into the next clip's declared entry state."""
     n = len(bake.pos)
     start = int(n * (1 - frac))
     for i in range(start, n):
         w = smooth((i - start) / max(1, n - 1 - start))
+        if turning:         # the chain's definition, when it should turn instead of fade
+            bake.pos[i] = turn_to(bake.pos[i], target, w, seg)
+            _limit_bend(bake.pos[i], seg, turning.max_bend, turning.max_curl)
+            continue
         # Blend the shape relative to the anchor, which keeps following the body: blending
         # world positions would pull the chain off a character that is still displaced.
         anchor = bake.pos[i][0].copy()
@@ -264,5 +306,5 @@ def bake_all(clips, body, defs):
         for d in defs:
             target = bakes[clip.next][d.name]
             entry = getattr(clip, "next_at", 0.0)
-            blend_to(bakes[clip.name][d.name], target.at(clips[clip.next].duration * entry), d.seg)
+            blend_to(bakes[clip.name][d.name], target.at(clips[clip.next].duration * entry), d.seg, turning=d if d.swing else None)
     return bakes

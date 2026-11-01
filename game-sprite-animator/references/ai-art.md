@@ -1,5 +1,9 @@
 # AI-generated art
 
+**For a character that will ship, use `references/layered-art.md`.** This page cuts one picture along
+its bones. That suits a quick test of a tight-fitting character. Robes, capes, wide sleeves and long
+hair can't work here: the cut warns about them, and the faults are listed in that reference.
+
 Use this when the user wants their own look and will make the character with an image generator
 (GPT image, Midjourney, Stable Diffusion, Jimeng, Kling and the like). The image model draws the
 character once; `scripts/cut_parts.py` cuts it into parts, and the rig, motion library, QA and
@@ -120,6 +124,7 @@ Warnings in the output and in `bind_report.json`:
 | `hidden pixels filled from its own colours` | something in front covered part of it (an arm across the chest) and the gap was painted from its own colours | look at that area when it swings open in `motion_check.png` |
 | `far side is N% of the near side` | near and far limb lengths disagree | one of the two sets of marks is wrong |
 | `name: art is about N units wide each side` | the limb is much slimmer than the rig's default, so the part in front takes a block of its neighbour at the joint, which shows as a square end at a sharp bend | add the `_radius` the message gives and cut again |
+| `N% of the art is loose` | robes, capes, wide sleeves or long hair, which rigid parts tear or stiffen | stop cutting and use `references/layered-art.md` |
 | `head is N px tall at hd` | the rig's scale comes from the legs, so real proportions give a small head and a face of a few pixels | use `--preset hd512`, or ask for a bigger head |
 | `joint … is not on the character` | the mark is on the background | move it |
 | `foot is N units` | heel and toe marks are far off | re-mark them on the sole |

@@ -22,7 +22,9 @@ from sprite_anim.fx import build_fx  # noqa: E402
 from sprite_anim.motions import SEAMS, build_clips  # noqa: E402
 from sprite_anim.integrity import HUMANOID_BONES  # noqa: E402
 from sprite_anim.part_check import check_parts  # noqa: E402
+from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion  # noqa: E402
 from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_time, to_u8  # noqa: E402
+from sprite_anim.rig import Body  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -96,7 +98,8 @@ def main():
     over = parse_overrides(a.fps_override)
     name = spec.get("name", "character")
 
-    clips = build_clips(spec.get("style"), spec.get("custom_clips"), spec.get("clip_key_overrides"))
+    clips = build_clips(spec.get("style"), spec.get("custom_clips"), spec.get("clip_key_overrides"), spec.get("gait"),
+                        Body.from_spec(spec["body"]) if spec.get("puppet") else None)
     names = list(clips) if a.clips == "all" else [c for c in a.clips.split(",") if c]
     unknown = [c for c in names if c not in clips]
     if unknown:
@@ -183,9 +186,16 @@ def main():
     if spec.get("parts") and os.path.isfile(bind_path):
         with open(bind_path, encoding="utf-8") as fh:
             bind = json.load(fh)
+    problems = check_parts(spec, r.art.body) if spec.get("parts") else []
+    if r.art.puppet:
+        problems = check_layers(r.art.puppet)
+        for nm in names:
+            problems += check_motion(r, clips[nm], len(rendered[nm]["frames"]), over.get(nm, fps))
+            problems += check_hands(r, spec, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
+            problems += check_core(r, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
-                       part_problems=check_parts(spec, r.art.body) if spec.get("parts") else [],
+                       part_problems=problems,
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
                        head_size=r.art.body.head_size,
                        unit_px=unit_px, speeds={n: clips[n].speed * unit_px for n in names}), fh)
