@@ -179,6 +179,7 @@ def check_motion(renderer, clip, n, fps):
     body = renderer.art.body
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     out, worst_fold, worst_kink, planted = [], {}, {}, []
+    worst_ground = {}
     arms = {layer.name: layer for layer in getattr(puppet, "layers", [])
             if layer.name in ("arm_near", "arm_far")}
     reference_spacing = None
@@ -200,10 +201,14 @@ def check_motion(renderer, clip, n, fps):
                                            out=np.ones(2), where=reference_spacing > 0))
         cloth = renderer.cloth_at(clip, t)
         cv.set_squash(pose["squash"], 0.0)
-        for layer, verts in puppet.meshes(cv, sk, cloth):
+        for layer, verts in puppet.meshes(cv, sk, cloth, 'ground' in clip.tags):
             share = inverted(verts, layer.cells)
             if share > worst_fold.get(layer.name, (0,))[0]:
                 worst_fold[layer.name] = (share, i)
+            if 'ground' in clip.tags and (getattr(layer, 'kind', None) == 'cloth' or layer.name == 'robe'):
+                below = max(0.0, float(verts[layer.used, 1].max()) - cv.oy)
+                if below > worst_ground.get(layer.name, (0,))[0]:
+                    worst_ground[layer.name] = (below, i)
         for name, pts in cloth.items():
             d = np.diff(np.asarray(pts), axis=0)
             turn = np.degrees(np.abs(np.arctan2(d[:-1, 0] * d[1:, 1] - d[:-1, 1] * d[1:, 0], (d[:-1] * d[1:]).sum(1))))
@@ -222,6 +227,9 @@ def check_motion(renderer, clip, n, fps):
     for name, (share, i) in worst_fold.items():
         if share > FOLD_SHARE:
             out.append(f"fold: {name}: {clip.name} frame {i}: {share:.1%} of the mesh turned inside out; the bend is too sharp for this art")
+    for name, (below, i) in worst_ground.items():
+        if below > 0.5:
+            out.append(f"garment_ground: {name}: {clip.name} frame {i}: {below:.1f} px below the floor")
     for name, (deg, i) in worst_kink.items():
         if deg > KINK_DEG:
             out.append(f"kink: {name}: {clip.name} frame {i}: bends {deg:.0f} degrees between segments; the cloth reads as pieces")

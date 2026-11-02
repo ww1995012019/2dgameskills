@@ -9,6 +9,7 @@ Non-loop clips: start from the end state of `prev`, and blend the tail toward th
 entry state of `next` (normally its first frame), so the cloth is continuous through handovers.
 """
 import math
+import copy
 
 import numpy as np
 
@@ -282,13 +283,19 @@ def blend_to(bake, target, seg, frac=0.55, turning=None):
         bake.pos[i] = _keep_lengths(anchor + rel, seg)
 
 
-def bake_all(clips, body, defs):
+def bake_all(clips, body, defs, grounded_chains=()):
     """Returns {clip_name: {chain_name: ClothBake}} honouring prev/next wiring."""
+    def contact_def(d, clip):
+        if d.name in grounded_chains and 'ground' in getattr(clip, 'tags', ()) and not d.ground:
+            d = copy.copy(d)
+            d.ground = True
+        return d
+
     bakes = {c: {} for c in clips}
     loops = [c for c in clips.values() if c.loop]
     for clip in loops:
         for d in defs:
-            bakes[clip.name][d.name] = simulate(d, clip, body)
+            bakes[clip.name][d.name] = simulate(contact_def(d, clip), clip, body)
     # Resolve non-loop clips in dependency order so prev is ready first.
     pending = [c for c in clips.values() if not c.loop]
     guard = 0
@@ -302,7 +309,7 @@ def bake_all(clips, body, defs):
                 prev = None
             for d in defs:
                 start = bakes[prev][d.name].last() if prev else None
-                b = simulate(d, clip, body, start=start)
+                b = simulate(contact_def(d, clip), clip, body, start=start)
                 bakes[clip.name][d.name] = b
             pending.remove(clip)
     for clip in clips.values():
@@ -311,5 +318,6 @@ def bake_all(clips, body, defs):
         for d in defs:
             target = bakes[clip.next][d.name]
             entry = getattr(clip, "next_at", 0.0)
-            blend_to(bakes[clip.name][d.name], target.at(clips[clip.next].duration * entry), d.seg, turning=d if d.swing else None)
+            effective = contact_def(d, clip)
+            blend_to(bakes[clip.name][d.name], target.at(clips[clip.next].duration * entry), d.seg, turning=effective if d.swing else None)
     return bakes

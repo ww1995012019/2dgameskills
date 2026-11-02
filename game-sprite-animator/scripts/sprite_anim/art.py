@@ -782,13 +782,13 @@ class CharacterArt:
 
     # -- frame ------------------------------------------------------------------------
 
-    def draw(self, cv, sk, pose, cloth, smear_hist=None):
+    def draw(self, cv, sk, pose, cloth, smear_hist=None, ground_contact=False):
         c = self.c
         cv.set_squash(pose["squash"], 0.0)
         if self.puppet:
             if smear_hist:
                 self.smear(cv, smear_hist[0], smear_hist[1], pose["smear"])
-            self.puppet.draw(cv, sk, cloth)
+            self.puppet.draw(cv, sk, cloth, ground_contact)
             return
         if self.cutout:
             if smear_hist:
