@@ -42,7 +42,9 @@ class Renderer:
         self.defs = chain_defs(self.art.spec)
         self.clips = clips
         bake_weapon_contacts(clips, self.art.body, solve, full_pose)
-        self.bakes = bake_all(clips, self.art.body, self.defs)
+        contact_chains = ({layer.chain for layer in self.art.puppet.layers if layer.kind == 'cloth'}
+                          if self.art.puppet else ())
+        self.bakes = bake_all(clips, self.art.body, self.defs, grounded_chains=contact_chains)
         self.fit = self.fit_scale()
         self.unit = size * UNIT_PX * self.fit
         self.pal = np.array(self.art.palette(), dtype=np.float32) if pixel else None
@@ -56,7 +58,8 @@ class Renderer:
         """Shrink the character just enough that its widest action fits the frame, measured
         from every pose. Cropped art is a bug at any size, and raising --size can't fix it
         because the character scales with the frame."""
-        half, up = 0.0, 0.0
+        half, up, down = 0.0, 0.0, 0.0
+        mesh_canvas = Canvas(2, 1, 1.0, 0.0, 1.0, False, self.art.ink) if self.art.puppet else None
         for clip in self.clips.values():
             # 120 Hz: a fast swing crosses its widest point between 30 Hz samples, and
             # hd60 frames or the smear land right on it.
@@ -68,6 +71,17 @@ class Renderer:
                 wide = 1.0 / pose["squash"] ** 0.6     # squash widens the body as it flattens
                 for p in self.art.extent_points(sk, pose):
                     half, up = max(half, abs(p[0]) * wide), max(up, p[1] * pose["squash"])
+                if mesh_canvas is not None:
+                    mesh_canvas.set_squash(pose['squash'], 0.0)
+                    # Source cells, not skeleton joints, bound a painted robe
+                    # or hair fan. Raw mesh bounds are conservative: subsequent
+                    # relaxation averages neighbouring vertices inside them.
+                    for layer, vertices in self.art.puppet.meshes(
+                            mesh_canvas, sk, self.cloth_at(clip, t), 'ground' in clip.tags, relax=False):
+                        points = vertices[layer.used]
+                        half = max(half, float(np.abs(points[:, 0] - mesh_canvas.ox).max()))
+                        up = max(up, float((-points[:, 1]).max()))
+                        down = max(down, float(points[:, 1].max()))
                 # The smear's spline overshoots the blade positions it passes through. Measure
                 # it at the shortest window and at 10 fps, the longest any preset uses.
                 for dt in (0.0, 0.1):
@@ -81,6 +95,9 @@ class Renderer:
         # 4 units of pad cover the outline and the blade's own width; the points are exact.
         frame_half, frame_up = 0.5 / UNIT_PX, GROUND_FRAC / UNIT_PX
         fit = min((frame_half - 3) / max(half + 4, 1), (frame_up - 3) / max(up + 4, 1))
+        if self.art.puppet:
+            frame_down = (1 - GROUND_FRAC) / UNIT_PX
+            fit = min(fit, (frame_down - 3) / max(down + 4, 1))
         # A puppet's art is far finer than the frame, so it fills the frame instead of the rig's 100 units.
         return fit if self.art.puppet else min(1.0, fit)
 
@@ -109,7 +126,8 @@ class Renderer:
         sk = solve(pose, self.art.body)
         cv = Canvas(self.size, self.ss, self.unit, GROUND_FRAC, self.stroke,
                     self.pixel, self.art.ink)
-        self.art.draw(cv, sk, pose, self.cloth_at(clip, t), self.smear_history(clip, t, pose, dt))
+        self.art.draw(cv, sk, pose, self.cloth_at(clip, t), self.smear_history(clip, t, pose, dt),
+                      ground_contact='ground' in clip.tags)
         return cv.resolve()
 
     def render(self, clip, t, dt=0.0):

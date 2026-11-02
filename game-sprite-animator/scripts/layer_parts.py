@@ -11,6 +11,7 @@ contract in references/layered-art.md, and bind refuses a layer it can't place, 
 make again. Joints, scale and cloth all come from the layers themselves.
 """
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -307,7 +308,9 @@ def read_arm(mask, hand_mask=None):
         elbow = legal_elbow(mask, shoulder, at_length(line, 0.47), wrist)
         return dict(shoulder=shoulder, elbow=elbow, wrist=wrist, tip=tip)
     line = medial(mask, root, tip, 9)
-    return dict(shoulder=np.array(at_length(line, 0.05)), elbow=at_length(line, 0.47), wrist=at_length(line, 0.86), tip=tip)
+    shoulder, wrist = np.array(at_length(line, 0.05)), at_length(line, 0.86)
+    elbow = legal_elbow(mask, shoulder, at_length(line, 0.47), wrist)
+    return dict(shoulder=shoulder, elbow=elbow, wrist=wrist, tip=tip)
 
 
 def legal_elbow(mask, shoulder, elbow, wrist):
@@ -390,7 +393,99 @@ def align_hips(layer, waist, hip):
     return placed(layer, fit, (layer.shape[1], layer.shape[0])), fit
 
 
-def bind(ref, layers):
+def neck_core(torso):
+    """A narrow cross-section just inside the torso's upper attachment."""
+    ys, _ = np.nonzero(torso)
+    height = int(ys.max() - ys.min())
+    row = int(ys.min()) + max(1, round(height * 0.02))
+    columns = np.flatnonzero(torso[row])
+    lo, hi = np.quantile(columns, (0.2, 0.8))
+    return row, np.arange(int(math.ceil(lo)), int(math.floor(hi)) + 1), height
+
+
+def neck_coverage(head, torso, dx=0, dy=0):
+    row, columns, _ = neck_core(torso)
+    x, y = columns - dx, row - dy
+    valid = (x >= 0) & (x < head.shape[1])
+    if y < 0 or y >= head.shape[0] or not len(columns):
+        return 0.0
+    return float(head[y, x[valid]].sum() / len(columns))
+
+
+def seat_head(head, torso):
+    """Find the smallest bounded translation closing a registered neck seam.
+
+    This only moves a whole painted layer; it never fills or edits its pixels.
+    A corner touching the torso is insufficient: the central neck section must
+    be covered. Large redraw drift is still refused and every colour gate runs
+    again on the final registration.
+    """
+    if neck_coverage(head, torso) >= 0.95:
+        return 0, 0
+    row, columns, height = neck_core(torso)
+    bound = max(1, round(height * 0.08))
+    best = None
+    for dy in range(bound + 1):
+        for dx in range(-bound // 4, bound // 4 + 1):
+            x, y = columns - dx, row - dy
+            valid = (x >= 0) & (x < head.shape[1])
+            covered = (0 <= y < head.shape[0] and
+                       head[y, x[valid]].sum() / len(columns) >= 0.95)
+            if covered:
+                candidate = (dx * dx + dy * dy, dx, dy)
+                if best is None or candidate < best:
+                    best = candidate
+    if best is None:
+        raise Rejected("head/torso: no continuous neck overlap within registration tolerance; remake the complete neck without changing the head pose")
+    return best[1], best[2]
+
+
+def check_neck_contact(masks):
+    """Colour registration alone can leave an otherwise matching head floating.
+
+    Head and torso are independently painted, so require real opaque overlap
+    before assigning both images to a shared skeleton joint. Moving a joint
+    cannot close a gap already present in the registered artwork.
+    """
+    if neck_coverage(masks["head"], masks["torso"]) < 0.95:
+        raise Rejected("head/torso: no continuous neck overlap after registration; remake the complete neck down to the collar")
+
+
+def registration(name, layer, ref, cache_dir=None):
+    """Reuse only an identical input and algorithm, including after a refused bind.
+
+    A replacement layer must not make every unchanged layer run the expensive
+    colour search again. Cached values are search results, never QA verdicts.
+    All coverage, contact and match gates still run on every bind.
+    """
+    path = None
+    if cache_dir:
+        digest = hashlib.sha256()
+        with open(__file__, 'rb') as source:
+            code = source.read()
+        # Only the search and its landmark readers determine a cached fit.
+        # Changing a later acceptance gate must rerun that gate, not discard
+        # unchanged colour-search results.
+        digest.update(code.split(b'# -- reading the skeleton')[0])
+        digest.update(code[code.index(b'def band_mid('):code.index(b'def read_arm(')])
+        digest.update(name.encode())
+        for image in (ref, layer):
+            digest.update(str(image.shape).encode())
+            digest.update(image.tobytes())
+        os.makedirs(cache_dir, exist_ok=True)
+        path = os.path.join(cache_dir, digest.hexdigest() + '.json')
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8') as source:
+                return json.load(source)
+    fit = (place_leg(layer, ref, name.removeprefix('leg_'))
+           if name in ('leg_near', 'leg_far') else place(layer, ref))
+    if path:
+        with open(path, 'w', encoding='utf-8') as target:
+            json.dump(fit, target)
+    return fit
+
+
+def bind(ref, layers, fit_cache=None):
     """Places every layer and works out the rig. Returns (placed layers, spec's puppet + body, report)."""
     size = (ref.shape[1], ref.shape[0])
     missing = [n for n, s in SLOTS.items() if s[2] and n not in layers]
@@ -407,13 +502,21 @@ def bind(ref, layers):
         # position; the measured waist/crotch can correct modest drift below.
         if name in HIDDEN:
             fit = dict(s=1.0, deg=0.0, dx=0.0, dy=0.0, cx=0.0, cy=0.0, error=0.0)
-        elif name in ("leg_near", "leg_far"):
-            fit = place_leg(layers[name], ref, name.removeprefix("leg_"))
         else:
-            fit = place(layers[name], ref)
+            fit = registration(name, layers[name], ref, fit_cache)
+        # Attachment seating may adjust a fit later; never mutate a search
+        # result shared by a caller, a cache, or another layer.
+        fit = dict(fit)
         out[name] = placed(layers[name], fit, size)
         placements[name] = fit
         fits[name] = {k: round(v, 3) for k, v in fit.items() if k not in ("cx", "cy")}
+    dx, dy = seat_head(out["head"][..., 3] > 128, out["torso"][..., 3] > 128)
+    if dx or dy:
+        placements["head"]["dx"] += dx
+        placements["head"]["dy"] += dy
+        out["head"] = placed(layers["head"], placements["head"], size)
+        fits["head"].update(dx=round(placements["head"]["dx"], 3),
+                            dy=round(placements["head"]["dy"], 3), neck_shift=[dx, dy])
     # An image model can read "near" and "far" as the same limb. Two layers on one limb cover the same
     # pixels, and no threshold on either layer alone would show it.
     for one, other in (("arm_near", "arm_far"), ("leg_near", "leg_far")):
@@ -442,7 +545,8 @@ def bind(ref, layers):
         raise Rejected(f"{spill:.0%} of the layers lies outside the reference; a layer holds extra art, see layers_check.png")
 
     masks = {n: a[..., 3] > 128 for n, a in out.items()}
-    for name in ("cloth_back", "hair_back"):
+    check_neck_contact(masks)
+    for name in ("cloth_back", "hair_back", "robe"):
         if name in masks and (masks[name] & masks["torso"]).sum() > MAX_SHARED * masks[name].sum():
             raise Rejected(f"torso: it also holds the art of {name}, so that cloth would be drawn twice; make torso again")
     ln, lf = read_leg(masks["leg_near"]), read_leg(masks["leg_far"])
@@ -557,6 +661,15 @@ def bind(ref, layers):
     skirt_len = max(hem - hip[1], 0.25 * near_px) * 1.1
     skirt = hip + thighs / (np.hypot(*thighs) or 1) * skirt_len
     tube("torso", ["skirt", "hip", "waist", "head_base"], [skirt, hip, waist, head_base])
+    if "robe" in masks:
+        # A connected wraparound garment is one layer in front of the legs.
+        # Splitting its front apron from its train invents an occlusion boundary
+        # where the source has continuous fabric. Keep the whole skirt, and
+        # let a body-aligned virtual hem joint bend it without cutting panels.
+        robe_ys, _ = np.nonzero(masks["robe"])
+        robe_len = max(float(robe_ys.max()) - hip[1], 0.25 * near_px) * 1.1
+        robe_hem = hip + thighs / (np.hypot(*thighs) or 1) * robe_len
+        tube("robe", ["robe_hem", "hip", "waist"], [robe_hem, hip, waist])
     data["head"] = dict(kind="rigid", follow=["head_base", "head_rot"], anchor=[round(float(v), 2) for v in head_base])
     data["hips"] = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
 
@@ -627,6 +740,8 @@ def bind(ref, layers):
                   rest_arm={"n": [[round(float(v), 2) for v in an["wrist"]], [round(float(v), 2) for v in an["elbow"]]],
                             "f": [[round(float(v), 2) for v in af["wrist"]], [round(float(v), 2) for v in af["elbow"]]]},
                   layers=ordered, chains=chains, source="source.png")
+    if "robe" in masks:
+        puppet["robe_len"] = round(float(robe_len / ppu), 3)
     if weapon_len:
         puppet.update(weapon_length=round(weapon_len, 2), weapon_back=round(weapon_back, 2))
         body.update(weapon_front=round(weapon_len, 2), weapon_back=round(weapon_back, 2))
@@ -644,6 +759,7 @@ def main():
     b.add_argument("--layers", required=True, help="folder with <slot>.png for each layer")
     b.add_argument("--name", default="character")
     b.add_argument("--out", required=True)
+    b.add_argument("--fit-cache", help="reuse registration searches for identical images; all acceptance gates still run")
     a = ap.parse_args()
     try:
         ref = reference(a.image)
@@ -662,7 +778,7 @@ def main():
                   "Make art layers from the reference; make each hand hint from its finished arm layer.")
             return
         layers = {n: key_out(os.path.join(a.layers, n + ".png")) for n in (*SLOTS, *HAND_HINTS) if os.path.isfile(os.path.join(a.layers, n + ".png"))}
-        out, spec, report = bind(ref, layers)
+        out, spec, report = bind(ref, layers, a.fit_cache)
     except Rejected as e:
         sys.exit(f"[rejected] {e}")
     folder = os.path.join(a.out, "layers")

@@ -110,6 +110,9 @@ class Layer:
                 if y0 < h and x0 < w and solid[y0:y1, x0:x1].any():
                     keep[j, i] = True
         self.cells = np.argwhere(keep)
+        self.used = np.zeros(vx.shape, bool)
+        for dj, di in ((0, 0), (0, 1), (1, 0), (1, 1)):
+            self.used[self.cells[:, 0] + dj, self.cells[:, 1] + di] = True
         self.bind_curve()
 
     def bind_curve(self):
@@ -201,6 +204,17 @@ def untangle(verts, cells):
     return v
 
 
+def floor_contact(verts, floor, band):
+    """A monotone soft floor for loose fabric, in screen coordinates.
+
+    Away from contact this is the identity. Below-floor material gathers into
+    a thin layer above the floor; x positions and the body's joints stay put.
+    """
+    result = verts.copy()
+    result[..., 1] = floor - band * np.logaddexp(0, (floor - result[..., 1]) / band)
+    return result
+
+
 def rigid(vx, vy, pivot_src, pivot_out, angle, scale):
     """Vertices turned clockwise on screen by angle about the pivot and carried to pivot_out."""
     c, s = math.cos(angle), math.sin(angle)
@@ -266,6 +280,7 @@ class Puppet:
         self.joints = {k: np.array(v, dtype=np.float64) for k, v in data["joints"].items()}
         self.rest_angles = data["rest_angles"]
         self.skirt_len = float(data.get("skirt_len", 0.0))
+        self.robe_len = float(data.get("robe_len", 0.0))
         self.core_radius = float(data.get("core_radius", 0.0))
         self.rest_arm = {k: tuple(tuple(p) for p in v) for k, v in data.get("rest_arm", {}).items()}
         self.layers = [Layer(n, d, base) for n, d in data["layers"].items()]
@@ -295,7 +310,7 @@ class Puppet:
         return [np.array(cv.T(self.joint_at(b, sk))) for b in layer.bones]
 
     def joint_at(self, name, sk):
-        if name != "skirt":
+        if name not in ("skirt", "robe_hem"):
             return sk[name]
         # Hanging panels sit between the two thighs, so they swing by half of what either leg does.
         hip = np.array(sk["hip"])
@@ -304,9 +319,10 @@ class Puppet:
         off = math.atan2(line[0] * mean[1] - line[1] * mean[0], line @ mean)
         limit = math.radians(SKIRT_SWING)
         turn = max(-limit, min(limit, off)) + math.atan2(line[1], line[0])
-        return tuple(hip + np.array((math.cos(turn), math.sin(turn))) * self.skirt_len)
+        length = self.robe_len if name == "robe_hem" else self.skirt_len
+        return tuple(hip + np.array((math.cos(turn), math.sin(turn))) * length)
 
-    def meshes(self, cv, sk, cloth):
+    def meshes(self, cv, sk, cloth, ground_contact=False, relax=True):
         """Each layer, back to front, with its mesh for this frame in canvas pixels."""
         scale = cv.s / self.px_per_unit
         for layer in self.layers:
@@ -322,7 +338,16 @@ class Puppet:
                     held = rigid(layer.vx + layer.offset[0], layer.vy + layer.offset[1], layer.foot["ankle"],
                                  cv.T(sk["an_" + side]), angle, scale)
                     verts = verts * (1 - layer.foot_w[..., None]) + held * layer.foot_w[..., None]
-            yield layer, verts if layer.kind == "rigid" else untangle(blur(verts, EASE_PASSES), layer.cells)
+            if layer.kind != "rigid" and relax:
+                verts = untangle(blur(verts, EASE_PASSES), layer.cells)
+            if ground_contact and (layer.kind == "cloth" or layer.name == "robe"):
+                # The chain supports its centreline. The painted sheet has
+                # width too: compress the contacting fabric continuously onto
+                # the floor without lifting the body or cutting source pixels.
+                verts = floor_contact(verts, cv.oy, max(cv.s * 0.5, 1e-6))
+                if relax:
+                    verts = untangle(verts, layer.cells)
+            yield layer, verts
 
     def foot_turn(self, layer, sk, cv):
         """Radians the boot turns from the picture, clockwise on screen, kept within the ankle's reach."""
@@ -332,9 +357,9 @@ class Puppet:
         rel = (math.radians(sk["fr_" + side] - foot["rest_angle"]) - shin + math.pi) % math.tau - math.pi
         return shin + max(-math.radians(ANKLE_TURN), min(math.radians(ANKLE_TURN), rel))
 
-    def draw(self, cv, sk, cloth):
+    def draw(self, cv, sk, cloth, ground_contact=False):
         scale = cv.s / self.px_per_unit
-        for layer, verts in self.meshes(cv, sk, cloth):
+        for layer, verts in self.meshes(cv, sk, cloth, ground_contact):
             drawn = raster(layer, verts, self.mip(layer, scale), cv.w, cv.h)
             ys, xs = np.nonzero(drawn[..., 3] > 1e-3)
             if not len(ys):

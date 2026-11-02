@@ -50,8 +50,9 @@ and change nothing else.
 | `leg_far` | rear leg: foot further left | yes |
 | `leg_near` | front leg: foot further right | yes |
 | `hips` | solid under-layer from waist to crotch, mostly hidden by the torso | yes |
-| `torso` | neck to hips, with what hangs in front of the thighs | yes |
-| `head` | face and hair on the skull | yes |
+| `robe` | optional complete connected wraparound skirt, including front panels, train and lining, drawn in front of the legs | no |
+| `torso` | neck to hips, with the complete front apron at its original length, including long front panels | yes |
+| `head` | face, hair on the skull, and the exposed neck down to the collar, overlapping the torso's neck | yes |
 | `weapon` | the whole weapon | no |
 | `arm_near` | front arm: hand further right, with sleeve | yes |
 
@@ -60,6 +61,17 @@ splits the robe into panels, so background shows through the figure below the be
 outline gives no sign of. It holds only hidden art, so it is judged by what it fills, not by matching
 the reference, and it is required even for a character whose torso looks closed. `bind` cuts it to the
 middle of the body and fades its lower end, so it never shows past the robe as a stiff block.
+
+For a connected wraparound skirt whose front and rear panels cannot be separated
+without repeatedly duplicating or omitting fabric, use the optional `robe` slot
+instead. It retains the whole garment in one image, in front of both legs and
+behind the torso and hands. Keep the torso to the upper garment, belt and short
+belt ornaments in this route. Omit `cloth_back` unless there is a separate cape
+or independent trailing garment. The robe has its own body-aligned hem joint;
+its length never stretches the torso's shorter apron. It bends with the body
+and average thigh direction, rather than simulating each loose panel separately.
+Review its silhouette and mesh folds in motion; the walk is the first gate, and
+this does not establish that flips, attacks or other clips will suit a wide robe.
 
 Limbs are named by where they are in the picture, never "near" and "far" in a prompt: an image model
 reads both as the same limb.
@@ -117,8 +129,29 @@ The message names what to do. Remake the layer it names and run `bind` again.
 | `N% of the layers lies outside` | a layer holds extra art |
 | `torso: it also holds the art of ...` | the torso took the tail or hair, so it would be drawn twice |
 | `hips: N% of the body below the belt is see-through` | nothing fills the body between the belt and the crotch |
+| `head/torso: no continuous neck overlap ...` | colour matching left an open neck or only one touching corner; redraw the complete bare neck at its reference position |
 
 Never bypass a refusal by editing `bind`'s limits or the layer's pixels.
+
+Layer prompts keep even small isolated parts at their original scale and position.
+The head and torso share an exposed-neck overlap; registering their colours alone
+does not prove that the jaw connects to the collar. After colour registration,
+the binder seats the whole head by the smallest bounded translation that covers
+95% of the central 60% of the torso's neck cross-section, sampled 2% into its
+height. Vertical movement is limited to 8% of torso height, horizontal movement
+to one quarter of that. Larger drift is refused. All colour, coverage and spill
+checks run on the seated result. Internal attachment edges have no dark cap
+outline, and the head's neck contains bare skin rather than a second collar.
+The rear arm must reconstruct
+its own hidden shoulder rather than copying the visible front shoulder plate.
+Trailing fabric ends at the rear hip and excludes every front-facing skirt flap.
+Keep long front panels in the torso at their original length: shortening every
+apron loses silhouette coverage even when the rear cloth was separated correctly.
+
+For repeated layer replacements, `bind --fit-cache path/to/cache` can reuse the
+expensive registration search. The key covers the exact reference, layer, slot,
+and registration source. Changed art is searched again, and every acceptance check runs
+again even on a cache hit. Failed binds also keep completed search results.
 
 ## What QA checks
 
@@ -135,6 +168,7 @@ These run in `qa_motion.py` under "broken parts", and any one fails the set:
 | `arm_chain` | an arm follows the other arm's joints | each arm layer's bone path | its own shoulder, elbow, wrist |
 | `arm_spacing` | distinct reference arms collapse together at rest | median distal-upper-arm and wrist spacing relative to reference | at least 50% where reference spacing exceeds sleeve widths |
 | `crouch` | walk on folded legs | mean knee bend in `walk` while the planted foot is ahead of or under the hip | 30 degrees |
+| `garment_ground` | loose painted fabric penetrates the floor in a ground clip | lowest occupied cloth/robe mesh vertex below the canvas ground line | 0.5 px |
 
 `crouch` skips the part of stance with the foot behind the hip, because a knee bends 40 to 50 degrees
 to push off in any human walk. Counting it reported a false crouch on a correct leg. It judges `walk`
@@ -142,6 +176,20 @@ only: `crouch_walk` bends the knee on purpose, and a running stance flexes about
 
 `fold` is measured by area because the centre of a sharp bend crushes a few cells to nothing. Such a
 cell shows no art whichever way it winds, while counting cells failed legs that looked right.
+
+Framing a painted puppet also measures the occupied source mesh cells at 120 Hz,
+including their real width and any reach below the pivot; skeleton endpoints and
+cloth centrelines alone do not bound a wide robe or hair fan. Mesh relaxation
+averages neighbouring vertices, so the raw mapped bounds conservatively contain
+the relaxed art. Frame size and QA thresholds are not widened to hide cropping.
+
+In clips tagged `ground`, puppet cloth chains participate in floor contact even
+when the same chain is free in air clips. The painted width of loose cloth and
+the whole robe also has a continuous soft floor: it gathers in a thin layer
+above the ground rather than moving the body upward or cutting source pixels.
+Body, head, weapon and limb layers are not projected by this garment rule.
+It is a two-dimensional contact approximation, not cloth volume simulation;
+inspect the gathered hem during rolls. Air clips retain their free geometry.
 
 A set that passes has passed these measures only. The art may still be wrong, so look before
 reporting: open every frame of `review/` at full size and check each row of the table at the top of

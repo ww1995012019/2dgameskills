@@ -19,10 +19,50 @@ import visual_review as review
 from sprite_anim import puppet_check as pc
 from sprite_anim.motions import build_clips
 from sprite_anim.rig import Body, full_pose, solve
+from sprite_anim.render import Renderer
 from dev.tests.test_puppet import figure, keyed, reference_of
 
 
 class ShoulderBinding(unittest.TestCase):
+    def test_registration_cache_invalidates_changed_art_and_reference(self):
+        ref = np.zeros((24, 24, 4), np.uint8)
+        ref[3:20, 8:16] = (30, 90, 150, 255)
+        art = ref.copy()
+        fit = dict(s=1., deg=0., dx=0., dy=0., cx=0., cy=0., error=0.)
+        with tempfile.TemporaryDirectory() as cache, patch.object(lp, 'place', return_value=fit) as search:
+            self.assertEqual(lp.registration('head', art, ref, cache), fit)
+            self.assertEqual(lp.registration('head', art.copy(), ref.copy(), cache), fit)
+            self.assertEqual(search.call_count, 1)
+            art[4, 9, 0] += 1
+            lp.registration('head', art, ref, cache)
+            self.assertEqual(search.call_count, 2)
+            ref[4, 9, 0] += 1
+            lp.registration('head', art, ref, cache)
+            self.assertEqual(search.call_count, 3)
+
+    def test_neck_contact_on_two_different_builds(self):
+        for kw in ({}, {'hip': (480, 960), 'leg': 300, 'chest': (170, 240), 'head': 210, 'stride': 70, 'width': 84}):
+            with self.subTest(kw=kw):
+                layers = {name: keyed(image) for name, image in figure(**kw).items()}
+                masks = {name: image[..., 3] > 128 for name, image in layers.items()}
+                dx, dy = lp.seat_head(masks['head'], masks['torso'])
+                masks['head'] = np.roll(masks['head'], (dy, dx), axis=(0, 1))
+                lp.check_neck_contact(masks)
+                self.assertEqual(lp.seat_head(masks['head'], masks['torso']), (0, 0))
+                # The old gate accepted even a single touching corner while
+                # the visible neck cross-section stayed completely open.
+                corner = np.zeros_like(masks['head'])
+                first = tuple(np.argwhere(masks['torso'])[0])
+                corner[first] = True
+                self.assertTrue((corner & masks['torso']).any())
+                with self.assertRaisesRegex(lp.Rejected, 'neck overlap'):
+                    lp.check_neck_contact(dict(masks, head=corner))
+                # Colour and silhouette coverage can still be excellent with
+                # the entire head a few pixels above the collar.
+                detached = dict(masks, head=np.roll(masks['head'], -40, axis=0))
+                with self.assertRaisesRegex(lp.Rejected, 'neck overlap'):
+                    lp.check_neck_contact(detached)
+
     def test_independent_measured_shoulders_are_preserved(self):
         for kw in ({}, {'hip': (480, 960), 'leg': 300, 'chest': (170, 240), 'head': 210, 'stride': 70, 'width': 84}):
             with self.subTest(kw=kw):
@@ -122,6 +162,47 @@ class ShoulderReview(unittest.TestCase):
             path.write_text(json.dumps(verdict))
             with self.assertRaisesRegex(SystemExit, 'arms_00.png'):
                 review.record(tmp, str(path))
+
+
+class WraparoundRobe(unittest.TestCase):
+    def test_two_builds_keep_one_complete_robe_and_independent_hems(self):
+        builds = ({}, {'hip': (480, 960), 'leg': 300, 'chest': (170, 240), 'head': 210, 'stride': 70, 'width': 84})
+        identity = dict(s=1., deg=0., dx=0., dy=0., cx=0., cy=0., error=0.)
+        for kw in builds:
+            with self.subTest(kw=kw), tempfile.TemporaryDirectory() as tmp:
+                art = figure(**kw)
+                x, y = kw.get('hip', (470, 880))
+                robe = Image.new('RGB', art['torso'].size, lp.KEY_COLOR)
+                ImageDraw.Draw(robe).polygon([(x-50, y-15), (x+60, y-15),
+                    (x+90, y+225), (x-220, y+225)], fill=(30, 65, 110))
+                art['robe'] = robe
+                arrays = {name: keyed(image) for name, image in art.items()}
+                reference = Image.new('RGBA', robe.size)
+                for name in lp.SLOTS:
+                    if name in arrays:
+                        reference.alpha_composite(Image.fromarray(arrays[name]))
+                with patch.object(lp, 'place', return_value=identity), patch.object(lp, 'place_leg', return_value=identity):
+                    placed, spec, _ = lp.bind(np.asarray(reference), arrays)
+                puppet = spec['puppet']
+                self.assertEqual(puppet['layers']['robe']['bones'], ['robe_hem', 'hip', 'waist'])
+                self.assertEqual(puppet['layers']['torso']['bones'][0], 'skirt')
+                self.assertGreater(puppet['robe_len'], puppet['skirt_len'])
+                names = list(puppet['layers'])
+                self.assertLess(names.index('leg_near'), names.index('robe'))
+                self.assertLess(names.index('robe'), names.index('torso'))
+                np.testing.assert_array_equal(placed['robe'], arrays['robe'])
+                for name, image in placed.items():
+                    file = Path(tmp) / (name+'.png')
+                    Image.fromarray(image).save(file)
+                    puppet['layers'][name]['image'] = file.name
+                spec.update(_dir=tmp, name='robe-test', weapon='none', cloth=[])
+                clips = build_clips(gait=spec['gait'], body=Body.from_spec(spec['body']))
+                renderer = Renderer(spec, 256, clips={'walk': clips['walk']})
+                actual = renderer.art.puppet
+                sk = solve(full_pose({}), renderer.art.body)
+                for joint, length in [('skirt', actual.skirt_len), ('robe_hem', actual.robe_len)]:
+                    self.assertAlmostEqual(math.dist(actual.joint_at(joint, sk), sk['hip']), length)
+                self.assertEqual(pc.check_motion(renderer, clips['walk'], 8, 15), [])
 
 
 if __name__ == '__main__':
