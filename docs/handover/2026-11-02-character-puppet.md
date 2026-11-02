@@ -4,13 +4,13 @@ This note is for the next AI continuing the user's wuxia character and reusable 
 
 ## Current state
 
-- Repository: `/workspace/2dgameskills`, branch `work`, based on `c019f1f` (the then-current `origin/main`). The current working tree contains the whole ongoing workflow/validator/runtime change; do not discard it.
+- Repository: `/workspace/2dgameskills`, branch `work`, commit `2a44c31257166fe6adea74cd46d2512e30ec3676`. It was pushed to `main` as a fast-forward from `c019f1f`; the working tree contains the committed workflow/validator/runtime change.
 - The user's current artwork and all generated case evidence live outside git at `/workspace/2dgameskills-output/wuxia-template-v1/full_character`. They may not exist in a fresh clone. Do not claim the uploaded original image bytes are archived: they are not.
 - Static character: the user rejected a narrow/flat head, then approved the repaired static head and full-body appearance with “可以 没问题”. Approval is hash-bound in `static_user_approval.json`. The rejected image and evidence are retained in `review_history/head_rejected_by_user/`. This approval is for static appearance only.
 - Motion: a measured eight-layer rig now exists at `motion_v3/rig`; idle and walk are rendered, and their quantitative QA passes. `motion_v3/preview.html`, `idle.gif`, and `walk.gif` are for the user to review. The motion visual report/approval is deliberately pending. Do not call this final pass or expand to the other 25 clips before the user has reviewed these two.
 - The 26-character legacy regression completed: all 26 returned 0 FAIL. `cutout_demo-pixel` still has 7 WARN and `cutout_demo-hd` 8 WARN; the other 24 are 0 WARN. These are existing demo warnings, not failures in the wuxia case.
 - Full `dev/tests` unittest discovery is still running in the current environment (PID 27836 when this note was written); its log is `/tmp/template-binding-full-tests.log`. Wait for its final summary/exit status before reporting the complete test suite. The focused binding tests previously passed; see `/tmp/template-bind-tests-final.log` and this session's log for the latest added test.
-- `git diff --check` passed before this handover edit. The changes have not yet been committed, pushed, or merged when this note is first written; update this line and the general handover after doing so.
+- `git diff --check`, shared-file/mode sync checks, and all five `.skill` package freshness checks passed before the first commit. Chromium interaction was verified over local HTTP: the preview loads, idle/walk switch, animation advances, pause/seek selects the requested frame, and there are no page errors.
 
 ## What changed in the repository
 
@@ -63,4 +63,4 @@ python -m unittest discover -s dev/tests -v
 
 ## Publication state
 
-User asked to push and merge to `main`. At the beginning of this work, local `work` and `origin/main` both pointed at `c019f1f`. GitHub CLI reported that the configured `GH_TOKEN` is invalid. Finish the local commit and attempt the authorized push; if GitHub rejects authentication, leave the commit on `work` and report its hash and the exact credential problem. Do not rewrite `main` or force push.
+User asked to push and merge to `main`; this was completed. Commit `2a44c31257166fe6adea74cd46d2512e30ec3676` advanced `main` from `c019f1f` by fast-forward. `gh auth status` still reports an invalid configured `GH_TOKEN`, but `git push origin HEAD:main` succeeded using the Git credential available to git. No force push or history rewrite was used.

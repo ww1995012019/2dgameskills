@@ -6,7 +6,7 @@
 
 当前 `motion_v3` 生成 idle 72 帧、walk 25 帧，均30fps；数值QA均0 FAIL/0 WARN，走路脚滑0.004px、抬脚最大偏差0.19px。美术/动作交互预览为案例外部目录 `.../full_character/motion_v3/preview.html`，GIF和四张必审图在同一目录/build/review。预览、美术判断和用户动态验收均未完成；`preview_provenance.json` 保持 `user_motion_approval=pending`、`final_visual_pass=false`，不能报最终通过，也不能先铺开剩余25个动作。
 
-全仓26套旧角色回归已完成，0 FAIL；`cutout_demo-pixel` 7 WARN、`cutout_demo-hd` 8 WARN，其余24套0 WARN。`dev/tests` 全量单测当时仍在运行，日志 `/tmp/template-binding-full-tests.log`；后续接手者必须先查最终状态。案例图片/绑定/渲染输出在 `/workspace/2dgameskills-output/wuxia-template-v1/full_character`，不在git中。用户要求推送并合并main；本地 `work` 起点 `c019f1f` 与当时 `origin/main` 一致，GitHub CLI 报告 `GH_TOKEN` 无效。先提交，再尝试推送；如认证挡住，保留本地提交并准确说明，不强推。
+全仓26套旧角色回归已完成，0 FAIL；`cutout_demo-pixel` 7 WARN、`cutout_demo-hd` 8 WARN，其余24套0 WARN。`dev/tests` 全量单测仍在运行，日志 `/tmp/template-binding-full-tests.log`；接手者检查其中最终摘要。案例图片/绑定/渲染输出在 `/workspace/2dgameskills-output/wuxia-template-v1/full_character`，不在git中。用户要求推送并合并main，已由提交 `2a44c31257166fe6adea74cd46d2512e30ec3676` 将 `main` 从 `c019f1f` 快进完成。`gh auth status` 仍报告配置的 `GH_TOKEN` 无效，但git自身凭据推送成功。交接状态文件随后单独提交更新。
 
 ## 用户否决扁窄头型，已提供返修对照，仍待复核（2026-11-02）
 
