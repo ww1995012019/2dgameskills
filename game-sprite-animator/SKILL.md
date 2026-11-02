@@ -26,14 +26,30 @@ Requires Python 3 with `pillow` and `numpy`. Scripts are in `scripts/`, run from
 
 ## AI-generated characters: read this first
 
-When the character comes from an image model and will ship, follow `references/layered-art.md` from
-start to finish. It fixes the input (one reference picture to a contract, then a fixed list of layers
-from fixed prompts) and refuses what doesn't meet it. Do not mark joints, write masks, or tune
-anything for one picture: there would be no end to it. A fault found on one character is fixed in the
-general rule and tested on two. Build `walk` first and wait for the user's approval before any other
-clip. `cut_parts.py` is only for quick tests of tight-fitting characters.
+For a supplied character picture or new AI-generated humanoid, use
+`references/basic-character-workflow.md` and `scripts/character_workflow.py` as the DEFAULT route.
+The agent prepares and uses every fixed prompt; the user does not write prompts or mark joints.
+Start with `prepare --image input.png --weapon none --out NEW_JOB` (or `--weapon sword`). Inspect
+identity, regenerate a standard side-view reference, then accept the reference, isolated layers,
+numerical bind, idle + walk and versioned visual review in that order. Both hand hints are mandatory.
+Only short/fitted clothing, short hair and no weapon/one simple single-handed sword are in scope.
+The first real trial failed isolated-leg generation after three attempts; the workflow remains a
+guarded trial, not a production-validated promise. Report a failed job honestly with no animation pass.
+Do not silently preserve unsupported long robes, wide sleeves, capes, spears or two-handed weapons.
+Record adaptations or stop if essential identity cannot be kept. Log each repair; at three attempts
+per stage stop and report the remaining blocker. Never reset the job to bypass that limit.
 
-## Workflow
+Numerical checks do not recognize complete art; the agent must inspect full-size layers and motion.
+Short/stump arms, broken garments, ghosting and extra weapons are blockers. No per-character joint
+coordinates, pixel patches or threshold changes. The general layered binder described in
+`references/layered-art.md` remains experimental for older/advanced work; never use it to bypass a
+basic profile refusal. Show the running walk preview and wait for the user's approval before adding
+clips. The basic route has no full-set or attack switch. `cut_parts.py` remains a quick-test route.
+
+## Existing programmatic and custom-action workflow
+
+For supplied pictures, follow the basic workflow above instead of asking the user to configure
+these technical choices. The remaining steps apply to existing specs and custom actions.
 
 1. **Pin down four choices.** Ask only about what the user left open and that changes the output:
 
@@ -85,6 +101,7 @@ clip. `cut_parts.py` is only for quick tests of tight-fitting characters.
    ```bash
    python scripts/visual_review.py out/c
    python scripts/visual_review.py out/c --record verdict.json
+   python scripts/visual_review.py out/c --check
    ```
 
 7. **Show the result.** Give the user `out/c/preview.html`. It is a self-contained page with every clip
@@ -130,6 +147,7 @@ These are the rules behind the numbers. `references/smoothness.md` has the reaso
 
 Read these when the task reaches them:
 
+- `references/basic-character-workflow.md`: default picture-to-character workflow, all fixed prompts, bounded repairs and walk approval
 - `references/layered-art.md`: the production route for AI art: input contract, fixed layers, gates, QA
 - `references/character-spec.md`: every spec field, cut-out mode for the user's own layered art, custom clips
 - `references/ai-art.md`: AI-generated characters: the prompt, marking joints, cutting and checking

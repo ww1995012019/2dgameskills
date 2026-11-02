@@ -18,6 +18,7 @@ KEEP ONLY: {keep}
 REMOVE COMPLETELY: {remove}
 
 Rules:
+- If two images are supplied for a repair, the FIRST is the full original registration plate and controls all positions, sizes and pose. The SECOND is the previous failed isolated layer: correct it, but do not copy its wrong scale or extra content. Output only the requested layer.
 - Treat the input as a full-canvas registration plate, not as an illustration to recompose. Keep all the empty canvas. An isolated small part must remain small in its original location; never enlarge it to fill the image.
 - Same canvas size. Same pose. Same position and same scale as the input: every kept part stays where it is in the input, do not move, zoom, recenter or straighten it.
 - Repaint what the removed parts were hiding with full sharp detail, matching the same fabric, pattern, line weight and cel shading. Never blur, smear or fade. Close exposed silhouette edges with the same dark outline. At an internal attachment cut (neck base or shoulder root), keep the overlapping material continuous and leave the cut edge UNOUTLINED; an outline across the overlapping neck would become a false seam.
@@ -69,3 +70,95 @@ def hand_prompt():
 def prompt(slot):
     keep, remove, _ = SLOTS[slot]
     return COMMON.format(keep=keep, remove=remove)
+
+# The supported first production profile. The older SLOTS/prompts remain an
+# experimental route; do not silently send a basic job through that route.
+BASIC_PROFILE = 'basic-side-v1'
+BASIC_SLOTS = ('arm_far', 'leg_far', 'leg_near', 'hips', 'torso', 'head', 'arm_near')
+BASIC_SCOPE_CHECKS = ('short_fitted_clothing', 'short_hair', 'no_trailing_accessories',
+                      'single_hand_simple_weapon', 'opaque_flat_art')
+BASIC_REFERENCE = """Use the attached picture as CHARACTER IDENTITY reference, not as a pose to trace.
+Preserve the face, species, build, palette, recognisable clothing motifs and drawing style.
+Character: {who}. Style: {style}.
+
+Create ONE full-body 2D humanoid game character in a strict right-facing SIDE VIEW.
+Orthographic 90-degree SIDE ELEVATION, not a three-quarter illustration. Only one eye is visible;
+show the chest and belt from their side edge, never a broad front-facing chest or belt buckle.
+Two arms and two legs only. Small walking stride measured horizontally, not into picture depth. Both complete shoes flat on one horizontal
+sole line. The two heel/sole bottoms must be at EXACTLY the same vertical height; no raised toes,
+no slanted soles, no depth offset. Both boots point exactly right. Front/right-hand arm forward, rear/left-hand arm back, both slightly bent and visibly
+clear of the torso below their attached shoulder roots. No gaps or floating arms at the shoulders.
+Keep the rear shoulder behind the torso rather than drawing a second shoulder plate over the chest.
+Show a readable shoulder -> upper arm -> elbow -> forearm -> wrist -> hand path for EACH arm. No stump arms, hidden forearms, tiny substitute hands or overlapping arm paths.
+The FORWARD UPPER ARM must be visibly angled forward/down from its SHOULDER to an elbow
+IN FRONT of the ribs. Then the complete forearm angles forward/up to the sword hand. The elbow
+and wrist are outside the torso silhouette, with magenta space under the arm. Never start an arm
+at the waist, belt or hip; never show only a forearm emerging from the torso.
+{weapon}
+
+Production adaptation: fitted or short sleeves with exposed hands, a short top ending at the
+hips with NO front flaps extending onto the thighs, fitted trousers and simple shoes. Short hair ends above the shoulders. Simplify long robes,
+wide sleeves, long hair, capes, dangling belts and tassels to this supported design while preserving
+palette and motifs. If one of those features is essential to identity, stop and report that this
+profile cannot preserve it; do not claim an exact reconstruction. No trailing cloth, floor-length
+skirt, floating ornaments, second weapon, shield, holster, bow, gun or two-handed grip.
+
+When a second image is supplied as a POSE GUIDE, it controls pose and attachment geometry only.
+Follow both complete arm chains and the common sole baseline in that guide; the character identity,
+materials and art style come from the character reference. Do not draw guide lines, circles, labels
+or the guide's flat placeholder colours in the final art.
+
+Use a portrait 1024 x 1536 canvas, figure about 85% of its height, all edges inside a generous margin.
+Even flat/cel lighting and crisp opaque artwork, no blur or motion smear. No text, labels, guides,
+shadow, glow, floor or scenery. Outside the figure is solid pure magenta #FF00FF. No magenta or
+pink-purple in the character. Output a single static image, not a sheet or collage."""
+
+BASIC_KEEP = {
+    'torso': ('ONE SLEEVELESS short vest/body garment only: bare neck column, collar, closed chest, belly, waist belt and hip-length hem. Reconstruct plain matching sharp navy chest fabric UNDER where the removed arm/shoulder cap was. The result has NO sleeve, NO shoulder shield/pauldron and NO upper-arm cap. Preserve the original small whole-canvas placement',
+              'head, face, hair, BOTH WHOLE ARMS including every sleeve and every shoulder plate/pauldron, hands, legs, weapons and all fabric below the hips. The ornate rounded shoulder/upper-arm shield is an ARM part: remove it completely even if it overlaps the chest; do not leave a duplicate emblem-shaped plate on this vest'),
+    'leg_far': ('exactly ONE complete REAR LEG ending in the LEFTMOST boot, from its own hip root through its own thigh, knee and shin to the whole heel/sole/toe. One unbranched limb only. Reconstruct its hidden upper thigh, not a shared pelvis or a pair of shorts',
+                'the other leg COMPLETELY, including its upper thigh and knee even if only a short cut-off stump is visible. No Y-shaped trouser branch, no second thigh, no shared waistband/crotch spanning both legs. Remove torso, belt, hips garment, arms, head and weapon'),
+    'head': ('the exact small head and short hair from the full figure, with the complete bare neck down to collar level. One face only, continuous skin neck without collar or dark cut-edge cap. Keep its EXACT original pixel scale and upper-canvas location with all surrounding empty canvas',
+             'all body and clothing, every collar or clothing stripe, shoulder plates, arms, legs, weapons and any background objects. NO PORTRAIT CLOSEUP, no recentering or enlarged face; this is the original full-size registration canvas with only the original small head left on it'),
+}
+
+IDENTITY_PROMPT = """Inspect the supplied character picture before generating anything. Describe its face,
+build, palette, clothing motifs, equipment and art style. Separate visible facts from hidden or
+uncertain anatomy. State every adaptation needed for basic-side-v1 (short hair, short/fitted
+clothing, no trailing accessories, no weapon or one simple single-handed sword). If an essential
+identity feature cannot be preserved in that scope, report the conflict rather than silently
+removing it. Never infer that a photograph or illustration is already a bindable game reference.
+Write this inspection in identity_notes.md; do not ask the user to write prompts or mark joints."""
+
+REPAIR_RULES = {
+    'incomplete': 'Reconstruct the COMPLETE requested part, including hidden attachment and every anatomical segment. Never substitute a stump, cuff, disconnected hand or silhouette fragment.',
+    'extra_art': 'Remove every object outside KEEP ONLY, including copied limbs, stray fragments, duplicate clothing and every weapon in an arm/torso layer.',
+    'blur': 'Repaint crisp matching seams, fingers, fabric folds and contours. No blur, translucent smear, stretched texture or ghost outline.',
+    'registration': 'Restore the exact full canvas, original pose, position and scale. Never zoom or recenter an isolated small part.',
+    'reference': 'Regenerate the complete standard reference following every pose, clothing, weapon-count and visibility requirement. Do not work around a failed reference by changing rig parameters.',
+}
+
+
+def basic_reference_prompt(who, style, weapon):
+    if weapon not in ('none', 'sword'):
+        raise ValueError('basic-side-v1 supports none or one single-handed sword only')
+    equipment = ('Both hands empty. No weapon, scabbard, shield or equipment held in either hand.' if weapon == 'none'
+                 else 'Exactly ONE simple straight sword in the front/right hand, pointing forward and up. Blade, guard and pommel clearly visible; the fingers close around the grip. Rear hand empty. One-handed grip only; no scabbard or spare weapon.')
+    return BASIC_REFERENCE.format(who=who, style=style, weapon=equipment)
+
+
+def basic_prompt(slot):
+    if slot not in (*BASIC_SLOTS, 'weapon', *HAND_HINTS):
+        raise ValueError('unsupported basic layer: ' + slot)
+    if slot in HAND_HINTS:
+        return hand_prompt() + '\nThe source is the FINISHED ' + HAND_HINTS[slot] + ' layer, not the full character. Keep the exact wrist and fingers; never invent a different hand.\n'
+    keep, remove = BASIC_KEEP.get(slot, SLOTS[slot][:2])
+    return COMMON.format(keep=keep, remove=remove) + """
+
+BASIC-SIDE-V1 acceptance: one complete connected requested part only. Preserve sharp drawn detail;
+no stump limbs, detached fragments, ghost art, duplicate garment pieces or extra equipment.
+Both arm layers must include their own complete upper arm, elbow, forearm, wrist and hand.
+An arm layer NEVER contains any weapon, handle, blade or scabbard. Remove the weapon while keeping
+all fingers intact. Do not fix ambiguity by copying the other arm. The torso is short, ends at the
+hips and has no skirt/apron/tassel. Hair is short; no separate rear hair or cloth layer.
+"""

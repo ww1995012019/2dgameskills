@@ -65,6 +65,9 @@ Look at each clip for these, in this order. Name the clip and frame when somethi
 - Neck not twisted, head attached to the shoulders
 - One face only, with no doubled chin, ear or hairline when the head turns
 - No colour patch or stripes at a joint that the character doesn't have
+- Both arms have a complete shoulder -> elbow -> wrist -> hand path; a short stump is a blocker
+- Garments are complete, without broken pieces or duplicated/ghost art
+- Exactly the intended weapons are present, without extras left in arm or torso layers
 - Limb lengths look constant across the row
 
 **Readability**
@@ -85,7 +88,8 @@ Look at each clip for these, in this order. Name the clip and frame when somethi
 ## Severity
 
 - **blocker:** a player would notice it as a bug. Hovering, cut-off art, a reversed joint, a hand off the
-  gun, a pose that doesn't read. Fix it before delivering.
+  gun, a pose that doesn't read. Missing or stump limbs, ghosting, broken garments and extra weapons
+  are always blockers; never downgrade them to polish. Fix it before delivering.
 - **polish:** a matter of taste or a small flaw. Record it, and fix it if it's cheap.
 
 Fix the cause, not the frame. A roll that hovers needs a contact rule, not a nudged key. When a
@@ -93,27 +97,71 @@ visual issue slipped past QA and can be measured, consider adding a check for it
 
 ## Record the verdict
 
-Write a JSON file covering every sheet:
+Start from `review/verdict_template.json`, which is pending and cannot pass as generated.
+Write a JSON file covering exactly every sheet. Copy `review_id` from `review/index.json`.
+It hashes the current frames, sheets, animation metadata, rig trace and QA report. Changes invalidate
+the verdict; rebuild sheets and review again. Rebuilding or a rejected recording removes the old
+current `visual_report.json`; archived reviews remain in `review/history/`.
+
+Each sheet requires `verdict`, `checks` and `issues`. Every check requires `status` and concrete
+`evidence` naming the observed poses/frames. Required checks are `complete_limbs`,
+`continuous_garments`, `no_ghosting`, `expected_weapons`, `anatomy`, `readable_motion`.
+Use `pass` or `fail`; only garments and weapons may be `not_applicable`, with a reason.
+Missing checks, failed checks under a pass verdict, or unresolved issues under a pass verdict
+are refused. A fail sheet always makes the report fail, including cosmetic defects.
 
 ```json
 {
-  "reviewer": "claude",
+  "reviewer": "reviewer name",
+  "review_id": "COPY_CURRENT_INDEX_REVIEW_ID",
   "sheets": {
-    "sheet_00.png": {"verdict": "pass", "issues": []},
-    "sheet_01.png": {"verdict": "fail", "issues": [
-      {"clip": "roll", "frame": 8, "severity": "blocker", "what": "body hovers above the ground", "resolved": false}
-    ]}
+    "arms_00.png": {
+      "verdict": "fail",
+      "checks": {
+        "complete_limbs": {"status": "fail", "evidence": "walk frame 4: weapon arm is a stump"},
+        "continuous_garments": {"status": "pass", "evidence": "walk frames 0,4,8: coat intact"},
+        "no_ghosting": {"status": "pass", "evidence": "walk frames 0,4,8: no doubled art"},
+        "expected_weapons": {"status": "pass", "evidence": "walk frames 0,4,8: one sword"},
+        "anatomy": {"status": "fail", "evidence": "walk frame 4: missing forearm"},
+        "readable_motion": {"status": "fail", "evidence": "walk frame 4: no complete arm swing"}
+      },
+      "issues": [{"id": "weapon-arm", "clip": "walk", "frame": 4,
+        "category": "missing_limb", "severity": "blocker",
+        "what": "weapon arm is a short stump", "resolved": false}]
+    }
   }
 }
 ```
 
-```bash
-python scripts/visual_review.py out/c --record verdict.json
+Categories are `missing_limb`, `broken_garment`, `ghosting`, `extra_weapon`, `anatomy`,
+`unreadable_motion`, `cosmetic`. All except cosmetic require `blocker`. `resolved` must be a JSON
+boolean. Any unresolved issue (including polish) or failed sheet returns exit 1; the report's
+`status` is authoritative, not merely its `open_blockers` count.
+
+Record the failed review before fixing. After fixing, regenerate the frames, rerun QA, rebuild
+sheets, and inspect the changed art again. Keep each open issue's id, category and clip. Issues
+cannot disappear from the registry. To resolve one, set `resolved: true` and include:
+
+```json
+"resolution": {
+  "previous_review_id": "ID_OF_THE_RECORDED_FAILED_REVIEW",
+  "change": "Describe the actual general fix and what the new frames show",
+  "frames": [{"clip": "walk", "frame": 4}]
+}
 ```
 
-This refuses a verdict that skips a sheet, and exits 1 while any blocker is unresolved. After fixing,
-regenerate, re-run QA, rebuild the sheets and review the changed clips again. Set `resolved` only after
-you have seen the fixed frames.
+The recorder requires the prior archived open issue and verifies each cited frame exists in both
+reviews and its decoded pixel hash changed. Unchanged frames cannot resolve an issue. It also requires
+a new current checklist. Changed pixels do **not** prove that anatomy is fixed; the reviewer must
+inspect them and describe the observed repair. Do not relabel categories or invent evidence to pass.
+These checks enforce review consistency and provenance, not the truth of a visual judgment.
+
+```bash
+python scripts/visual_review.py out/c --record verdict.json
+python scripts/visual_review.py out/c --check  # mandatory before delivery; stale passes fail
+```
+
+Legacy unversioned verdicts must be reviewed again; do not copy an old pass into the new schema.
 
 Stop after three rounds and tell the user what's still open, rather than iterating on taste.
 

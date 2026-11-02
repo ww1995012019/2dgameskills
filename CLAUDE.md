@@ -27,7 +27,7 @@
   骨骼求解和接触规则仍按解剖分别实现，不要把这个小接口描述成完整通用骨骼框架。
 - **AI 美术的正式流程是分层人偶**（`layer_parts.py`、`sprite_anim/puppet.py`、`puppet_check.py`、`layer_slots.py`，文档 `references/layered-art.md`）。
   用户 2026-11-01 明确要求：这是商用产品，只能固定输入条件和通用流程，不准为单张图手调；一张图只是测试数据，修问题要改通用规则并用两个不同角色验收；
-  新角色先做走路，用户审核通过再出全套 27 个动作。不合规的图由 `plan`/`bind` 拒绝并说明重做什么。
+  新角色默认走 `references/basic-character-workflow.md` 的 basic-side-v1：固定提示词，短发、短款/贴身服装、空手或单手简单剑，双手提示图必需，先待机/走路。用户审核后才考虑扩展；不自动承诺 27 动作。数值规则和绑定到图片哈希的语义复核共同把关；不能宣称代码自动识别全部不合规美术。
   动作适配角色身材的规则集中在 `layered-art.md` 的“How the clips fit a character”，遇到新问题加规则，不改单个角色数据。
 - AI 美术流程（阶段 A，现仅用于贴身角色的快速测试）：`game-sprite-animator/scripts/cut_parts.py`（template / cut / check），流程见该 skill 的
   `references/ai-art.md`。剪纸模式的武器挂在 `art.hand_grip`，和程序画法共用，改它要跑严格基准。

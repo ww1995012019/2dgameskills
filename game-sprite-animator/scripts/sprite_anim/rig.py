@@ -48,6 +48,12 @@ class Body:
     weapon_front: float = 0.0   # reach past / behind the weapon origin, for the ground clamp
     weapon_back: float = 0.0
     weapon_margin: float = 2.8  # weapon half-thickness plus clearance
+    weapon_grip_along: float = 0.14  # measured wrist-to-grip offset / forearm length
+    weapon_grip_across: float = 0.0  # perpendicular offset in the rig's y-up frame
+    foot_n_heel: tuple = None  # optional measured sole contacts relative to ankle
+    foot_n_ball: tuple = None
+    foot_f_heel: tuple = None
+    foot_f_ball: tuple = None
     foot_wrap: bool = False     # blend a foot toward a spinning body the short way round
     # Measured joint seats for art that sets its own proportions, as (forward, up) in the chest frame
     # from the waist, and in the pelvis frame from the hip. None keeps the fitted sh_w and hip_w.
@@ -103,10 +109,10 @@ FOOT_HEEL = (-4.5, -5.0)   # heel contact relative to ankle (flat foot)
 FOOT_BALL = (6.5, -5.0)    # ball contact
 
 
-def ankle_with_roll(flat_ankle, pitch):
+def ankle_with_roll(flat_ankle, pitch, heel=FOOT_HEEL, ball=FOOT_BALL):
     """Roll the foot about whichever contact point is on the ground so that the
     contact stays planted while the ankle arcs. Continuous at pitch = 0."""
-    pivot = FOOT_HEEL if pitch > 0 else FOOT_BALL
+    pivot = heel if pitch > 0 else ball
     world = add(flat_ankle, pivot)
     return add(world, rot((-pivot[0], -pivot[1]), -pitch))
 
@@ -152,11 +158,13 @@ def solve(pose, b: Body):
 
     k = g("ik_body")
 
-    def leg(hj, fx, fy, fp):
+    def leg(hj, fx, fy, fp, side):
         flat = (fx, b.ankle_h + fy)
+        heel = getattr(b,'foot_'+side+'_heel') or FOOT_HEEL
+        ball = getattr(b,'foot_'+side+'_ball') or FOOT_BALL
 
         def reach(pitch, lift=0.0):
-            ground = ankle_with_roll(flat, pitch)
+            ground = ankle_with_roll(flat, pitch, heel, ball)
             ground = (ground[0], ground[1] + lift)
             if k > 0:
                 # Body-space target: same stance, carried by hip motion and root spin.
@@ -177,17 +185,20 @@ def solve(pose, b: Body):
             knee, ank, foot_rot = reach(fp)
         if k > 0:
             # A foot turning with the body would swing its heel or ball under the floor.
-            sole = min(ank[1] + rot(p, foot_rot)[1] for p in (FOOT_HEEL, FOOT_BALL))
+            sole = min(ank[1] + rot(p, foot_rot)[1] for p in (heel, ball))
             if sole < 0.3:
                 knee, ank, foot_rot = reach(fp, 0.3 - sole)
         return knee, ank, foot_rot
 
-    kn_n, an_n, fr_n = leg(hip_n, g("foot_n_x"), g("foot_n_y"), g("foot_n_p"))
-    kn_f, an_f, fr_f = leg(hip_f, g("foot_f_x"), g("foot_f_y"), g("foot_f_p"))
+    kn_n, an_n, fr_n = leg(hip_n, g("foot_n_x"), g("foot_n_y"), g("foot_n_p"), 'n')
+    kn_f, an_f, fr_f = leg(hip_f, g("foot_f_x"), g("foot_f_y"), g("foot_f_p"), 'f')
 
     # The weapon's line passes through its drawing origin just past the wrist (art.weapon_origin),
     # and that point's height depends only on the forearm, so clamp about it.
-    pivot_y = wr_n[1] + (wr_n[1] - el_n[1]) * 0.14
+    forearm = (wr_n[0] - el_n[0], wr_n[1] - el_n[1])
+    weapon_grip = (wr_n[0] + forearm[0] * b.weapon_grip_along - forearm[1] * b.weapon_grip_across,
+                   wr_n[1] + forearm[1] * b.weapon_grip_along + forearm[0] * b.weapon_grip_across)
+    pivot_y = weapon_grip[1]
     weapon_input = fa_n + g("wep")
     contact_angle = pose.get("_weapon_angle")
     wep_a = ground_clamp(weapon_input if contact_angle is None else contact_angle,
@@ -201,18 +212,21 @@ def solve(pose, b: Body):
         hip_n=hip_n, kn_n=kn_n, an_n=an_n, fr_n=fr_n,
         hip_f=hip_f, kn_f=kn_f, an_f=an_f, fr_f=fr_f,
         wep_a=wep_a, excess=excess, weapon_input=weapon_input, weapon_pivot_y=pivot_y,
+        weapon_grip=weapon_grip,
+        foot_n_heel=b.foot_n_heel or FOOT_HEEL, foot_n_ball=b.foot_n_ball or FOOT_BALL,
+        foot_f_heel=b.foot_f_heel or FOOT_HEEL, foot_f_ball=b.foot_f_ball or FOOT_BALL,
         wep_dir=(math.sin(math.radians(wep_a)), -math.cos(math.radians(wep_a))),
     )
 
 
 def toe_world(sk, side):
     a, r = sk["an_" + side], sk["fr_" + side]
-    return add(a, rot(FOOT_BALL, r))
+    return add(a, rot(sk.get('foot_'+side+'_ball',FOOT_BALL), r))
 
 
 def heel_world(sk, side):
     a, r = sk["an_" + side], sk["fr_" + side]
-    return add(a, rot(FOOT_HEEL, r))
+    return add(a, rot(sk.get('foot_'+side+'_heel',FOOT_HEEL), r))
 
 
 def full_pose(sparse):

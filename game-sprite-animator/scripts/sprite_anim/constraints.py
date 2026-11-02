@@ -186,7 +186,8 @@ def foot_low(sk, side):
     """Lowest of heel and ball. The toes hinge at the ball, so they stay flat when the heel lifts
     and aren't part of the rigid foot."""
     a, r = sk["an_" + side], sk["fr_" + side]
-    return min(a[1] + rot(p, r)[1] for p in ((-4.5, -5.0), (6.5, -5.0)))
+    points=(sk.get('foot_'+side+'_heel',(-4.5, -5.0)),sk.get('foot_'+side+'_ball',(6.5, -5.0)))
+    return min(a[1] + rot(p, r)[1] for p in points)
 
 
 def low_points(sk, body):

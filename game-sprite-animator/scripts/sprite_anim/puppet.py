@@ -380,7 +380,7 @@ class Puppet:
         pivot_src = np.array(layer.anchor)
         if layer.name == "weapon":     # the fist closes on it just past the wrist, as drawn weapons
             wr, el = np.array(sk["wr_n"]), np.array(sk["el_n"])
-            pivot_out = np.array(cv.T(tuple(wr + (wr - el) * 0.14)))
+            pivot_out = np.array(cv.T(sk.get('weapon_grip',tuple(wr + (wr - el) * 0.14))))
         else:
             pivot_out = self.carried(layer, sk, cv, scale)
         # Clockwise on screen, in the rig's convention, except a weapon angle, measured the other way.

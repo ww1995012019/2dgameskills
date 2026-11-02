@@ -171,6 +171,17 @@ def arm_spacing(near, far):
                      np.linalg.norm(near[2] - far[2])])
 
 
+def spacing_fault(ratios, fps):
+    """Catch at least two samples spanning 100ms, preserving intentional moving-clip crossings."""
+    run = 0
+    required = max(2, int(np.ceil(0.1 * fps)) + 1)
+    for i, ratio in enumerate(ratios):
+        run = run + 1 if np.min(ratio) < ARM_SPACING_SHARE else 0
+        if run >= required:
+            return i - run + 1
+    return None
+
+
 def check_motion(renderer, clip, n, fps):
     """Mesh folds, cloth kinks and the planted knee across one clip."""
     from .art import Canvas
@@ -221,9 +232,12 @@ def check_motion(renderer, clip, n, fps):
                 planted.append(np.degrees(np.arccos(np.clip(a @ b / (np.hypot(*a) * np.hypot(*b) + 1e-9), -1, 1))))
     if spacing_ratios:
         ratios = np.median(spacing_ratios, axis=0)
-        if float(ratios.min()) < ARM_SPACING_SHARE:
+        short_fault = spacing_fault(spacing_ratios, fps)
+        if float(ratios.min()) < ARM_SPACING_SHARE or short_fault is not None:
+            detail = f"; first sustained fault frame {short_fault}" if short_fault is not None else ""
             out.append(f"arm_spacing: {clip.name}: separated reference arms collapse together "
-                       f"(upper arms {ratios[0]:.0%}, wrists {ratios[1]:.0%} of reference); review both carried arms")
+                       f"(upper arms {ratios[0]:.0%}, wrists {ratios[1]:.0%} of reference"
+                       f"{detail}); review both carried arms")
     for name, (share, i) in worst_fold.items():
         if share > FOLD_SHARE:
             out.append(f"fold: {name}: {clip.name} frame {i}: {share:.1%} of the mesh turned inside out; the bend is too sharp for this art")

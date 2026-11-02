@@ -1,8 +1,14 @@
-# Layered puppets: the production route for AI art
+# Layered puppets: underlying binder and experimental extensions
 
-Use this route for every AI-generated character that will ship. It takes one reference picture and
+For new supplied-picture/AI-art jobs, start with `basic-character-workflow.md`. Its bounded profile
+is the default and requires hand hints plus isolated-layer review. This document describes the
+underlying binder and older experimental features (robes, loose cloth and long hair); their historical
+checks do not establish production approval for a new basic job.
+
+The underlying binder takes one standard reference picture and
 turns it into complete, separate layers that bend along the skeleton. Nothing is marked by hand and
-nothing is set per character. A picture either meets the contract or is refused with what to remake.
+nothing is set per character. Automatic checks cover measurable faults only. Semantic compliance must be judged visually and
+recorded for the exact reference; absence of a numerical refusal is not approval.
 
 `references/ai-art.md` describes the older route that cuts one picture along its bones. Keep it for
 quick tests of tight-fitting characters. It can't do the things this route exists for: sleeves, robes,
@@ -26,7 +32,14 @@ is wrong: fix the general rule, in `layer_slots.py` or `layer_parts.py`, and tes
 
 ## The contract
 
-**Reference picture.** All of these are required, and `plan` checks what it can measure:
+**Reference picture.** All of these are required. `plan` checks background, height and margins only;
+it does not recognize side view, pose, occlusion or anatomy. It also writes a pending
+`reference_review.json`. Inspect the exact reference and fill every semantic check with `status: pass`
+and a concrete `evidence` description, plus `reviewer`. If any item fails, remake the reference.
+Do not set checks to pass just to make bind run. `image_sha256` ties the review to the image; changing
+the image requires a new review. The checks are `right_side_view`, `complete_separate_arms`,
+`visible_separate_legs`, `planted_feet`, `unobscured_limbs`, `separate_garments`, and `expected_weapons`.
+This is reviewer attestation, not automatic semantic recognition.
 
 - Portrait canvas with the figure at least 900 px tall and a margin all round.
 - Flat background, one colour or transparent. Magenta `#FF00FF` is standard, so the character uses no
@@ -104,10 +117,15 @@ fabric. Short front panels, belts and front ornaments belong to `torso`, which a
 exposed neck above the collar. Keeping the whole skirt in both layers duplicates it in motion.
 
 ```bash
-python scripts/layer_parts.py bind --image hero.png --layers hero/layers --name Hero --out hero/rig
+python scripts/layer_parts.py bind --image hero.png --layers hero/layers --reference-review hero/reference_review.json --name Hero --out hero/rig
 python scripts/generate.py --character hero/rig/character.json --preset hd512 --clips walk --no-fx --out hero/build
 python scripts/qa_motion.py hero/build
 ```
+
+Numeric bind and motion QA do not certify complete art. Before approving the walk, inspect the
+reference, all separate layers, `bind_joints.png`, every required review sheet and the running
+preview. Trace both complete arms; reject short stumps, ghost limbs, broken clothing and extra
+weapons as blockers. Record the versioned visual verdict described in `visual-review.md`.
 
 After the walk is approved, drop `--clips walk --no-fx` for the full set of 27 clips. It takes about five
 minutes per character at `hd512`.
@@ -152,6 +170,40 @@ For repeated layer replacements, `bind --fit-cache path/to/cache` can reuse the
 expensive registration search. The key covers the exact reference, layer, slot,
 and registration source. Changed art is searched again, and every acceptance check runs
 again even on a cache hit. Failed binds also keep completed search results.
+
+## Binding reliability gates
+
+The runtime shares near-side bone lengths with the far side. Before export, each
+corresponding upper/lower arm and thigh/shin pair must have a longest/shortest
+ratio at most 1.25. This is an input rejection limit, not a correction or a claim
+that smaller differences are visually harmless. Redraw the mismatched limb.
+Each segment must occupy at least 25% of its two-bone chain; at least 90% of
+25 samples along each bone must have artwork within 2% of chain length (minimum
+one pixel). These gates detect collapsed joints and unsupported centre lines;
+they cannot recover anatomical landmarks hidden by a wide sleeve. Use the hand
+hint when the inferred wrist is ambiguous. Synthetic fixtures of two body builds
+and scale invariance tests exercise these gates; real-art acceptance still needs
+visual review.
+
+A weapon must intersect the near arm inside the inferred hand region (a disc at
+the wrist with radius wrist-to-tip). The existing runtime grip, 14% of the forearm
+past the wrist, must be within 20% of that hand radius of weapon pixels (minimum
+two pixels). A failed contact or grip refuses binding and requests revised art
+or a hand hint. This validates the current single-hand attachment; it does not
+support arbitrary weapon shapes or two-hand constraints.
+
+Every attempted bind that reaches layer processing writes fresh `layers_check.png`,
+`bind_joints.png` and `bind_report.json`, even on rejection. Early rejections have
+only the available partial composition; joints appear once inference completes.
+The report records accepted/rejected status, rejection reason, measured joint
+chains and bone lengths when available. On rejection, previously exported character
+files remain from their earlier successful run; do not treat them as a new bind.
+Inspect the joint overlay along with the layer composition.
+
+Idle arm spacing also rejects consecutive collapsed samples spanning at least
+100ms (and at least two samples), reporting the first frame. This supplements the
+median check, which can miss a short collapse. Moving clips retain their existing
+checks because arm crossing during an attack or gait is intentional.
 
 ## What QA checks
 
@@ -223,6 +275,19 @@ character:
 | A stance sinks until the knee stops short of its soft end | `motions.py` `STANCE_REACH` | planted feet creep as the hip moves |
 | Idle keeps both reference arms and the weapon, with elbow-safe breathing; shared stance keys use that complete pose | `gait.idle`, `motions.py` | adapting only the free arm collapses it against the default weapon arm |
 | Each arm keeps its measured attachment and own joint chain; the far arm remains behind the torso | `layer_parts.py`, `puppet_check.py` | coalesced attachments and upper-arm paths make a forearm look like a branch |
+| A measured fist grip follows its forearm in rendering and weapon collision checks | `Body.weapon_grip_along/across`, `rig.py`, `art.py`, `puppet.py` | a fixed wrist offset moves an otherwise correctly bound sword out of the fist |
+| Measured sole contacts drive ankle roll, ground checks and foot traces together | `Body.foot_n_heel/ball`, `foot_f_heel/ball`, `rig.py`, shared `constraints.py` | default-size feet report hovering even when larger painted boots touch the floor |
+| Walking hips vault over the two measured rolling-foot targets with a smooth support change | `motions.py` `measured_walk_height`, measured soles only | a fixed default hip bob forces large boots into crouching or overstretches a planted leg |
+
+`weapon_grip_along` and `weapon_grip_across` express the wrist-to-grip vector in the forearm's
+local basis, divided by forearm length (perpendicular in rig y-up coordinates). Their defaults
+are 0.14 and 0, preserving existing characters. An adapter with known grip art derives them
+from its source joints; rendering and ground collision both use the solved `weapon_grip`.
+This does not establish that the weapon remains visually unobscured throughout a clip.
+Optional `foot_n_heel`, `foot_n_ball`, `foot_f_heel`, `foot_f_ball` are measured flat-sole
+offsets from their ankle in rig units (y up). Omitted values retain the original foot
+geometry. This aligns contact landmarks, not a claim that every resampled boot pixel
+is continuously supported; painted soles and planted frames still require review.
 
 A new fault belongs in this table, as a rule, not in one character's data.
 

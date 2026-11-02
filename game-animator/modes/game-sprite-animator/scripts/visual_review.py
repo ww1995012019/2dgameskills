@@ -16,6 +16,7 @@ arm paths, including their closest-spacing frames. A verdict has to cover all of
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import sys
@@ -243,6 +244,9 @@ def build(root):
     if os.path.exists(qp):
         with open(qp, encoding="utf-8") as fh:
             qa = json.load(fh).get("clips", {})
+    report_path = os.path.join(root, "visual_report.json")
+    if os.path.exists(report_path):
+        os.remove(report_path)
     out = os.path.join(root, "review")
     os.makedirs(out, exist_ok=True)
     for old in glob.glob(os.path.join(out, "*.png")):
@@ -283,51 +287,166 @@ def build(root):
         index.extend(shoulder_sheets(root, doc, trace, out))
         index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True))
     with open(os.path.join(out, "index.json"), "w", encoding="utf-8") as fh:
-        json.dump(dict(sheets=index, skipped=sorted(set(doc["clips"]) - set(names)),
+        json.dump(dict(review_id=review_id(review_assets(root)), sheets=index, skipped=sorted(set(doc["clips"]) - set(names)),
                        qa_flags={n: qa[n]["flags"] for n in names if qa.get(n, {}).get("flags")}), fh, ensure_ascii=False, indent=1)
+    template = dict(reviewer="", review_id=review_id(review_assets(root)), sheets={
+        e["sheet"]: dict(verdict="fail", checks={name: dict(status="pending", evidence="") for name in CHECKS}, issues=[])
+        for e in index})
+    with open(os.path.join(out, "verdict_template.json"), "w", encoding="utf-8") as target:
+        json.dump(template, target, ensure_ascii=False, indent=1)
     print(f"{len(index)} review sheets in {out}")
     for e in index:
         print(f"  {e['sheet']}: {', '.join(e['clips'])}")
     print("Read each sheet, judge it against references/visual-review.md, then record with --record.")
 
 
+CHECKS = ("complete_limbs", "continuous_garments", "no_ghosting", "expected_weapons", "anatomy", "readable_motion")
+CATEGORIES = {"missing_limb", "broken_garment", "ghosting", "extra_weapon", "anatomy", "unreadable_motion", "cosmetic"}
+
+
+def file_hash(path):
+    if str(path).lower().endswith(".png"):
+        with Image.open(path) as image:
+            rgba = image.convert("RGBA")
+            return hashlib.sha256(str(rgba.size).encode() + rgba.tobytes()).hexdigest()
+    with open(path, "rb") as source:
+        return hashlib.sha256(source.read()).hexdigest()
+
+
+def review_assets(root):
+    """Bind a verdict to the exact frames, sheets and QA it actually reviewed."""
+    paths = []
+    for pattern in ("frames/*/*.png", "review/*.png", "animations.json", "rig_trace.json", "qa_report.json"):
+        paths.extend(glob.glob(os.path.join(root, pattern)))
+    return {os.path.relpath(p, root).replace(os.sep, "/"): file_hash(p) for p in sorted(paths)}
+
+
+def review_id(assets):
+    return hashlib.sha256(json.dumps(assets, sort_keys=True).encode()).hexdigest()
+
+
 def record(root, path):
-    """Verdict format: {"reviewer": str, "sheets": {"sheet_00.png": {"verdict": "pass"|"fail", "issues": [...]}}}"""
+    """Accept only explicit, current reviews; resolution requires changed-frame evidence."""
+    current_report = os.path.join(root, "visual_report.json")
+    if os.path.exists(current_report):
+        os.remove(current_report)
     with open(os.path.join(root, "review", "index.json"), encoding="utf-8") as fh:
         index = json.load(fh)
     with open(path, encoding="utf-8") as fh:
         v = json.load(fh)
     want = {e["sheet"] for e in index["sheets"]}
-    got = set(v.get("sheets", {}))
-    if want - got:
-        sys.exit(f"not reviewed yet: {sorted(want - got)}")
-    open_issues = []
+    if want != set(v.get("sheets", {})):
+        sys.exit(f"not reviewed yet or unexpected sheets: {sorted(want ^ set(v.get('sheets', {})))}")
+    assets = review_assets(root)
+    current = review_id(assets)
+    if not assets or index.get("review_id") != current or v.get("review_id") != current:
+        sys.exit("stale or unversioned review: rebuild sheets and review the current review_id")
+    if not isinstance(v.get("reviewer"), str) or not v["reviewer"].strip():
+        sys.exit("reviewer is required")
+    registry_path = os.path.join(root, "review", "issue_registry.json")
+    registry = {}
+    if os.path.isfile(registry_path):
+        with open(registry_path, encoding="utf-8") as source:
+            registry = json.load(source)
+    open_issues, failed_sheets, ids = [], [], set()
     for sheet, r in v["sheets"].items():
         if r.get("verdict") not in ("pass", "fail"):
             sys.exit(f"{sheet}: verdict must be pass or fail")
-        if r["verdict"] == "fail" and not r.get("issues"):
-            sys.exit(f"{sheet}: a fail needs at least one issue")
+        checklist = r.get("checks", {})
+        for name in CHECKS:
+            check = checklist.get(name, {})
+            if check.get("status") not in ("pass", "fail", "not_applicable") or not isinstance(check.get("evidence"), str) or not check["evidence"].strip():
+                sys.exit(f"{sheet}: {name} needs status and visual evidence")
+            if check["status"] == "not_applicable" and name not in ("continuous_garments", "expected_weapons"):
+                sys.exit(f"{sheet}: {name} cannot be skipped")
+            if check["status"] == "fail" and r["verdict"] != "fail":
+                sys.exit(f"{sheet}: failed {name} cannot have a pass verdict")
+        if r["verdict"] == "fail":
+            failed_sheets.append(sheet)
+            if not r.get("issues"):
+                sys.exit(f"{sheet}: a fail needs at least one issue")
         for issue in r.get("issues", []):
-            if issue.get("severity") not in ("blocker", "polish"):
-                sys.exit(f"{sheet}: issue severity must be blocker or polish: {issue}")
+            ident = issue.get("id")
+            if not isinstance(ident, str) or not ident.strip() or ident in ids:
+                sys.exit(f"{sheet}: issue needs a unique id")
+            ids.add(ident)
+            if issue.get("severity") not in ("blocker", "polish") or issue.get("category") not in CATEGORIES:
+                sys.exit(f"{sheet}: issue needs a valid severity and category")
+            if issue["category"] != "cosmetic" and issue["severity"] != "blocker":
+                sys.exit(f"{sheet}: structural or motion defects must be blocker")
+            if type(issue.get("resolved")) is not bool:
+                sys.exit(f"{sheet}: resolved must be a boolean")
             if not issue.get("clip") or not issue.get("what"):
-                sys.exit(f"{sheet}: an issue needs clip and what: {issue}")
-            if issue["severity"] == "blocker" and not issue.get("resolved"):
+                sys.exit(f"{sheet}: an issue needs clip and what")
+            if issue["resolved"]:
+                resolution = issue.get("resolution", {})
+                prior_id = resolution.get("previous_review_id", "")
+                if len(prior_id) != 64 or any(c not in "0123456789abcdef" for c in prior_id):
+                    sys.exit(f"{sheet}: resolution needs a previous_review_id")
+                prior_path = os.path.join(root, "review", "history", prior_id + ".json")
+                if not os.path.isfile(prior_path):
+                    sys.exit(f"{sheet}: previous unresolved review not found")
+                with open(prior_path, encoding="utf-8") as source:
+                    prior = json.load(source)
+                matches = [i for row in prior.get("sheets", {}).values() for i in row.get("issues", [])
+                           if i.get("id") == ident and i.get("resolved") is False
+                           and i.get("clip") == issue["clip"] and i.get("category") == issue["category"]]
+                if not matches or not isinstance(resolution.get("change"), str) or not resolution["change"].strip() or not resolution.get("frames"):
+                    sys.exit(f"{sheet}: resolution needs a recorded open issue, change and changed frames")
+                for frame in resolution["frames"]:
+                    clip, number = frame.get("clip"), frame.get("frame")
+                    if clip != issue["clip"] or type(number) is not int or number < 0:
+                        sys.exit(f"{sheet}: invalid resolution frame")
+                    key = f"frames/{clip}/{clip}_{number:03d}.png"
+                    before, after = prior.get("assets", {}).get(key), assets.get(key)
+                    if not before or not after or before == after:
+                        sys.exit(f"{sheet}: resolved issue has no changed frame evidence")
+            else:
                 open_issues.append(issue)
-    out = os.path.join(root, "visual_report.json")
-    with open(out, "w", encoding="utf-8") as fh:
-        json.dump(dict(v, open_blockers=len(open_issues)), fh, ensure_ascii=False, indent=1)
-    print(f"visual review: {len(want)} sheets, {len(open_issues)} open blocker(s)")
-    for i in open_issues:
-        print(f"  {i['clip']}: {i['what']}")
-    return 1 if open_issues else 0
+                if r["verdict"] == "pass":
+                    sys.exit(f"{sheet}: unresolved issue cannot have a pass verdict")
+    dropped = {key for key, value in registry.items() if not value["resolved"]} - ids
+    if dropped:
+        sys.exit(f"previous unresolved issues omitted: {sorted(dropped)}")
+    for row in v["sheets"].values():
+        for issue in row.get("issues", []):
+            registry[issue["id"]] = dict(resolved=issue["resolved"])
+    with open(registry_path, "w", encoding="utf-8") as target:
+        json.dump(registry, target, indent=1)
+    report = dict(v, assets=assets, open_blockers=sum(i["severity"] == "blocker" for i in open_issues),
+                  open_issues=len(open_issues), status="fail" if failed_sheets or open_issues else "pass")
+    history = os.path.join(root, "review", "history")
+    os.makedirs(history, exist_ok=True)
+    for output in (os.path.join(root, "visual_report.json"), os.path.join(history, current + ".json")):
+        with open(output, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, ensure_ascii=False, indent=1)
+    print(f"visual review: {len(want)} sheets, {report['status']}, {len(open_issues)} open issue(s)")
+    return 1 if report["status"] == "fail" else 0
+
+
+def check_current(root):
+    """Delivery gate: a saved pass is valid only for the assets currently on disk."""
+    path = os.path.join(root, "visual_report.json")
+    if not os.path.isfile(path):
+        print("visual review: no current report")
+        return 1
+    with open(path, encoding="utf-8") as source:
+        report = json.load(source)
+    current = review_id(review_assets(root))
+    ok = report.get("status") == "pass" and report.get("review_id") == current
+    print("visual review: current pass" if ok else "visual review: failed or stale report; rebuild and review")
+    return 0 if ok else 1
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path")
-    ap.add_argument("--record", help="verdict JSON to validate and store")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--record", help="verdict JSON to validate and store")
+    mode.add_argument("--check", action="store_true", help="verify a passing report still matches current assets")
     a = ap.parse_args()
+    if a.check:
+        sys.exit(check_current(a.path))
     if a.record:
         sys.exit(record(a.path, a.record))
     build(a.path)

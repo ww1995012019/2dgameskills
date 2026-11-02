@@ -3,11 +3,11 @@
 
     python layer_parts.py plan --image hero.png --out hero/          # prompts for every layer
     (make hero/layers/<slot>.png from each prompt with an image model)
-    python layer_parts.py bind --image hero.png --layers hero/layers --out hero/rig
+    python layer_parts.py bind --image hero.png --layers hero/layers --reference-review hero/reference_review.json --out hero/rig
     python generate.py --character hero/rig/character.json --preset hd512 --clips walk --out out/hero
 
-There is nothing to mark and nothing to set per character. plan refuses a reference that breaks the
-contract in references/layered-art.md, and bind refuses a layer it can't place, naming the layer to
+There is nothing to mark and nothing to set per character. plan checks measurable image rules only.
+Bind requires a current semantic reference review and refuses a layer it cannot place, naming it to
 make again. Joints, scale and cloth all come from the layers themselves.
 """
 import argparse
@@ -54,6 +54,10 @@ CLOTH_BEND = 34.0        # degrees a cloth chain may turn between segments and s
 CLOTH_CURL = 75.0        # degrees over its whole length
 SWING_PAST = 8.0      # degrees a trailing chain may pass straight down or level
 GAIT_DROP = 2.2          # rig units the walk lowers the hip
+
+
+PAIR_LENGTH_RATIO = 1.25  # shared runtime bones tolerate at most 25% measured mismatch
+MIN_SEGMENT_SHARE = 0.25  # exclude collapsed joints and implausibly uneven two-bone chains
 
 
 class Rejected(Exception):
@@ -345,6 +349,50 @@ def legal_elbow(mask, shoulder, elbow, wrist):
     return candidates[np.argmin(((candidates - elbow) ** 2).sum(axis=1))]
 
 
+def check_limb(name, mask, points):
+    """Reject unsupported or degenerate inferred joints, independent of image scale."""
+    points = np.asarray(points, dtype=float)
+    lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    total = float(lengths.sum())
+    if not np.isfinite(points).all() or total <= 0 or lengths.min() < MIN_SEGMENT_SHARE * total:
+        raise Rejected(f"{name}: unreliable bone proportions; remake the limb or supply a hand hint for a sleeve")
+    radius = max(1, round(total * 0.02))
+    for a, b in zip(points[:-1], points[1:]):
+        supported = []
+        for x, y in np.linspace(a, b, 25):
+            x, y = int(round(x)), int(round(y))
+            supported.append(mask[max(0, y-radius):min(mask.shape[0], y+radius+1),
+                                  max(0, x-radius):min(mask.shape[1], x+radius+1)].any()
+                             if 0 <= x < mask.shape[1] and 0 <= y < mask.shape[0] else False)
+        if np.mean(supported) < 0.9:
+            raise Rejected(f"{name}: inferred bone leaves the artwork; remake the limb or supply a hand hint for a sleeve")
+    return lengths
+
+
+def check_pair(name, near, far):
+    ratios = np.maximum(near, far) / np.minimum(near, far)
+    if not np.isfinite(ratios).all() or ratios.max() > PAIR_LENGTH_RATIO:
+        segment = int(np.argmax(ratios)) + 1
+        raise Rejected(f"{name}: near/far bone {segment} lengths differ by more than 25%; remake the mismatched limb")
+    return ratios.tolist()
+
+
+def check_grip(arm, weapon, joints):
+    """The runtime's fixed grip must lie on weapon art inside the distal hand region."""
+    wrist, elbow, tip = (np.asarray(joints[k]) for k in ('wrist', 'elbow', 'tip'))
+    grip = wrist + (wrist - elbow) * 0.14
+    radius = max(2., float(np.linalg.norm(tip - wrist)))
+    yy, xx = np.indices(arm.shape)
+    hand = (xx - wrist[0]) ** 2 + (yy - wrist[1]) ** 2 <= radius ** 2
+    contact = arm & weapon & hand
+    if not contact.any():
+        raise Rejected("weapon: no contact with the inferred hand; remake weapon/arm or supply hand_near_hint")
+    ys, xs = np.nonzero(weapon)
+    if not len(xs) or np.min((xs-grip[0])**2 + (ys-grip[1])**2) > max(2., radius * 0.2)**2:
+        raise Rejected("weapon: inferred grip misses the weapon; remake weapon/arm or supply hand_near_hint")
+    return grip
+
+
 def angle_down(a, b):
     """Degrees from straight down to a->b, forward positive. Picture pixels, y down."""
     return math.degrees(math.atan2(b[0] - a[0], b[1] - a[1]))
@@ -485,13 +533,24 @@ def registration(name, layer, ref, cache_dir=None):
     return fit
 
 
-def bind(ref, layers, fit_cache=None):
+def bind(ref, layers, fit_cache=None, diagnostics=None):
+    """Keep the current partial registration available even when acceptance fails."""
+    state = diagnostics if diagnostics is not None else {}
+    try:
+        return _bind(ref, layers, fit_cache, state)
+    except Rejected as exc:
+        state.update(status="rejected", reason=str(exc))
+        raise
+
+
+def _bind(ref, layers, fit_cache, diagnostics):
     """Places every layer and works out the rig. Returns (placed layers, spec's puppet + body, report)."""
     size = (ref.shape[1], ref.shape[0])
     missing = [n for n, s in SLOTS.items() if s[2] and n not in layers]
     if missing:
         raise Rejected(f"missing layers: {', '.join(missing)}; make them from the prompts of `plan`")
     out, fits, placements = {}, {}, {}
+    diagnostics.update(layers=out, fits=fits)
     seen = ref[..., 3] > 128
     for name in SLOTS:
         if name not in layers:
@@ -560,6 +619,21 @@ def bind(ref, layers, fit_cache=None):
         hand_masks[arm] = hand
     an = read_arm(masks["arm_near"], hand_masks.get("arm_near"))
     af = read_arm(masks["arm_far"], hand_masks.get("arm_far"))
+    diagnostics["joint_chains"] = {
+        name: [[float(v) for v in joints[k]] for k in keys]
+        for name, joints, keys in (("arm_near", an, ("shoulder", "elbow", "wrist")),
+                                  ("arm_far", af, ("shoulder", "elbow", "wrist")),
+                                  ("leg_near", ln, ("hip", "knee", "ankle")),
+                                  ("leg_far", lf, ("hip", "knee", "ankle")))}
+    measured = {}
+    for name, joints, keys in (("arm_near", an, ("shoulder", "elbow", "wrist")),
+                               ("arm_far", af, ("shoulder", "elbow", "wrist")),
+                               ("leg_near", ln, ("hip", "knee", "ankle")),
+                               ("leg_far", lf, ("hip", "knee", "ankle"))):
+        measured[name] = check_limb(name, masks[name], [joints[k] for k in keys])
+    diagnostics["bone_lengths_px"] = {k: v.tolist() for k, v in measured.items()}
+    pair_ratios = {kind: check_pair(kind, measured[kind + "_near"], measured[kind + "_far"])
+                   for kind in ("arm", "leg")}
     if ln["toe"][0] - ln["heel"][0] < 30 or lf["toe"][0] - lf["heel"][0] < 30:
         raise Rejected("legs: no foot found at the bottom of a leg layer; make it again with the boot complete")
     near_px = np.hypot(*(ln["knee"] - ln["hip"])) + np.hypot(*(ln["ankle"] - ln["knee"]))
@@ -678,7 +752,7 @@ def bind(ref, layers, fit_cache=None):
     wep_rest = None
     fa_n = angle_down(an["elbow"], an["wrist"])
     if "weapon" in out:
-        grip = an["wrist"] + (an["wrist"] - an["elbow"]) * 0.14
+        grip = check_grip(masks["arm_near"], masks["weapon"], an)
         ys, xs = np.nonzero(masks["weapon"])
         far = np.argmax((xs - grip[0]) ** 2 + (ys - grip[1]) ** 2)
         tip = np.array([float(xs[far]), float(ys[far])])
@@ -745,7 +819,78 @@ def bind(ref, layers, fit_cache=None):
     if weapon_len:
         puppet.update(weapon_length=round(weapon_len, 2), weapon_back=round(weapon_back, 2))
         body.update(weapon_front=round(weapon_len, 2), weapon_back=round(weapon_back, 2))
-    return out, dict(puppet=puppet, body=body, gait=gait), dict(fits=fits, cover=round(cover, 3), spill=round(spill, 3), px_per_unit=round(float(ppu), 3))
+    return out, dict(puppet=puppet, body=body, gait=gait), dict(bone_pair_ratios=pair_ratios, fits=fits, cover=round(cover, 3), spill=round(spill, 3), px_per_unit=round(float(ppu), 3))
+
+
+def save_diagnostics(folder, ref, state):
+    """Always replace prior diagnostics; rejected runs never leave a stale success report."""
+    os.makedirs(folder, exist_ok=True)
+    canvas = Image.new("RGBA", (ref.shape[1], ref.shape[0]), (60, 62, 74, 255))
+    for arr in state.get("layers", {}).values():
+        canvas.alpha_composite(Image.fromarray(arr, "RGBA"))
+    canvas.save(os.path.join(folder, "layers_check.png"))
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(canvas)
+    for i, (name, points) in enumerate(state.get("joint_chains", {}).items()):
+        colour = (255, 230, 40) if i % 2 else (40, 230, 255)
+        draw.line([tuple(p) for p in points], fill=colour, width=4)
+        for x, y in points:
+            draw.ellipse((x-5, y-5, x+5, y+5), fill=colour)
+        draw.text(tuple(points[0]), name, fill=colour)
+    canvas.save(os.path.join(folder, "bind_joints.png"))
+    report = {k: v for k, v in state.items() if k != "layers"}
+    with open(os.path.join(folder, "bind_report.json"), "w", encoding="utf-8") as target:
+        json.dump(report, target, ensure_ascii=False, indent=1)
+
+
+def write_binding(out_dir, character_name, ref, out, spec, report, state):
+    """Export an accepted numerical bind with the caller's review provenance."""
+    state.update(report, status="accepted")
+    save_diagnostics(out_dir, ref, state)
+    folder = os.path.join(out_dir, "layers")
+    os.makedirs(folder, exist_ok=True)
+    for name, arr in out.items():
+        box = Image.fromarray(arr[..., 3]).getbbox()
+        Image.fromarray(arr, "RGBA").crop(box).save(os.path.join(folder, name + ".png"))
+        spec["puppet"]["layers"][name].update(image=f"layers/{name}.png", offset=[box[0], box[1]])
+    Image.fromarray(ref, "RGBA").save(os.path.join(out_dir, "source.png"))
+    spec.update(name=character_name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
+    with open(os.path.join(out_dir, "character.json"), "w", encoding="utf-8") as fh:
+        json.dump(spec, fh, ensure_ascii=False, indent=1)
+    print(f"[bind] {len(out)} layers, {report['px_per_unit']} px/unit, covers {report['cover']:.0%} of the reference, {report['spill']:.0%} outside -> {out_dir}")
+    for name, fit in report["fits"].items():
+        print(f"  {name:<11} scale {fit['s']:.3f} turn {fit['deg']:+.1f} shift {fit['dx']:+.0f},{fit['dy']:+.0f} match {fit['match']:.0%}")
+
+
+
+REFERENCE_CHECKS = ("right_side_view", "complete_separate_arms", "visible_separate_legs",
+                    "planted_feet", "unobscured_limbs", "separate_garments", "expected_weapons")
+
+
+def reference_review_template(image):
+    with open(image, "rb") as source:
+        digest = hashlib.sha256(source.read()).hexdigest()
+    return dict(image_sha256=digest, reviewer="", checks={
+        name: dict(status="pending", evidence="") for name in REFERENCE_CHECKS})
+
+
+def check_reference_review(image, path):
+    if not path or not os.path.isfile(path):
+        raise Rejected("reference: semantic review required; inspect the reference and complete reference_review.json from plan")
+    try:
+        with open(path, encoding="utf-8") as source:
+            review = json.load(source)
+    except (ValueError, OSError) as exc:
+        raise Rejected("reference: cannot read semantic review JSON; complete the plan template") from exc
+    if review.get("image_sha256") != reference_review_template(image)["image_sha256"]:
+        raise Rejected("reference: semantic review is stale; review this exact image again")
+    if not isinstance(review.get("reviewer"), str) or not review["reviewer"].strip():
+        raise Rejected("reference: semantic review needs a reviewer")
+    for name in REFERENCE_CHECKS:
+        check = review.get("checks", {}).get(name, {})
+        if check.get("status") != "pass" or not isinstance(check.get("evidence"), str) or not check["evidence"].strip():
+            raise Rejected(f"reference: {name} needs a passing visual review with evidence; remake the reference if it fails")
+    return review
 
 
 def main():
@@ -759,6 +904,7 @@ def main():
     b.add_argument("--layers", required=True, help="folder with <slot>.png for each layer")
     b.add_argument("--name", default="character")
     b.add_argument("--out", required=True)
+    b.add_argument("--reference-review", help="completed, image-hashed semantic reference review from plan")
     b.add_argument("--fit-cache", help="reuse registration searches for identical images; all acceptance gates still run")
     a = ap.parse_args()
     try:
@@ -774,33 +920,25 @@ def main():
             for slot in HAND_HINTS:
                 with open(os.path.join(folder, slot + ".txt"), "w", encoding="utf-8") as fh:
                     fh.write(hand_prompt())
+            with open(os.path.join(a.out, "reference_review.json"), "w", encoding="utf-8") as target:
+                json.dump(reference_review_template(a.image), target, ensure_ascii=False, indent=1)
+            print("[plan] Numeric preflight only. Complete reference_review.json after visual inspection before bind.")
             print(f"[plan] {len(SLOTS)} art prompts + {len(HAND_HINTS)} optional hand hints -> {folder}. "
                   "Make art layers from the reference; make each hand hint from its finished arm layer.")
             return
         layers = {n: key_out(os.path.join(a.layers, n + ".png")) for n in (*SLOTS, *HAND_HINTS) if os.path.isfile(os.path.join(a.layers, n + ".png"))}
-        out, spec, report = bind(ref, layers, a.fit_cache)
+        state = {}
+        try:
+            semantic = check_reference_review(a.image, a.reference_review)
+            out, spec, report = bind(ref, layers, a.fit_cache, state)
+        except Rejected as exc:
+            state.update(status="rejected", reason=str(exc))
+            save_diagnostics(a.out, ref, state)
+            raise
     except Rejected as e:
         sys.exit(f"[rejected] {e}")
-    folder = os.path.join(a.out, "layers")
-    os.makedirs(folder, exist_ok=True)
-    for name, arr in out.items():
-        box = Image.fromarray(arr[..., 3]).getbbox()
-        Image.fromarray(arr, "RGBA").crop(box).save(os.path.join(folder, name + ".png"))
-        spec["puppet"]["layers"][name].update(image=f"layers/{name}.png", offset=[box[0], box[1]])
-    Image.fromarray(ref, "RGBA").save(os.path.join(a.out, "source.png"))
-    spec.update(name=a.name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
-    with open(os.path.join(a.out, "character.json"), "w", encoding="utf-8") as fh:
-        json.dump(spec, fh, ensure_ascii=False, indent=1)
-    with open(os.path.join(a.out, "bind_report.json"), "w", encoding="utf-8") as fh:
-        json.dump(report, fh, ensure_ascii=False, indent=1)
-    canvas = Image.new("RGBA", (ref.shape[1], ref.shape[0]), (60, 62, 74, 255))
-    for arr in out.values():
-        canvas.alpha_composite(Image.fromarray(arr, "RGBA"))
-    canvas.save(os.path.join(a.out, "layers_check.png"))
-    print(f"[bind] {len(out)} layers, {report['px_per_unit']} px/unit, covers {report['cover']:.0%} of the reference, {report['spill']:.0%} outside -> {a.out}")
-    for name, fit in report["fits"].items():
-        print(f"  {name:<11} scale {fit['s']:.3f} turn {fit['deg']:+.1f} shift {fit['dx']:+.0f},{fit['dy']:+.0f} match {fit['match']:.0%}")
-
+    state.update(reference_review=semantic, semantic_verification="reviewer_attested")
+    write_binding(a.out, a.name, ref, out, spec, report, state)
 
 if __name__ == "__main__":
     main()

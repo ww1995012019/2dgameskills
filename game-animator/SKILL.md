@@ -18,7 +18,12 @@ and NumPy; no separate skill installation is needed.
 | Experimental side-view flying creature with user-provided PNG parts | `references/creature-rig.md` |
 
 Read the chosen mode's `SKILL.md` for its commands, supported character configuration, review and
-export process. For side-view custom art and actions, use its `references/ai-art.md` and
+export process. For supplied character pictures or AI-generated side-view art, follow the humanoid mode's
+`references/basic-character-workflow.md`: fixed prompts, short/fitted clothing, short hair, no weapon
+or one single-handed sword, mandatory hand hints, isolated-layer review, idle + walk only and bounded
+repairs. The agent handles the prompts and reviews; the user supplies the picture. Advanced layered
+features remain experimental, not a fallback around a rejected basic job. Numeric QA alone never clears delivery.
+For other side-view custom art and actions, use its `references/ai-art.md` and
 `references/character-spec.md`; test custom actions in the preview and inspect joints visually.
 
 ## Shared character identity: side and top-down

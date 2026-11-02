@@ -1,5 +1,97 @@
 # 交接文档
 
+## 静态人物已获用户认可，待机/走路数值通过，动态待用户审核（2026-11-02）
+
+用户接受了修后头部和完整静态人物（“可以 没问题”）；这仅确认静态外观。新增 `dev/template_binding.py`，八层图绑定到现有分层运行时，测量握剑点和靴底接触，远臂在保留源端点的前提下调整肘弯。运行时通过可选测量值驱动武器握点、脚底滚动/落地和走路骨盆支撑高度，未测量时保留旧默认动作。工作细节、边界、目录、下一步和发布状态见 [`docs/handover/2026-11-02-character-puppet.md`](docs/handover/2026-11-02-character-puppet.md)。
+
+当前 `motion_v3` 生成 idle 72 帧、walk 25 帧，均30fps；数值QA均0 FAIL/0 WARN，走路脚滑0.004px、抬脚最大偏差0.19px。美术/动作交互预览为案例外部目录 `.../full_character/motion_v3/preview.html`，GIF和四张必审图在同一目录/build/review。预览、美术判断和用户动态验收均未完成；`preview_provenance.json` 保持 `user_motion_approval=pending`、`final_visual_pass=false`，不能报最终通过，也不能先铺开剩余25个动作。
+
+全仓26套旧角色回归已完成，0 FAIL；`cutout_demo-pixel` 7 WARN、`cutout_demo-hd` 8 WARN，其余24套0 WARN。`dev/tests` 全量单测当时仍在运行，日志 `/tmp/template-binding-full-tests.log`；后续接手者必须先查最终状态。案例图片/绑定/渲染输出在 `/workspace/2dgameskills-output/wuxia-template-v1/full_character`，不在git中。用户要求推送并合并main；本地 `work` 起点 `c019f1f` 与当时 `origin/main` 一致，GitHub CLI 报告 `GH_TOKEN` 无效。先提交，再尝试推送；如认证挡住，保留本地提交并准确说明，不强推。
+
+## 用户否决扁窄头型，已提供返修对照，仍待复核（2026-11-02）
+
+用户明确指出“头这么扁”；上一节以下的“完整静态待验收”结论已撤回。旧成图、报告、查看器归档在案例 `review_history/head_rejected_by_user`。根因是窄长头模板及强制贴轮廓提示词，生成美术已失真，代理漏审；不能错误归咎为后续等比组装把正常头挤扁。原占位头模板改为圆形后脑，提示词明确自然头型优先。
+
+新增 `dev/template_head_proportions.py`：用同身份图的自动分割头做比例参考（保留全图坐标、占用RGB核对及源图/候选/代码/合同/实际生成记录哈希）。第三版AI重画头并补颈，不是原像素保留；新的头形合同明确替换已否决窄模板，其他肢体门槛不变、历史留档。宽高比相对偏差旧46.55%、新1.00%；这只拦明显比例异常，不能证明五官身份。
+
+组装改为参考头/身体比例等比缩放、参考颈/头比例设挂点，多余颈部隐藏到领口后；领口只能有限平移挂接，不能控制头大小。本例颈连续97.62%，其他挂点100%，七个非头图层哈希不变。查看 `head_proportion_fix/before_after.jpg`、更新后的 `character_draft.jpg` 和 `preview.html`。子阶段实际7次（头3已用尽，其余各1），父阶段仍1/3/3，模板家族总14次，不冒充全会话次数。
+
+27项相关测试：26通过，1项expectedFailure明确空白/错脸不能靠轮廓识别；含两种合成头型、挤窄故障、额外颈部隐藏、领口不能控制头大小、不同身份掩码与过期/未登记重画拒绝。日志 `/tmp/template-head-final-checks.log`。Chromium校验八层实际尺寸、头部与静态PNG绘制比对（平均RGB差1.97）、分层开关和恢复通过。仅dev变化，未重跑旧全量动作基准。`visual_report.json` 的头型问题保持blocker、resolved=false、最终pass=false；先等用户看返修外观，不进入完整rig或idle/walk。详情 `docs/template-full-static.md`。
+
+## 完整静态人物已补齐，待用户看外观（2026-11-02）
+
+用户继续后，新增开发工具 `dev/template_full_character.py`，子阶段 `/workspace/2dgameskills-output/wuxia-template-v1/full_character`。导入父阶段三块已验收几何（近腿为派生修复），新画头/远臂/远腿/髋/剑。本阶段实际6次（头2，其他各1），父阶段1/3/3次数和blocked不变，子阶段不能重画导入部件。完整八层静态图、关节叠加、挂接放大、交互查看器及各项报告已输出。
+
+头第1版超轮廓/发丝缝隙保留失败，第2版修复。组装中修正髋衬层应在双腿之后的通用层级规则；头均匀比例按领口/颈宽推导为0.3379，并用原seat_head左移2px，原95%颈连续标准不变。本例肩/髋/腰/握剑100%、颈95.24%、两脚底差0、无裁切；静态骨段支撑/骨长比例通过。22项代码测试通过，含两合成体型与缺颈/空握点/错误髋层级故障注入；交互页经Chromium检查通过。仅完整静态，尚无完整rig、idle/walk、引擎播放或最终pass。默认skill未切换。详情 `docs/template-full-static.md`。下一步须以本次完整静态图为准看外观，再接完整骨骼与动作。
+
+## 继续后：腿部派生修复通过，局部关节测试已生成（2026-11-02）
+
+新增通用 `dev/template_mesh_fit.py`，对现有完整腿图做受限水平笼形修形，不追加生图，不重置7张图的次数，原生成job仍blocked。它是额外局部形变（上限25%/28px），不冒充原12%整体缩放；保留原图和失败记录。此例实际拉伸23.39%、位移19.17px，覆盖96.61%→99.32%，挂点完整、孔0、未裁图。原覆盖98%/范围99%标准不变。修后外观待用户看，详见 `docs/template-cage-repair.md`。
+
+`template_puppet.py repair` 与repair manifest验证派生源图/结果/合同/处理代码/报告哈希。新增 `dev/template_motion_probe.py` 复用生产puppet网格/raster和翻折检查，屈肘35°、屈膝45°各20帧，骨长误差约1e-13px、翻折0、无裁切。`motion_probe/joint_range.gif` 可看；这是独立部件活动，不是完整角色idle/walk。原生成phase不可重开，静态派生结果与关节活动状态分开记录。仍未制作其他部件或完整rig，没有最终pass。所有新模块仍仅在dev，不更新默认skill。
+
+## 外观认可后继续修复：腿部达限，未进入绑定（2026-11-02）
+
+用户说“没问题”，保存为外观认可；旧预览/报告已归档。模板案例实际生成数更新为7张（torso1、arm_near3、leg_near3）。手臂新图闭合指缝，几何核心99.85%、挂点完整、孔0；腿部96.61%未达98%，保持blocker，job终态blocked，不能重置次数继续抽图。没有制作头/另侧肢体/剑，也没有绑定和动画。新增通用 `dev/template_registration.py`，从等比改为双轴各±12%的整体缩放、平移限8%，检查是否把源像素裁出画布；不降低覆盖和挂接要求。9项测试通过，包括两合成体型比例误差恢复，不算两真实角色验收。旋转/全分辨率诊断仍未过，未并入算法。详情 `docs/template-proof.md`、案例最新RESULT.md。此轮表明模板引导仍不能保证当前图像模型生成严格符合轮廓的美术，不能宣称自动路线已跑通。
+
+## 三部件模板初稿已做，供用户看外观（2026-11-02）
+
+新增开发工具 `dev/template_puppet.py` 与7项通过的故障注入测试，说明见 `docs/template-proof.md`。案例 `/workspace/2dgameskills-output/wuxia-template-v1`，实际生成躯干1、臂2、腿2共5张，各部件第3次未用。`preview.html`、`parts_preview.jpg`、`assembly_comparison.jpg` 展示三个部件和躯干暴露对照。躯干大洞已不出现；手臂核心覆盖/alpha小孔、腿的模板适配仍为未解决blocker。仅供看初稿，没有头/另侧肢体/剑，没有绑定和动画，不是最终pass。模板肩/颈挂点按通用结构与两体型测试修正，合同历史保留，不改原始美术或尝试数。默认skill未切换，旧失败任务保持blocked。
+
+## 下一步制作方案：待实现和实测（2026-11-02）
+
+用户要求提出真正可实施的方案。新增 `docs/plans/template-puppet-production.md`：先定义完整部件轮廓、关节与归属，AI 绘制外观，程序组装并复用现有动画。代价是限制模板/服装结构并允许已说明的设计适配；不承诺任意原图逐像素保留或无人修图必成功。先检验部件实际美术质量，再用两个不同体型真实角色验证；到限失败不能把门禁有效说成生产成功。当前只形成提案，没有切换默认入口、重置生成计数或生成新图片。
+
+## 自动分割与受限补画：整体验收未过（2026-11-02）
+
+- 用户授权验证头、后腿、躯干。方法和边界见 `docs/segmentation-experiment.md`，案例 `/workspace/2dgameskills-output/wuxia-segmentation-v1`。旧生产任务保持 blocked。
+- 自动姿势提示和 SAM2/MobileSAM 候选经看图选择，头/后腿可见像素原位切出；没有手画掩码或手设关节。姿势手腕检测错误，语义归属仍需审核，不是全自动分层。
+- 躯干实际补画3次仍失败：只拷指定区域后4491闭合透明像素、补画26.56%超过初设20%目标。保留 blocker、resolved=false；无绑定/动画/pass，不能采纳生成器区域外改画。
+- 新开发工具 `dev/masked_completion.py` 锁住输入/掩码/登记板哈希，只采纳指定区域。掩码拓扑和范围预检前置；blocked时退出2，无blocker也仅需视觉复核。没有接入默认skill或打包模型。
+- 7项故障注入测试通过，含两种宽高的合成体型；不能当作两个真实人物验收。此轮未改动画路径，未重跑旧全量动画基准。
+
+## 第一张真实基础流程试做：未通过（2026-11-02）
+
+- 用户提供蓝白金服饰、长马尾、长袍的武侠剑客，按此前约定做短发、短衣、单手剑的基础适配。案例目录 `/workspace/2dgameskills-output/wuxia-basic-v1`，`RESULT.md`、`visual_report.json` 和 `job.json` 明确 FAIL/blocked，未绑定、未生成动画、没有最终 pass。
+- 原图可在当前聊天直接看见，附件原始字节下载返回 HTTP403；source.png 明确标记为首次生成的身份代理图而非上传原图，不声称归档了原始文件哈希。图片生成器第一次直接使用聊天原图；后续身份对照由代理看原图完成，案例保存 provenance。
+- 参考图共3次：第1次三分之四身姿和脚底偏差；第2次持剑侧上臂被躯干遮住，前臂像从腰部伸出；第3次加入所有基础人物共用的姿势图后，肩肘腕和脚底基线可辨识，批准拆层。
+- 真正失败在孤立图层：leg_far 三次均保留另一条大腿，成为 Y 形双腿裤片；torso 两次仍含与 arm_near 重复的肩甲；head 第1次变成放大头像。腿达到3次上限后停止，躯干第3次/头第2次虽已预留但未执行，手部定位图未生成。实际生成14张：参考3、双臂各1、近腿1、远腿3、hips1、torso2、head1、weapon1。不得把已预留次数说成已执行次数。
+- 新通用改动：默认输出固定姿势引导图（空手图不带剑标记）；强化侧视/脚底/完整上臂要求；基础 torso/leg/head 提示词明确排除重复肩甲、另一条大腿和放大头像。重试现在自动把实际观察到的缺陷作为数据传给图像模型，之前仅附泛化规则；同时归档已用提示词。即便最后一轮已明确指出多余腿，模型仍未去掉，因此不能宣称这些词已解决该真实案例。
+- 第四次请求触发终态 blocked，后续阶段命令不能悄悄重开。基础流程允许显式注明生成身份代理图及来源限制，不能冒充原始文件。案例保留各次图像、拒绝原因和生成提示词。
+- 本轮回归：相关37项代码测试通过（`/tmp/wuxia-case-workflow-checks.log`）；后续空手/持剑姿势图标记和安装包入口的3项检查通过（`/tmp/wuxia-case-package-checks.log`）。独立和统一 skill 同步、打包检查通过。代码检查通过不等于 AI 图通过。
+- 当前验证结论：基础流程门禁已拦截真实失败，但尚不能称为经过真实人物成功验收的稳定分层生产方案。下一步必须改善图像模型对保留/排除区域的实际遵循能力；不准继续靠重置次数、手工擦图、降阈值或把 blocker 改 polish 来交付。
+
+## 图片输入的固定基础流程（2026-11-02）
+
+- 用户确认采用收窄范围、固定提示词、分阶段验收的方案。新默认入口 `scripts/character_workflow.py`，说明 `references/basic-character-workflow.md`。用户放原图，代理负责识别身份/装备、预设提示词、生图工具调用、语义审核、修复和命令；脚本本身不调用生图服务。
+- `basic-side-v1`：侧视双足人形，短发、短款/贴身衣服，空手或一把简单单手剑。先把原图作为身份参考生成固定 1024x1536 标准侧视图；明确记录保留特征、不可见部分的不确定性和简化。必要标志性设计超范围时停止，不擅自承诺完整保留。
+- 原图/标准图/固定图层/双手定位图/绑定/待机走路逐阶段处理。参考审核必须覆盖基础范围、源图与装备；通过后才释放部件提示词。部件单独看完整性、排除内容、锐利细节、配准和挂接，双手提示图必需，额外 robe/cloth/hair 层被基础入口拒绝。换图、改审核或改导出 rig 后，旧审核/旧绑定不能继续预览。
+- 预设提示词集中在 `layer_slots.py`：身份观察、标准图、每个部件与手部定位、五类修复指令。每阶段初次+两次重做，最多三次已记录生成；重试保存图片/审核和原因，作废接受状态。代理不得不记重试或换 job 重置次数；代码不能观察绕过工具的外部生成。
+- `preview` 仅生成 hd512 的 idle/walk，无全套/攻击开关。生成或 QA 失败则清除旧当前通过报告并记录 preview_blocked。数值过关仍需版本化视觉审核、运行预览和用户走路认可。复杂服装和武器、更多动作保留为后续验证，不自动套 27 动作。
+- 将原 binder 导出提炼为共用 `write_binding`，基础入口和原 CLI 使用相同输出路径；两体型测试同时确认名称、骨骼、导出及走路数值检查。
+- 本轮验证：`PYTHONPATH=dev/tests python3 -m unittest test_character_workflow test_binding_guards test_visual_gate test_shoulder_binding.ShoulderReview test_cutout_source.TestJointSheet -v`，36 项全部通过，日志 `/tmp/basic-profile-final.log`。10 项基础流程测试包含两种合成体型完整审核/绑定/走路、单手剑独立图层与实际握点、两个 .skill 解压后入口、失败/过期/重试阻断。合成体型测试的配准固定为 identity，因为图层本来同画布；不声称验证了 AI 配准或真实 AI 图的画质。
+- standalone/unified 同步、重新打包及 diff 检查通过。此轮未重跑所有旧模式动画；上一轮严格基准差异仍如实保留，未更新基准。下一张真实输入才启动实际 AI 美术和用户动态验收，当前没有真实新图可供该验收。
+
+## 视觉验收防误放行（2026-11-02）
+
+- 明确 `plan` 仅检查背景、非空、高度和边距；它不识别侧视/遮挡/美术完整性。新增 `reference_review.json` 待审模板；CLI `bind --reference-review` 必须提供与原图 SHA256 对应的审核者及七项逐项通过的视觉证据。低层 `bind()` 仍是数值 API。参考语义是审核者判断，不能描述为自动识别。
+- 共用 `visual_review.py` 新增每张图必填六项美术/动作检查，缺肢、碎衣、拖影、多武器等结构类别强制 blocker；`resolved` 必须是布尔值。任何 fail sheet 或未解决问题都不能通过，不能仅看 open_blockers=0。
+- review_id 绑定帧、审查图、元数据和 QA；PNG 使用解码像素哈希，重压缩不能充当修复。重建清除旧当前报告；新增 `--check` 交付前验证，失效旧报告不得沿用。
+- 问题有唯一 id、历史报告和持久未解决问题登记；问题不得直接删除。resolved 必须引用此前已记录的同 id/category/clip 未解决问题，说明修复，并提供前后存在且像素改变的实际帧。仍须审核者看图确认，改变像素不代表自动证明修复。
+- 文档/SKILL 明确短桩臂、破碎衣服、残影和额外武器为 blocker；旧无版本 verdict 必须重新审核。当前工作区没有用户提及的原始 visual_report.json，未声称已修正那一份具体报告。
+- 验证：`PYTHONPATH=dev/tests python3 -m unittest test_cutout_source.TestJointSheet test_shoulder_binding.ShoulderReview test_binding_guards test_visual_gate -v`，26 项通过，日志 `/tmp/visual-gate-final.log`。含 12 项视觉门禁测试、现有必审关节/肩部流程及上一轮 8 项绑定检查；同步、打包和 diff 检查通过。本轮改变验收流程，没有重新生成全部动画或重跑上轮 30 分钟完整测试，不能把本轮称为完整套件通过。
+
+## 绑定可靠性补强（2026-11-02）
+
+- 分层绑定新增两侧分段骨长一致性、骨段比例及像素支撑检查；武器校验近手接触与现有运行时握点。拒绝不可靠输入，不修改单角色参数。
+- 成功/失败都保存本次分层图、关节叠加图及状态报告；失败保留此前成功的 character 文件，报告明确拒绝状态。
+- idle 双臂间距增加持续 100ms 的短暂塌缩检查，保留动作交叉边界。规则见 layered-art.md，故障注入见 test_binding_guards.py。
+- 验证：新增故障测试 8 项通过（`python3 -m unittest discover -s dev/tests -p test_binding_guards.py -v`）；两种合成体型绑定/走路及关节叠加图检查通过。真实 AI 美术目录未随仓库提供，本轮不能替代真实角色视觉验收。
+- 完整测试运行 282 项（新增 CLI 用例随后单独通过）：4 项 Godot 因用户目录不可写失败，指定 `XDG_DATA_HOME=/tmp/binding-xdg/data XDG_CACHE_HOME=/tmp/binding-xdg/cache XDG_CONFIG_HOME=/tmp/binding-xdg/config CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium` 后引擎专项 6 项全部通过。浏览器须在有网络权限的执行环境运行。另 1 项旧折叠故障回调缺少 ground_contact 参数，已修正测试并专项复测通过。保留 3 项既有 expectedFailure；未声称原始完整运行退出码为 0。完整日志 `/tmp/binding-verified-tests.log`，复测 `/tmp/binding-engines-final.log`、`/tmp/binding-fold-retry.log`。
+- `JOBS=2 bash dev/regress_all.sh`：26 套真实退出码均 0，0 FAIL；cutout_demo 高清 8 WARN、像素 7 WARN（旧绑定报告的补画提示及高清表情静止），其余 0 WARN。
+- `python3 dev/baseline.py --strict` 未通过：26 套 0 状态退化、106 动作像素变化、88 数值漂移。未更新基准。用 `git archive HEAD` 的未修改代码复现 commando-pixel/run：原 HEAD 与本轮像素哈希均 d2d2fd09d36f89b4，而保存基准为 08fd15eb43e8041f，证明该代表性差异在本轮前存在；未逐一复现全部 106 项。
+- 模式/共用文件同步、diff 空白检查及独立/统一 skill 打包检查通过。
+
 ## 分层人偶：全套动作（2026-11-01，走路已通过，全套等用户审核）
 
 用户批准走路后扩展到全部 27 个动作。青玄和枪客用同一组命令，质检 0 FAIL 0 WARN，逐动作放大看过，观感仍需用户审核。

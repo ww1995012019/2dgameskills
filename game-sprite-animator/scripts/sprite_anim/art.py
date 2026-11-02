@@ -295,6 +295,8 @@ CUTOUT_BONES = {
 
 def hand_grip(sk):
     """Where the near fist holds a weapon: just past the wrist, along the forearm."""
+    if 'weapon_grip' in sk:
+        return sk['weapon_grip']
     return add(sk["wr_n"], scale((sk["wr_n"][0] - sk["el_n"][0], sk["wr_n"][1] - sk["el_n"][1]), 0.14))
 
 

@@ -83,6 +83,7 @@ game, CSS playback or a quick H5 mini-game.
    ```bash
    python scripts/visual_review.py out/c
    python scripts/visual_review.py out/c --record verdict.json
+   python scripts/visual_review.py out/c --check
    ```
 
 7. **Show the result.** Give the user `out/c/preview.html`: every clip, a lower + upper picker, and a

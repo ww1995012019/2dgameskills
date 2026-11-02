@@ -150,12 +150,13 @@ class ShoulderReview(unittest.TestCase):
             self.assertIn('shoulders_00.png', names)
             self.assertIn('arms_00.png', names)
             self.assertTrue((root / 'review/shoulders_00.png').is_file())
-            verdict = {'reviewer': 'test', 'sheets': {n: {'verdict': 'pass'} for n in names if n != 'shoulders_00.png'}}
+            row = lambda: {'verdict': 'pass', 'checks': {k: {'status': 'pass', 'evidence': 'fixture inspected'} for k in review.CHECKS}}
+            verdict = {'reviewer': 'test', 'review_id': index['review_id'], 'sheets': {n: row() for n in names if n != 'shoulders_00.png'}}
             path = root / 'verdict.json'
             path.write_text(json.dumps(verdict))
             with self.assertRaisesRegex(SystemExit, 'shoulders_00.png'):
                 review.record(tmp, str(path))
-            verdict['sheets']['shoulders_00.png'] = {'verdict': 'pass'}
+            verdict['sheets']['shoulders_00.png'] = row()
             path.write_text(json.dumps(verdict))
             self.assertEqual(review.record(tmp, str(path)), 0)
             del verdict['sheets']['arms_00.png']

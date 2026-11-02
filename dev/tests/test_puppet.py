@@ -199,8 +199,8 @@ class TwoBuilds(unittest.TestCase):
         r, clip = self.renderer(spec)
         real = r.art.puppet.meshes
 
-        def flipped(cv, sk, cloth):
-            for layer, verts in real(cv, sk, cloth):
+        def flipped(cv, sk, cloth, ground_contact=False):
+            for layer, verts in real(cv, sk, cloth, ground_contact):
                 if layer.name == "leg_near":
                     verts = verts.copy()
                     j, i = layer.cells[len(layer.cells) // 2]

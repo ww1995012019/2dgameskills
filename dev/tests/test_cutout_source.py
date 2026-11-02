@@ -198,7 +198,9 @@ class TestJointSheet(unittest.TestCase):
         def record(sheets):
             verdict = os.path.join(tmp, "verdict.json")
             with open(verdict, "w", encoding="utf-8") as fh:
-                json.dump({"reviewer": "test", "sheets": {s: {"verdict": "pass"} for s in sheets}}, fh)
+                json.dump({"reviewer": "test", "review_id": index["review_id"],
+                           "sheets": {s: {"verdict": "pass", "checks": {k: {"status": "pass", "evidence": "fixture inspected"}
+                           for k in ("complete_limbs", "continuous_garments", "no_ghosting", "expected_weapons", "anatomy", "readable_motion")}} for s in sheets}}, fh)
             return subprocess.run([sys.executable, os.path.join(SCRIPTS, "visual_review.py"), out, "--record", verdict],
                                   capture_output=True, text=True)
 

@@ -15,7 +15,7 @@ import math
 
 from .constraints import LIMITS, face_circle, low_points
 from .mathx import Curve, hermite, lerp, rot
-from .rig import LAG, REST, Body, full_pose, solve
+from .rig import LAG, REST, Body, full_pose, solve, ankle_with_roll
 
 CH = list(REST)
 STANCE_REACH = 0.968   # a standing leg stops short of the soft end of its reach (Body.leg_soft)
@@ -148,7 +148,32 @@ class Gait(Clip):
             wep=self.wep + self.wep_sway * math.cos(TAU * (lag("wep") - 0.6)),
             foot_n_x=nx, foot_n_y=ny, foot_n_p=np_, foot_f_x=fx, foot_f_y=fy, foot_f_p=fp,
         )
+        if getattr(self,'contact_body',None) is not None:
+            p['root_y']=measured_walk_height(p,self.contact_body)-self.contact_body.hip_h
         return p
+
+
+def measured_walk_height(p,body):
+    """Vault over measured rolling soles without locking or crouching the legs.
+
+    Both continuous foot paths bound hip height; a raised swing foot normally
+    has more reach available and does not carry the body. A smooth minimum
+    avoids a velocity corner when support changes. Existing unmeasured rigs
+    retain the authored hip bob.
+    """
+    rotation=p['root_rot']+p['pelvis'];axis=rot((1.,0.),rotation);heights=[]
+    reach=(body.thigh+body.shin)*.985
+    for side in 'nf':
+        seat=getattr(body,'hip_'+side+'_at')
+        if seat is None:seat=(body.hip_w*.3,0.) if side=='n' else (-body.hip_w,0.)
+        offset=rot(tuple(seat),rotation);sign=1 if side=='n' else -1
+        offset=(offset[0]+axis[0]*p['hp']*sign,offset[1]+axis[1]*p['hp']*sign)
+        ankle=ankle_with_roll((p['foot_'+side+'_x'],body.ankle_h+p['foot_'+side+'_y']),
+            p['foot_'+side+'_p'],getattr(body,'foot_'+side+'_heel'),getattr(body,'foot_'+side+'_ball'))
+        dx=ankle[0]-p['root_x']-offset[0]
+        heights.append(ankle[1]+math.sqrt(max(reach*reach-dx*dx,0.))-offset[1])
+    low=min(heights);softness=.25
+    return low-softness*math.log(sum(math.exp(-(h-low)/softness) for h in heights))
 
 
 def stance_reach(pose, body):
@@ -160,7 +185,7 @@ def stance_reach(pose, body):
 def face_gap(pose, body):
     """Clearance in rig units between the whole weapon, butt to tip, and the face."""
     sk = solve(full_pose(pose), body)
-    hand = (sk["wr_n"][0] + (sk["wr_n"][0] - sk["el_n"][0]) * 0.14, sk["wr_n"][1] + (sk["wr_n"][1] - sk["el_n"][1]) * 0.14)
+    hand = sk['weapon_grip']
     centre, radius = face_circle(sk, body)
     a = (hand[0] - sk["wep_dir"][0] * body.weapon_back, hand[1] - sk["wep_dir"][1] * body.weapon_back)
     b = (hand[0] + sk["wep_dir"][0] * body.weapon_front, hand[1] + sk["wep_dir"][1] * body.weapon_front)
@@ -327,6 +352,8 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
     walk = Gait("walk", 0.84 * tm, 32, 7.5 * min(bn, 1.3), 0.6, hip=-2.2, bob=1.1 * bn, lean=5,
                 pelvis=3, arm_n=(-4, 14, 34, 9), arm_f=(10, 28, 22, 13), wep=56, tags=("ground",),
                 events=[(0.0, "footstep"), (0.42 * tm, "footstep")])
+    if all(getattr(body,'foot_'+s+'_'+end) is not None for s in 'nf' for end in ('heel','ball')):
+        walk.contact_body=body
     run = Gait("run", 0.56 * tm, 48, 19, 0.36, front=0.46, hip=-5.0, bob=2.0 * bn, bob_at=0.42,
                lean=13, pelvis=9, head=-15, arm_n=(-26, 14, 40, 8), arm_f=(8, 44, 84, 14),
                wep=-75, heel=12, toe=46, swing_pitch=-62, peak=0.62, tan=0.62, sh=2.2, hp=1.6,
