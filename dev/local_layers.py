@@ -58,8 +58,8 @@ WIDTH_PAD = 1.15      # measured half-width times this: the capsule just covers 
 CORE_SHARE = 0.7      # of a bone's measured radius: inside this a layer drawn in front owns the pixel
 FILL_WARN = 0.15      # of a layer's capsule area: more local fill than this is reported for review
 INK_UNITS = 0.6       # rig units: a fill takes colour from this far inside the layer, past its outline
-INK_ABS = 60          # 0-255 brightness: darker is outline ink wherever it is
 INK_LOCAL = 0.6       # of the neighbourhood's median brightness: darker is a drawn line
+SPAN_SHARE = 0.1      # of an area inside a limb's bone core for that limb to count as sharing it
 REGION_MAJORITY = 0.6 # share of a painted region one layer must hold to take all of it
 HIP_CORE_INSET = 0.5  # rig units the hidden hip core keeps inside the trunk's outline
 FILL_MIN_PX = 50      # a painted region smaller than this never colours a hidden fill
@@ -173,7 +173,9 @@ def ink_regions(rgba, fg):
     from scipy import ndimage as ndi
     luma = rgba[..., :3].astype(np.float32) @ np.array([0.299, 0.587, 0.114], np.float32)
     local = ndi.median_filter(np.where(fg, luma, 255), size=9)
-    ink = fg & ((luma < INK_ABS) | (luma < INK_LOCAL * local))
+    # Relative darkness only: an absolute threshold would call black clothing ink and merge both legs
+    # of black trousers into one unbroken area.
+    ink = fg & (luma < INK_LOCAL * local)
     labels, count = ndi.label(fg & ~ink)
     return labels, count, ink
 
@@ -442,7 +444,18 @@ def split(img, joints, inpaint=None, completions=None, masks_out=None, ownership
         total = votes.sum(1)
         winner = votes.argmax(1)
         sure = (total > 0) & (votes.max(1) >= REGION_MAJORITY * np.maximum(total, 1))
-        sure[0] = False
+        # An area across the bone cores of two layers (one dark cloth over both legs, no line between)
+        # is ambiguous: it keeps the per-pixel bone assignment instead of going whole to one side.
+        cores = np.zeros((count + 1, len(names)), np.int64)
+        for n in names:
+            core_n = np.zeros((h, w), bool)
+            for p_ in GROUPS[n]:
+                if p_ in LIMB_BONES:
+                    core_n |= capsule(J, p_, ppu, radius, xx, yy, CORE_SHARE)
+            if core_n.any():
+                cores[:, rank[n]] = np.bincount(regions[core_n & (regions > 0)], minlength=count + 1)
+        straddles = ((cores >= SPAN_SHARE * np.maximum(total, 1)[:, None]) & (cores > 0)).sum(1) >= 2
+        sure &= ~straddles
         pick = sure[regions] & (regions > 0)
         report_regions = int(sure.sum())
         layer_of[pick] = winner[regions[pick]]
@@ -464,6 +477,18 @@ def split(img, joints, inpaint=None, completions=None, masks_out=None, ownership
             far = cp.seg_dist(xx, yy, J["hip_f"], J["kn_f"])
             layer_of[move & (near <= far)] = rank["leg_near"]
             layer_of[move & (near > far)] = rank["leg_far"]
+        # Below the hip joint the trunk keeps only garments hanging from above it (a tunic hem): an
+        # area mostly above the hip line. The rest (dark trousers no line splits into two legs) goes
+        # pixel by pixel to the nearer leg, or the thigh tops would stay behind when a leg lifts.
+        above = np.bincount(regions[(regions > 0) & ~below], minlength=count + 1)
+        sized = np.bincount(regions[regions > 0], minlength=count + 1)
+        hanging = (sized > 0) & (above > 0.5 * sized)
+        loose = (layer_of == rank["torso"]) & below & ~(hanging[regions] & (regions > 0))
+        if loose.any():
+            near = cp.seg_dist(xx, yy, J["hip_n"], J["kn_n"])
+            far = cp.seg_dist(xx, yy, J["hip_f"], J["kn_f"])
+            layer_of[loose & (near <= far)] = rank["leg_near"]
+            layer_of[loose & (near > far)] = rank["leg_far"]
         # Outline ink goes with the nearest painted region, so a line stays on the shape it draws
         # instead of being cut into loose strokes on other layers.
         from scipy import ndimage as ndi

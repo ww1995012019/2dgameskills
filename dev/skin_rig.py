@@ -127,11 +127,18 @@ def measure(rgba, J, layer_of, names, has_weapon):
     near = chain_dist(["hip_n", "kn_n", "an_n", "toe_n"])
     far = chain_dist(["hip_f", "kn_f", "an_f", "toe_f"])
     below = yy > J["hip"][1]
-    masks = {n: fig for n in ("torso", "hips", "arm_near", "arm_far")}
+    masks = {n: fig for n in ("arm_near", "arm_far")}
     # The head's own pixels: its size is read along its own axis, and the whole figure would run
     # that axis down to the feet.
     head = layer_of == names.index("head")
     masks["head"] = head if head.any() else fig & (yy < J["head_base"][1])
+    # The trunk's own pixels: its width at the waist sizes the solid core QA checks, and a row of the
+    # whole figure there also crosses a hanging hand or a backpack.
+    trunk = layer_of == names.index("torso")
+    trunk = trunk if trunk.any() else fig
+    masks["hips"] = trunk
+    # One sheet: head and trunk are joined by the mesh itself, as the layered neck check requires.
+    masks["torso"] = trunk | masks["head"]
     masks["leg_near"] = fig & below & (near <= far)
     masks["leg_far"] = fig & below & (far < near)
     order = ["arm_far", "hips", "leg_far", "leg_near", "head", "torso", "arm_near"]
