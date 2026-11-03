@@ -1,0 +1,20 @@
+Use the attached picture as CHARACTER IDENTITY reference, not as a pose to trace.
+Keep the same character: face, hairstyle, build, clothing, colours, accessories worn on the body and
+drawing style. Do not redesign or simplify the outfit.
+
+Redraw ONE full-body 2D character in a strict right-facing SIDE VIEW: orthographic 90-degree side
+elevation, not three-quarter. Only one eye visible; nose and toes point right.
+
+Pose for animation rigging, following the second image (pose guide) for limb placement only:
+- Arms as in the pose guide: front arm forward and bent at the elbow, rear arm back and slightly
+  bent. Each arm is clearly separated from the torso by background from the elbow down.
+- Both hands fully visible, open and empty. No hands in pockets, no hands touching the body or clothes.
+- Legs in a small walking stride, measured horizontally. Both shoes flat on ONE horizontal ground
+  line, heels and soles at exactly the same height. Rear foot NOT raised.
+- Nothing hangs loose: no dangling straps, strings, ribbons, scarf ends or long tassels. Short
+  fixed details are fine. A backpack may stay, worn close on the back.
+
+Portrait 1024 x 1536 canvas, figure about 85% of its height, all edges inside a generous margin.
+Even flat lighting, crisp opaque artwork, no blur or motion smear. No text, guides, shadow, floor
+or scenery. Background solid pure magenta #FF00FF, and no magenta or pink-purple in the character.
+Do not draw the pose guide's lines, dots or placeholder colours. Output a single image.
