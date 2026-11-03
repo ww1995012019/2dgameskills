@@ -1,18 +1,28 @@
 Use the attached picture as CHARACTER IDENTITY reference, not as a pose to trace.
-Keep the same character: face, hairstyle, build, clothing, colours, accessories worn on the body and
-drawing style. Do not redesign or simplify the outfit.
+Keep the same character: face, hairstyle, body build, clothing, colours, patterns, accessories worn on
+the body and drawing style. Keep the same body build and garment volume as the reference: do not make
+the figure slimmer; sleeves, robes and other garments keep their width, layers and fullness.
 
 Redraw ONE full-body 2D character in a strict right-facing SIDE VIEW: orthographic 90-degree side
 elevation, not three-quarter. Only one eye visible; nose and toes point right.
 
+Adapt only what animation cannot carry, keeping the character's look:
+- Garments that would cover the legs (long robes, long skirts, long coats) end ABOVE the knees, so
+  both legs are readable from the knee down. Keep their width, layers, trim and patterns.
+- Long hair is tied up or ends just below the shoulders; it does not hang down the back.
+- Wide sleeves may stay wide, but they end at the wrist, leave the whole hand visible and do not hang
+  far below the forearm.
+
 Pose for animation rigging, following the second image (pose guide) for limb placement only:
 - Arms as in the pose guide: front arm forward and bent at the elbow, rear arm back and slightly
   bent. Each arm is clearly separated from the torso by background from the elbow down.
-- Both hands fully visible, open and empty. No hands in pockets, no hands touching the body or clothes.
+- Hands fully visible; no hands in pockets, no hands touching the body or clothes. If the reference
+  character carries ONE one-handed weapon, the front hand holds it as in the pose guide, blade
+  pointing forward and up, with no scabbard or spare weapon; otherwise both hands are open and empty.
 - Legs in a small walking stride, measured horizontally. Both shoes flat on ONE horizontal ground
   line, heels and soles at exactly the same height. Rear foot NOT raised.
-- Nothing hangs loose: no dangling straps, strings, ribbons, scarf ends or long tassels. Short
-  fixed details are fine. A backpack may stay, worn close on the back.
+- Nothing hangs loose: no dangling straps, strings, ribbons, scarf ends, pendants or long tassels.
+  Short fixed details are fine. A backpack may stay, worn close on the back.
 
 Portrait 1024 x 1536 canvas, figure about 85% of its height, all edges inside a generous margin.
 Even flat lighting, crisp opaque artwork, no blur or motion smear. No text, guides, shadow, floor
