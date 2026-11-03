@@ -59,6 +59,8 @@ CORE_SHARE = 0.7      # of a bone's measured radius: inside this a layer drawn i
 FILL_WARN = 0.15      # of a layer's capsule area: more local fill than this is reported for review
 INK_UNITS = 0.6       # rig units: a fill takes colour from this far inside the layer, past its outline
 INK_LOCAL = 0.6       # of the neighbourhood's median brightness: darker is a drawn line
+KEEP_HANGING = False  # True: a garment area mostly above the hip line keeps its part below it (layered
+                      # puppet hems). A skinned sheet moves cloth over a thigh with the thigh instead.
 SPAN_SHARE = 0.1      # of an area inside a limb's bone core for that limb to count as sharing it
 REGION_MAJORITY = 0.6 # share of a painted region one layer must hold to take all of it
 HIP_CORE_INSET = 0.5  # rig units the hidden hip core keeps inside the trunk's outline
@@ -480,10 +482,12 @@ def split(img, joints, inpaint=None, completions=None, masks_out=None, ownership
         # Below the hip joint the trunk keeps only garments hanging from above it (a tunic hem): an
         # area mostly above the hip line. The rest (dark trousers no line splits into two legs) goes
         # pixel by pixel to the nearer leg, or the thigh tops would stay behind when a leg lifts.
-        above = np.bincount(regions[(regions > 0) & ~below], minlength=count + 1)
-        sized = np.bincount(regions[regions > 0], minlength=count + 1)
-        hanging = (sized > 0) & (above > 0.5 * sized)
-        loose = (layer_of == rank["torso"]) & below & ~(hanging[regions] & (regions > 0))
+        loose = (layer_of == rank["torso"]) & below
+        if KEEP_HANGING:
+            above = np.bincount(regions[(regions > 0) & ~below], minlength=count + 1)
+            sized = np.bincount(regions[regions > 0], minlength=count + 1)
+            hanging = (sized > 0) & (above > 0.5 * sized)
+            loose &= ~(hanging[regions] & (regions > 0))
         if loose.any():
             near = cp.seg_dist(xx, yy, J["hip_n"], J["kn_n"])
             far = cp.seg_dist(xx, yy, J["hip_f"], J["kn_f"])
