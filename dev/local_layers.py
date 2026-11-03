@@ -377,7 +377,7 @@ COMPLETE = {
 }
 
 
-def split(img, joints, inpaint=None, completions=None, masks_out=None):
+def split(img, joints, inpaint=None, completions=None, masks_out=None, ownership_out=None):
     """Returns (layers {name: RGBA array on the picture's canvas}, layer joints, order, report)."""
     rgba = keyed(img)
     J = {k: tuple(map(float, v)) for k, v in joints.items() if not k.startswith("_")}
@@ -462,6 +462,8 @@ def split(img, joints, inpaint=None, completions=None, masks_out=None):
             if p in LIMB_BONES:
                 core = capsule(J, p, ppu, radius, xx, yy, CORE_SHARE) & fg
                 layer_of[core & (layer_of < rank[n])] = rank[n]
+    if ownership_out is not None:
+        ownership_out.update(layer_of=layer_of.copy(), names=list(names), rgba=rgba, J=J, ppu=ppu)
     report = {"px_per_unit": round(ppu, 3), "measured_radius": radius, "layers": {}, "warnings": list(cut_report["warnings"]),
               "blockers": [], "image_generation_calls": 0}
     layers = {}
