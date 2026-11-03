@@ -167,8 +167,8 @@ def measured_walk_height(p,body):
     retain the authored hip bob.
     """
     rotation=p['root_rot']+p['pelvis'];axis=rot((1.,0.),rotation);heights=[]
-    reach=(body.thigh+body.shin)*.985
     for side in 'nf':
+        reach=sum(body.leg_bones(side))*.985
         seat=getattr(body,'hip_'+side+'_at')
         if seat is None:seat=(body.hip_w*.3,0.) if side=='n' else (-body.hip_w,0.)
         offset=rot(tuple(seat),rotation);sign=1 if side=='n' else -1
@@ -184,7 +184,7 @@ def measured_walk_height(p,body):
 def stance_reach(pose, body):
     """How far the longer leg is stretched in a pose, as a share of its whole length."""
     sk = solve(full_pose(pose), body)
-    return max(math.dist(sk["hip_" + s], sk["an_" + s]) for s in "nf") / (body.thigh + body.shin)
+    return max(math.dist(sk["hip_" + s], sk["an_" + s]) / sum(body.leg_bones(s)) for s in "nf")
 
 
 def face_gap(pose, body):

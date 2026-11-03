@@ -10,12 +10,15 @@ Required layers: `head`, `torso`, `hips`, `arm_near`, `arm_far`, `leg_near`, `le
 Optional: `weapon` (one single-handed sword). Provide `order` with every layer once, back to front.
 Each layer path is relative to the manifest. Cropped layers can instead use
 `"canvas": [1024,1536]` and `"head": {"image":"head.png", "offset":[320,100]}`.
-Padding preserves RGBA pixels exactly; source clipping and negative offsets are refused. Supply joints:
+Padding preserves RGBA pixels exactly; source clipping and negative offsets are refused. Layers need
+an alpha channel: RGBA, or grey/palette PNGs with alpha or a transparent index, which are converted to
+RGBA without changing a pixel. Opaque RGB layers are refused. Supply joints:
 
 - each arm: `shoulder`, `elbow`, `wrist`;
 - each leg: `hip`, `knee`, `ankle`;
 - hips: `hip`, `waist`; head: `head_base` (neck attachment);
-- weapon if present: `grip`, coinciding with the near hand and weapon art.
+- weapon if present: `grip`, coinciding with the near hand and weapon art (within 2% of the near
+  arm's length, at least 2 px, of both).
 
 ```json
 {
@@ -30,7 +33,13 @@ The fragment illustrates syntax only; add all required layers and joints. Coordi
 `[x,y]` pixels, origin top-left. Images must have a common canvas, alpha, and complete limb roots.
 The skeleton adapts measured lengths and attachment positions; it does not require covering a
 fixed silhouette. Structural checks (bone support, pair lengths, torso/neck continuity) remain.
-Near/far limbs still share runtime lengths and must satisfy the existing 25% difference guard.
+Near and far limbs each keep their measured lengths at runtime (`thigh_f`, `shin_f`, `up_arm_f`,
+`lo_arm_f`), so a far limb is no longer stretched to the near one's size; the 25% difference guard
+remains. The far hip seat moves by the leg-length difference times the standing reach, so both legs
+stand equally extended: no limp, both feet on the floor. Rigs without these fields keep shared lengths.
+The head's size is measured along its own axis (neck to the art's centroid), so a tilted head counts
+as upright. A backward-bent rest arm whose wrist nearly meets the shoulder (closer than 5% of the
+arm) gives no line to mirror its elbow across and is refused.
 
 ```bash
 python scripts/bind_known_joints.py --manifest character/rig_input.json --out out/rig-v1

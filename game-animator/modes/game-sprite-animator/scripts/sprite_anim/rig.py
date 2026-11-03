@@ -62,6 +62,24 @@ class Body:
     sh_f_at: tuple = None
     hip_n_at: tuple = None
     hip_f_at: tuple = None
+    # Measured far-limb bone lengths, when the art's far arm/leg differ from the near ones.
+    # None keeps the shared near lengths (every existing rig).
+    thigh_f: float = None
+    shin_f: float = None
+    up_arm_f: float = None
+    lo_arm_f: float = None
+
+    def leg_bones(self, side):
+        """(thigh, shin) of one leg; 'n' near, 'f' far."""
+        if side == 'f':
+            return self.thigh_f or self.thigh, self.shin_f or self.shin
+        return self.thigh, self.shin
+
+    def arm_bones(self, side):
+        """(upper arm, forearm) of one arm; 'n' near, 'f' far."""
+        if side == 'f':
+            return self.up_arm_f or self.up_arm, self.lo_arm_f or self.lo_arm
+        return self.up_arm, self.lo_arm
 
     @classmethod
     def from_spec(cls, spec):
@@ -138,15 +156,16 @@ def solve(pose, b: Body):
     if b.sh_f_at:
         sh_f = add(add(waist, rot(tuple(b.sh_f_at), chest_rot)), scale(sh_axis, -g("sh")))
 
-    def arm(s, up, lo):
+    def arm(s, up, lo, side):
+        upper, fore = b.arm_bones(side)
         a1 = up - chest_rot
         a2 = a1 + limited("elbow", lo, excess)
-        el = add(s, (math.sin(math.radians(a1)) * b.up_arm, -math.cos(math.radians(a1)) * b.up_arm))
-        wr = add(el, (math.sin(math.radians(a2)) * b.lo_arm, -math.cos(math.radians(a2)) * b.lo_arm))
+        el = add(s, (math.sin(math.radians(a1)) * upper, -math.cos(math.radians(a1)) * upper))
+        wr = add(el, (math.sin(math.radians(a2)) * fore, -math.cos(math.radians(a2)) * fore))
         return el, wr, a2
 
-    el_n, wr_n, fa_n = arm(sh_n, g("arm_n_up"), g("arm_n_lo"))
-    el_f, wr_f, fa_f = arm(sh_f, g("arm_f_up"), g("arm_f_lo"))
+    el_n, wr_n, fa_n = arm(sh_n, g("arm_n_up"), g("arm_n_lo"), 'n')
+    el_f, wr_f, fa_f = arm(sh_f, g("arm_f_up"), g("arm_f_lo"), 'f')
 
     hip_axis = rot((1, 0), body_rot)
     hip_n = add(hip, scale(hip_axis, g("hp") + b.hip_w * 0.3))
@@ -160,6 +179,7 @@ def solve(pose, b: Body):
 
     def leg(hj, fx, fy, fp, side):
         flat = (fx, b.ankle_h + fy)
+        thigh, shin = b.leg_bones(side)
         heel = getattr(b,'foot_'+side+'_heel') or FOOT_HEEL
         ball = getattr(b,'foot_'+side+'_ball') or FOOT_BALL
 
@@ -171,7 +191,7 @@ def solve(pose, b: Body):
                 local = (ground[0], ground[1] - b.hip_h)
                 carried = add(hip, rot(local, g("root_rot")))
                 ground = (ground[0] * (1 - k) + carried[0] * k, ground[1] * (1 - k) + carried[1] * k)
-            knee, ank = two_bone(hj, ground, b.thigh, b.shin, 1.0, b.leg_soft)
+            knee, ank = two_bone(hj, ground, thigh, shin, 1.0, b.leg_soft)
             spin = (g("root_rot") + 180.0) % 360.0 - 180.0 if b.foot_wrap else g("root_rot")
             return knee, ank, -pitch + spin * k
 
