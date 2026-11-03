@@ -1,5 +1,71 @@
 # 交接文档
 
+## 粉色古装女侠待机/走路已发布（2026-11-03）
+
+用户认可粉色可爱系立绘后要求按此制作，沿用实验八部件图集适配器和正式known-joint绑定。
+案例 `/workspace/2dgameskills-output/pink-swordswoman-v1`，最终 `rig-v2` / `build-v2`，
+512px、24FPS，idle58帧、walk20帧，共78帧。数值QA 0 FAIL/0 WARN，4张视觉审查图检查并登记通过，
+浏览器播放、暂停、逐帧、翻转、键盘移动通过，0页面错误。用户仅认可立绘，动态仍pending。
+本角色动画阶段图集1次、修复图1次；此前身份生成历史是青色初稿1次、粉色重设1次。
+首版数值动作通过但素材软糊检查失败（近腿3/62、近臂1/23 tiles），保留build-v1及日志。
+一次图集修复仅导入近臂/近腿，另外六部件原始字节不变，最终9层全部0软糊tile；未放宽QA。
+继续使用既有领口前景副本规则。发饰/衣摆/流苏随部件运动，无独立布料模拟，剑柄流苏简化去掉。
+本轮未改Skill、适配器或runtime，仅新案例、网页和文档；此例不能代表任意美术都能自动分层。
+
+原私有Site已成功发布：https://skeleton-animation-preview-1103.ww1995012019.chatgpt.site 。
+默认粉色女侠，`pink.html`也是独立入口；`swordsman-full.html`保留男角色27动作，浏览器检查通过。
+Site源提交 `8ea46758155f02b9478f70caf09fedccd69d344b`，部署
+`appgdep_6ae94ce2b0a48191ad863c895ea504c6`。没有改变访问权限，未声明Unity/Godot实际运行。
+详情 `docs/pink-swordswoman-case.md`。
+
+## 青岚剑客已扩展并发布全部 27 动作（2026-11-03）
+
+用户“没问题 看看其他动作”认可此前待机/走路并授权扩展。复用 `rig-v7`，没有新增生图，
+输出 `.../teal-swordsman-v1/expanded-v1`：512px、24FPS，27动作共494帧（483个唯一图集帧）。
+数值QA全部通过，0 FAIL/0 WARN；16张动作/关节/肩/手臂审查图已检查并记录通过。
+浏览器实测27动作切换、10快捷按钮、播放/暂停/逐帧、三连击/二段跳/翻滚/格挡受击/死亡，
+无页面错误；旧idle/walk逐帧哈希完全相同。新增25动作的用户观感验收仍pending。
+未改生产runtime；本轮验证针对实际新导出，没有重复无关旧回归或声称引擎实测。
+原私有入口已成功更新：https://skeleton-animation-preview-1103.ww1995012019.chatgpt.site 。
+Site源提交 `c7fdcbffc1b91a69a4f30908ea27e23888e05f03`，部署
+`appgdep_6ae94796b36c81919c3285bb01477004`，访问权限未改变。
+网页媒体改成外部PNG加载，下载包含图集、rig、引擎导出和离线HTML。详见
+`docs/teal-swordsman-expanded.md`，以前的两动作记录保留在下文。
+
+## 青岚剑客真实美术待机/走路已制作（2026-11-03）
+
+用户选用本轮生成的古装男角，身份图和图集字节均已归档。身份图1次、八部件图集1次、修复图0次；
+后续只改程序挂接和材质归属。开发适配器 `dev/atlas_rig.py` 新增通用图集分离与衣领前景规则，
+解决了躯干开放脖子切口和半透明残边。新增5项故障测试通过。详见 `docs/teal-swordsman-case.md`。
+
+最终 `/workspace/2dgameskills-output/teal-swordsman-v1/rig-v7` 与 `build-v7`：512px/24FPS，
+idle58帧、walk20帧，数值QA 0 FAIL/0 WARN；4张视觉审查图和浏览器交互已验证。
+本轮没有修改生产runtime或重新跑旧26套回归。没有扩展剩余25动作；用户动态认可仍pending。
+在线入口沿用 `/workspace/sites/skeleton-preview/.openai/hosting.json` 的同一私有Site，
+已确认发布成功：https://skeleton-animation-preview-1103.ww1995012019.chatgpt.site 。
+Site源提交 `2cfdc3eb6666eaeaf18a49b5450bd79ad79d7ec8`，未改变访问权限。
+
+
+## 免生图关节绑定与局部形变优化（2026-11-02）
+
+用户明确授权自主修改、验证和继续修复，无需中间确认。本轮不调用生图，不重开旧案例预算。
+已有完整 RGBA 图层及已知关节时优先走正式 `bind_known_joints.py`；复用模板实测绑定模块、
+支持裁剪图层偏移补画布、保护手掌和肩/髋挂接。实测脚底的待机支撑与走路接触缓动已改善。
+独立与统一技能包已同步重打。详见 `docs/rigging-optimization.md` 和
+`game-sprite-animator/references/known-joint-binding.md`。
+
+两种程序体型的待机/走路最终 QA 均为 0 FAIL/0 WARN，浏览器交互无错误；
+14 项当前专项测试通过。完整套件首次 348 项有 1 个旧内存代码的兼容性错误，
+现行实现已修正，该模块新进程 5 项通过；4 项原有预期失败保留。完整 26 套旧角色回归
+0 FAIL，两个剪纸示例的 7/8 WARN 原样保留。历史严格基准有既有差异，未更新基准；
+隔离 HEAD 的 26 套对照已完成：逐帧像素和 QA 数值均完全一致，0 changes/0 drift。
+
+本环境没有上一节武侠角色的外部分层素材，验证使用程序测试图，不是真实 AI 美术验收。
+输出在 `/workspace/2dgameskills-output/known-rig-validation`，最终预览在
+`textured-slim/final-build/preview.html` 与 `textured-compact/final-build/preview.html`。
+本轮代码在本地 work 分支修改，未提交或推送。
+
+
 ## 静态人物已获用户认可，待机/走路数值通过，动态待用户审核（2026-11-02）
 
 用户接受了修后头部和完整静态人物（“可以 没问题”）；这仅确认静态外观。新增 `dev/template_binding.py`，八层图绑定到现有分层运行时，测量握剑点和靴底接触，远臂在保留源端点的前提下调整肘弯。运行时通过可选测量值驱动武器握点、脚底滚动/落地和走路骨盆支撑高度，未测量时保留旧默认动作。工作细节、边界、目录、下一步和发布状态见 [`docs/handover/2026-11-02-character-puppet.md`](docs/handover/2026-11-02-character-puppet.md)。

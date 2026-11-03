@@ -36,6 +36,13 @@
 - `dev/` 是开发工具，不进 skill 包。
 - `regress_all.sh` 现在覆盖 26 套（含 `cutout_demo`；剪纸角色是文件夹，脚本读其中的 `character.json`）；新增模板要加入脚本及 `baseline.json`。新文件打包前用 `git add -N` 登记路径，包内容保持可审查。
 
+## 已有完整图层的免生图绑定
+
+有共同画布（或裁剪偏移）和已知关节时，优先用 `game-sprite-animator/scripts/bind_known_joints.py`，
+见 `references/known-joint-binding.md`。复用已有像素与关节，不重新生成参考图或双手提示图。
+该入口只做数值绑定，不重开旧生成任务或替代美术/用户动态验收。开发模板也调用正式的
+`known_joint_rig.build_spec`，不要再复制绑定算法。具体改动和验证边界见 `docs/rigging-optimization.md`。
+
 ## 改完要跑的
 
 ```bash

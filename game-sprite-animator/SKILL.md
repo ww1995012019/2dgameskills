@@ -15,6 +15,9 @@ description: >
 
 # Game Sprite Animator
 
+For complete aligned layers with known joints, prefer the [zero-generation binding entry](references/known-joint-binding.md). Reuse existing pixels and joint metadata; hand-hint generation is unnecessary for this entry. Visual review remains required.
+
+
 Every frame is computed from a skeleton, not drawn by an image model. That is what makes the output
 smooth: poses come from continuous curves, so any frame rate is available, loops close exactly, and
 feet stay planted. Joint limits, floor contact and clipping checks keep poses physically believable,

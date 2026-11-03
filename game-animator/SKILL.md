@@ -5,6 +5,9 @@ description: Generate and inspect 2D game character sprite animations for side-v
 
 # Game Animator
 
+For complete aligned layers with known joints, prefer the [zero-generation binding entry](modes/game-sprite-animator/references/known-joint-binding.md). Reuse existing pixels and joint metadata; hand-hint generation is unnecessary for this entry. Visual review remains required.
+
+
 Choose a mode using the character, camera and movement. Read only that mode's `SKILL.md`, and run
 its scripts from that mode's directory. Each mode is bundled here and requires Python with Pillow
 and NumPy; no separate skill installation is needed.

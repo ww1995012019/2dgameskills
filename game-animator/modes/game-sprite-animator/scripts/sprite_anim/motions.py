@@ -125,6 +125,11 @@ class Gait(Clip):
             # the old tan-controlled velocity at mid-swing.
             x += 4 * m * (self.tan - 1) * s * s * (1 - s) ** 2 * (1 - 2 * s)
             y = self.lift * math.sin(math.pi * s ** self.peak) ** 1.6
+            if getattr(self, 'contact_body', None) is not None:
+                # Measured support height follows swing lift too. Ease its
+                # contact neighbourhood to avoid a visible pelvis jerk.
+                edge = min(1., s / .05, (1 - s) / .05)
+                y *= edge * edge * (3 - 2 * edge)
         return x, y, float(self.pitch(ph)[0])
 
     def sample(self, t):
@@ -329,6 +334,9 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
         p["wep"] += idle_carry.get("wep_sway", 1.4) * s(0.34)
         p["sh"] = 0.25 * s(0.1)
         p["eye"] = blink
+        if all(getattr(body, 'foot_'+side+'_'+end) is not None
+               for side in 'nf' for end in ('heel', 'ball')):
+            p['root_y'] = measured_walk_height(p, body) - body.hip_h - .15 * (1 - s(.25))
         return p
 
     idle0 = idle_fn(0.0)

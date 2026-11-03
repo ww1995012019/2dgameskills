@@ -1,5 +1,7 @@
 # 2D Game Skills
 
+已有完整分层 PNG 和关节数据时，可使用[免生图绑定入口](game-sprite-animator/references/known-joint-binding.md)，复用素材生成待机/走路，不再生成手部提示图。
+
 **人物图的新默认流程：** `basic-side-v1` 先生成标准侧视图，再逐层审核、绑定并制作待机/走路；提示词、双手定位图和有限次数修复都已预设。第一版限定短发、短款/贴身服装、空手或单手简单剑。代理执行流程，用户提供图片并审核动态效果。复杂长袍、宽袖、披风和双手武器仍属实验范围。详见 [固定人物图流程](game-sprite-animator/references/basic-character-workflow.md)。
 
 

@@ -1,0 +1,65 @@
+# 复用素材的骨骼绑定优化
+
+## 实现范围
+
+侧视人形增加 `scripts/bind_known_joints.py`：完整图层 + 已知关节直接生成原有运行时能读取的
+`character.json`。沿用开发模板已经验证的实测骨长、握点、靴底接触和源姿态处理，提取为正式
+`known_joint_rig.py`；开发模板改为调用同一实现，避免维护两份绑定算法。
+
+- 不调用图像模型，不推断或重画手部定位图，不运行颜色配准的穷举搜索。
+- 保留输入像素。支持裁剪 PNG 的共同画布和偏移元数据，自动无损补画布；拒绝越界裁切。
+- 使用实际骨段和挂点检查，不要求角色覆盖实验模板的固定轮廓。旧有骨段支撑、骨长配对、
+  颈部重叠和身体核心完整性要求保留；不能用不完整素材绕过这些检查。
+- 手掌远端按前臂刚性移动，前臂近端平滑混合；肩/髋根部按首骨段刚性挂接。
+  只在新绑定数据显式启用，旧图层默认行为不变。靴子原有刚性混合继续复用。
+- 实测脚底模式在摆动起落处对抬脚高度缓动，修复支撑高度在循环接触附近的速度问题；
+  待机也按脚底支撑求身体高度，避免给不同体型硬套旧站姿造成深屈膝。
+- 版本化输出，现有目标拒绝覆盖，成功前用临时目录暂存；记录输入哈希和零生图次数。
+  数值绑定不冒充美术审核、用户动态验收或引擎播放验收。
+
+用法和 manifest 字段见
+[`known-joint-binding.md`](../game-sprite-animator/references/known-joint-binding.md)。
+
+## 验证边界
+
+本环境缺少交接里武侠剑客的外部原始分层素材，所以不能把测试说成该角色修复成功。
+使用 slim/compact 两个程序合成体型验证空手、持剑、裁剪素材、像素保留、挂接、手部刚性、
+非有限关节和错误画布等故障。程序合成图不代表两个真实 AI 美术角色通过验收。
+
+外部验证产物：`/workspace/2dgameskills-output/known-rig-validation`。
+最初的纯色几何占位图在手部细节项失败，原报告保留；这类占位图含处理色差且没有真实手部
+线条，不能证明细节保留能力。后续以带明确手部纹理的程序测试图验证该项；没有修改、降低或
+跳过原有 QA。不要将旧失败报告覆盖成通过，也不要把几何占位的通过当作美术质量结论。
+
+初步 12fps 预览中，两体型 idle/walk 各 39 帧，逐帧 QA 为 0 FAIL / 0 WARN；
+脚滑约 0.005px，脚底最大偏离约 0.095px。发现待机膝盖偏弯后增加实测支撑站姿，
+两体型平均待机膝弯约 26°；最终版本验证结果见后续记录。
+
+## 最终验证
+
+- 两种体型的最终版本（`textured-{slim,compact}/final-build`）均为 idle/walk 39 帧，
+  原有 QA 为 0 FAIL / 0 WARN；关节放大图已检查，待机膝弯改善。没有生成剩余动作。
+- 两套最终预览经 Chromium 实际加载：走路选择、动画推进、暂停/逐帧、翻转和试玩切换通过，
+  页面错误为 0。此处是浏览器预览，不冒充 Unity 或其他引擎播放验收。
+- 新绑定耗时 2.615s / 2.915s（本环境并发负载下，仅绑定阶段，不包括渲染）；输入图层与
+  导出层按偏移还原后的可见 RGBA 像素逐项完全相同。绑定生图调用均为 0。
+- 当前版本专项命令 `PYTHONPATH=dev/tests python -m unittest test_known_joint_rig
+  test_template_binding test_puppet_contact_bounds -v`：14 项通过，包含新增 manifest 故障测试。
+- 完整套件首次执行 `python -m unittest discover -s dev/tests -v`：348 项，4 项既有
+  expectedFailure，1 项错误。该进程在代码修改前已加载旧的 `root_lock` 属性访问；
+  测试替身没有此属性。现行实现使用 `getattr(..., False)` 保持兼容，当前代码独立重跑
+  `test_puppet_contact_bounds` 的 5 项全部通过。没有删测试或修改预期失败来放行。
+  初次全量日志保留 `/tmp/rig-full-tests-final.log`，新进程复测为 `/tmp/rig-contact-final.log`，
+  最终 14 项专项为 `/tmp/rig-focused-final.log`。不能将首次全量日志描述为全绿。
+- 26 套旧角色回归全部 0 FAIL，`cutout_demo-pixel` 仍有 7 WARN，HD 仍有 8 WARN，
+  其他 24 套 0 WARN。原样保留这些已有警告。
+- 原仓库历史基准比较：0 regressions、106 changed、88 drifted，严格模式因此退出 1，
+  未改写 `dev/baseline.json`。另从本轮修改前的 HEAD 导出隔离副本，完整重跑 26 套，
+  与修改后输出进行逐帧和 QA 对照：26 套全部一致，0 regressions、0 changed、0 drifted。
+  因此上述 106/88 项历史基准差异在本轮修改前已经存在。
+- 独立/统一 `.skill` 实际解包后运行绑定入口均通过；共用文件同步、统一快照同步、
+  五个技能包新鲜度及 `git diff --check` 通过。
+
+最终产物及机器检查：`browser-check-final.json`、`pixel-reuse-check.json`、
+`original-control-comparison.json` 均在外部验证目录。原始武侠案例素材不在本环境，
+没有将合成测试结果当作该真实人物的最终验收。

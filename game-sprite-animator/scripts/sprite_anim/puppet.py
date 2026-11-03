@@ -82,6 +82,8 @@ class Layer:
 
     def __init__(self, name, data, base):
         self.name = name
+        self.root_lock = bool(data.get("root_lock", False))
+        self.tip_lock = bool(data.get("tip_lock", False))
         self.kind = data["kind"]        # tube | rigid | cloth
         self.bones = data.get("bones", [])
         self.rest = [np.array(p, dtype=np.float64) for p in data.get("rest", [])]
@@ -168,6 +170,28 @@ class Layer:
         x = np.abs(across) / limit
         eased = np.where(inner, np.sign(across) * limit * x / (1 + x ** 4) ** 0.25, across)
         return c + t * self.along[..., None] * scale + n * eased[..., None]
+
+
+def lock_tip(layer, verts, points, scale, root=False):
+    """Keep distal hand art rigid; blend only on the proximal side of the wrist.
+
+    Source joints and pixels remain unchanged. Existing rigs opt out by default.
+    This runs after mesh relaxation so the hand is not smoothed out of its seat.
+    """
+    end, adjacent = (0, 1) if root else (-1, -2)
+    source = layer.rest[end] - layer.rest[adjacent]
+    target = points[end] - points[adjacent]
+    source_angle = math.atan2(source[1], source[0])
+    target_angle = math.atan2(target[1], target[0])
+    held = rigid(layer.vx + layer.offset[0], layer.vy + layer.offset[1],
+                 layer.rest[end], points[end], target_angle - source_angle, scale)
+    axis = source / max(float(np.linalg.norm(source)), 1e-9)
+    depth = ((layer.vx + layer.offset[0] - layer.rest[end][0]) * axis[0]
+             + (layer.vy + layer.offset[1] - layer.rest[end][1]) * axis[1])
+    blend = min(max(layer.radius * 1.5, GRID * 2), float(np.linalg.norm(source)) * .4)
+    weight = np.clip(1 + depth / blend, 0, 1)
+    weight = weight * weight * (3 - 2 * weight)
+    return verts * (1 - weight[..., None]) + held * weight[..., None]
 
 
 def winding(verts, cells):
@@ -340,6 +364,10 @@ class Puppet:
                     verts = verts * (1 - layer.foot_w[..., None]) + held * layer.foot_w[..., None]
             if layer.kind != "rigid" and relax:
                 verts = untangle(blur(verts, EASE_PASSES), layer.cells)
+            if getattr(layer, 'root_lock', False) and layer.kind == "tube":
+                verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale, root=True)
+            if getattr(layer, 'tip_lock', False) and layer.kind == "tube":
+                verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale)
             if ground_contact and (layer.kind == "cloth" or layer.name == "robe"):
                 # The chain supports its centreline. The painted sheet has
                 # width too: compress the contacting fabric continuously onto
