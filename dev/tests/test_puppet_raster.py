@@ -61,7 +61,11 @@ def reference_raster(layer, verts, mip, w, h):
     if not dst_y:
         return out
     yy, xx = np.concatenate(dst_y), np.concatenate(dst_x)
-    u, v = np.concatenate(src_u).clip(0, iw - 1.001), np.concatenate(src_v).clip(0, ih - 1.001)
+    u, v = np.concatenate(src_u), np.concatenate(src_v)
+    # A mesh cell reaches past a layer cropped tight to its art. Past the picture there is nothing
+    # to draw: clamping there would stretch the edge column into a band.
+    inside = (u >= 0) & (u <= iw) & (v >= 0) & (v <= ih)
+    yy, xx, u, v = yy[inside], xx[inside], u[inside].clip(0, iw - 1.001), v[inside].clip(0, ih - 1.001)
     u0, v0 = u.astype(np.int32), v.astype(np.int32)
     fu, fv = (u - u0)[:, None], (v - v0)[:, None]
     sample = (img[v0, u0] * (1 - fu) * (1 - fv) + img[v0, u0 + 1] * fu * (1 - fv)
@@ -118,6 +122,18 @@ class BatchedRaster(unittest.TestCase):
                         np.testing.assert_array_equal(P.raster(*args), reference_raster(*args))
                 finally:
                     P.RASTER_BUDGET = saved
+
+    def test_cells_past_a_tight_crop_draw_nothing(self):
+        # One opaque column at the right edge of a cropped layer; the mesh cell spans 14 px past it.
+        img = np.zeros((14, 3, 4), np.float32)
+        img[:, -1] = (0.4, 0.3, 0.2, 1.0)
+        layer = types.SimpleNamespace(gx=np.array([0., 14.]), gy=np.array([0., 14.]), name='edge',
+                                      cells=np.array([[0, 0]]))
+        verts = np.array([[[0., 0.], [14., 0.]], [[0., 14.], [14., 14.]]])
+        out = P.raster(layer, verts, (img, 1.), 20, 20)
+        drawn = np.nonzero(out[..., 3].max(0) > 0)[0]
+        self.assertLessEqual(drawn.max(), 3, 'the edge column was stretched past the picture')
+        self.assertGreater(out[..., 3].max(), 0.5)
 
     def test_non_finite_mesh_is_refused(self):
         layer, verts, mip, w, h = mesh(np.random.default_rng(1), 1)
