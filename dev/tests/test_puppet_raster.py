@@ -1,4 +1,4 @@
-"""The batched mesh rasteriser and curve builder give the original per-triangle results exactly.
+"""The batched mesh rasteriser, curve builder and used-vertex bounds give the original results exactly.
 
 ``reference_raster`` and ``reference_rounded`` are the earlier loop implementations, kept here
 only as the oracle. Equality is bitwise, including triangles shared by an edge (later wins),
@@ -6,6 +6,7 @@ degenerate cells, cells off the canvas and batches split by the memory budget.
 """
 import math
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -13,7 +14,10 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'game-sprite-animator/scripts'))
+from PIL import Image
+
 from sprite_anim import puppet as P
+from sprite_anim.art import Canvas
 
 
 def reference_raster(layer, verts, mip, w, h):
@@ -130,6 +134,46 @@ class BatchedRaster(unittest.TestCase):
                 pts[1] = pts[0]
             radius = rng.uniform(0, 80)
             np.testing.assert_array_equal(P.rounded(list(pts), radius), reference_rounded(list(pts), radius))
+
+
+class UsedVertexBounds(unittest.TestCase):
+    """fit_scale measures art bounds from used vertices only; they must equal the full mesh's."""
+
+    def test_used_only_equals_full_mesh_entries_for_every_layer_kind(self):
+        rng = np.random.default_rng(3)
+        with tempfile.TemporaryDirectory() as tmp:
+            a = np.zeros((160, 120, 4), np.uint8)
+            a[20:150, 30:90] = (90, 60, 40, 255)
+            a[60:100, 0:20] = (90, 60, 40, 255)          # an island: unused grid cells between
+            Image.fromarray(a).save(Path(tmp) / 'part.png')
+            leg = [[60, 20], [62, 80], [58, 140]]
+            foot = dict(side='n', ankle=[58, 140], shin_dir=[0, 1], blend=8., width=12., rest_angle=0.)
+            layers = {
+                'leg_near': dict(kind='tube', image='part.png', bones=['hip_n', 'kn_n', 'an_n'], rest=leg,
+                                 radius=20., root_lock=True, foot=foot),
+                'arm_near': dict(kind='tube', image='part.png', bones=['sh_n', 'el_n', 'wr_n'], rest=leg,
+                                 radius=15., root_lock=True, tip_lock=True),
+                'robe': dict(kind='tube', image='part.png', bones=['hip', 'waist'], rest=[[60, 120], [60, 30]]),
+                'cape': dict(kind='cloth', image='part.png', chain='cape', rest=[[60, 20], [60, 90], [60, 150]]),
+                'head': dict(kind='rigid', image='part.png', anchor=[60, 30], follow=['head_base', 'head_rot']),
+            }
+            spec = dict(_dir=tmp, puppet=dict(px_per_unit=4., joints={'head_base': [60, 30]},
+                        rest_angles={'head_rot': 0.}, layers=layers))
+            puppet = P.Puppet(spec)
+            for trial in range(40):
+                j = lambda: tuple(rng.normal(0, 12, 2))
+                sk = {k: j() for k in ('hip_n', 'kn_n', 'an_n', 'sh_n', 'el_n', 'wr_n', 'hip', 'waist', 'head_base')}
+                sk.update(fr_n=float(rng.uniform(-40, 40)), head_rot=float(rng.uniform(-30, 30)))
+                cloth = {'cape': [j(), j(), j()]}
+                cv = Canvas(2, 1, 1., 0., 1., False, (0, 0, 0))
+                ground = bool(trial % 2)
+                full = list(puppet.meshes(cv, sk, cloth, ground, relax=False))
+                used = list(puppet.meshes(cv, sk, cloth, ground, relax=False, used_only=True))
+                for (layer, verts), (_, points) in zip(full, used):
+                    self.assertFalse(layer.used.all())
+                    np.testing.assert_array_equal(verts[layer.used], points, err_msg=layer.name)
+            with self.assertRaises(ValueError):
+                next(puppet.meshes(cv, sk, cloth, used_only=True))
 
 
 if __name__ == '__main__':

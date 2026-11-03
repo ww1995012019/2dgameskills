@@ -5,7 +5,8 @@
 检查绑定到出帧的全过程。`puppet.raster` 向量化、`rounded` 去循环，hd idle/walk 29.5s→11.0s，
 pixel 6 动作 27.4s→9.4s，新旧输出逐字节相同。新增 `dev/tests/test_puppet_raster.py` 对照原实现。
 未改动作、绑定数值或 QA 阈值；未跑完整 dev/tests 全套（需浏览器/引擎，约 26 分钟），
-跑了 puppet 相关 64 项、同步/打包检查和 26 套回归。审查发现但未修改的问题（远侧肢体共用近侧骨长、
+跑了 puppet 相关 64 项、同步/打包检查和 26 套回归。随后按推荐让 `fit_scale` 只算有画面的顶点，
+输出仍逐字节相同，hd idle/walk 再到 10.5s；72 项相关单测通过。审查发现但未修改的问题（远侧肢体共用近侧骨长、
 握点检查用固定 2px 等）列在 `docs/rigging-optimization.md` 末节，需用户决定。
 
 ## Skill 发布前完整验证（2026-11-03）
