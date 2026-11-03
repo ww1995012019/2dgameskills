@@ -49,6 +49,7 @@ GROUPS = {
 FAR_LIMBS = ("arm_far", "leg_far")
 MIN_VISIBLE = 0.5     # of a far limb's capsule over the art that must be its own visible pixels
 NECK_REACH = 0.35     # of head_base->neck, past the neck joint: the head keeps its neck under the collar
+SOLID_ALPHA = 200     # 0-255: art at least this opaque anchors the pixels joined to it
 LIMB_BONES = ("arm_f_up", "arm_f_lo", "leg_f_up", "leg_f_lo", "leg_n_up", "leg_n_lo", "arm_n_up", "arm_n_lo")
 WIDTH_PERCENTILE = 80  # of the half-widths measured along a bone
 WIDTH_PAD = 1.15      # measured half-width times this: the capsule just covers the limb's outline
@@ -58,7 +59,9 @@ INK_UNITS = 0.6       # rig units: a fill takes colour from this far inside the 
 INK_ABS = 60          # 0-255 brightness: darker is outline ink wherever it is
 INK_LOCAL = 0.6       # of the neighbourhood's median brightness: darker is a drawn line
 REGION_MAJORITY = 0.6 # share of a painted region one layer must hold to take all of it
-FILL_COLOURS = 4      # main colours of a layer a hidden fill is painted with
+HIP_CORE_INSET = 0.5  # rig units the hidden hip core keeps inside the trunk's outline
+FILL_MIN_PX = 50      # a painted region smaller than this never colours a hidden fill
+FILL_MIN_SHARE = 0.02 # nor one under this share of the layer's visible pixels (trim, ornament)
 INK_DARK = 0.5        # of the layer's median brightness: darker pixels are outline ink, not fill colour
 
 
@@ -103,8 +106,22 @@ def keyed(img):
         fg = (rgb - mix * np.array(lp.KEY_COLOR, np.float32)) / (1 - mix)
         out = np.dstack([np.clip(fg, 0, 255), alpha * 255]).astype(np.uint8)
         out[alpha < 0.02] = 0
-        return out
-    return cp.foreground(img)
+        return attached(out)
+    return attached(cp.foreground(img))
+
+
+def attached(rgba):
+    """Drop specks not joined to solid art: compression noise in a flat background keys out as
+    faint islands, invisible on magenta and plain dots on any other background."""
+    from scipy import ndimage as ndi
+    labels, count = ndi.label(rgba[..., 3] > 0)
+    if not count:
+        return rgba
+    solid = np.bincount(labels[rgba[..., 3] > SOLID_ALPHA], minlength=count + 1)
+    solid[0] = 0
+    out = rgba.copy()
+    out[~(solid > 0)[labels]] = 0
+    return out
 
 
 def hull(mask):
@@ -140,7 +157,124 @@ def ink_regions(rgba, fg):
     local = ndi.median_filter(np.where(fg, luma, 255), size=9)
     ink = fg & ((luma < INK_ABS) | (luma < INK_LOCAL * local))
     labels, count = ndi.label(fg & ~ink)
-    return labels, count
+    return labels, count, ink
+
+
+OUTLINE_BONES = {
+    "torso": (("hip", "waist"), ("waist", "neck")),
+    "leg_near": (("hip_n", "kn_n"), ("kn_n", "an_n")),
+    "leg_far": (("hip_f", "kn_f"), ("kn_f", "an_f")),
+    "arm_near": (("sh_n", "el_n"), ("el_n", "wr_n")),
+    "arm_far": (("sh_f", "el_f"), ("el_f", "wr_f")),
+}
+OUTLINE_BINS = 24     # stations along each bone where a layer's two edges are read
+
+
+def outline_limit(own, free, bones):
+    """Where hidden art may go: within the layer's own two edges along its bones. An edge station
+    counts where the pixel just past it is background or art behind (free); covered stations take
+    the edge interpolated from counted ones, held constant past the last."""
+    h, w = own.shape
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    best = np.full((h, w), np.inf, np.float32)
+    allowed = np.zeros((h, w), bool)
+    which = np.full((h, w), -1, int)
+    frames = []
+    for i, (a, b) in enumerate(bones):
+        a, b = np.asarray(a, np.float32), np.asarray(b, np.float32)
+        v = b - a
+        length = float(np.hypot(*v)) or 1.0
+        u = v / length
+        t = ((xx - a[0]) * u[0] + (yy - a[1]) * u[1]) / length
+        d = (xx - a[0]) * -u[1] + (yy - a[1]) * u[0]
+        dist = np.abs(d) + np.maximum(-t, 0) * length + np.maximum(t - 1, 0) * length
+        closer = dist < best
+        best[closer] = dist[closer]
+        which[closer] = i
+        frames.append((t, d, u))
+    for i, (t, d, u) in enumerate(frames):
+        mine = which == i
+        sel = own & mine
+        if sel.sum() < 10:
+            allowed |= mine
+            continue
+        bins = np.clip(((t + 0.25) / 1.5 * OUTLINE_BINS).astype(int), 0, OUTLINE_BINS - 1)
+        centres, hi, lo, hi_ok, lo_ok = [], [], [], [], []
+        normal = np.array([-u[1], u[0]])
+        for k in range(OUTLINE_BINS):
+            m = sel & (bins == k)
+            if not m.any():
+                continue
+            dd = d[m]
+            ys, xs = np.nonzero(m)
+            top, bot = int(dd.argmax()), int(dd.argmin())
+            centres.append(k)
+            hi.append(float(dd[top]))
+            lo.append(float(dd[bot]))
+            for edge, sign, ok in ((top, 1, hi_ok), (bot, -1, lo_ok)):
+                x, y = np.round(np.array([xs[edge], ys[edge]]) + normal * sign * 3).astype(int)
+                ok.append(not (0 <= x < w and 0 <= y < h) or bool(free[y, x]))
+        centres = np.array(centres, float)
+        grid = np.arange(OUTLINE_BINS, dtype=float)
+
+        def side(values, ok):
+            values, ok = np.array(values), np.array(ok, bool)
+            if not ok.any():
+                return np.interp(grid, centres, values)
+            return np.interp(grid, centres[ok], values[ok])
+        top_edge, bottom_edge = side(hi, hi_ok), side(lo, lo_ok)
+        allowed |= mine & (d <= top_edge[bins] + 1) & (d >= bottom_edge[bins] - 1)
+    return allowed
+
+
+TWINS = {
+    "arm_far": ("arm_near", (("sh_f", "el_f"), ("el_f", "wr_f"), ("wr_f", "hand_f")),
+                (("sh_n", "el_n"), ("el_n", "wr_n"), ("wr_n", "hand_n"))),
+    "leg_far": ("leg_near", (("hip_f", "kn_f"), ("kn_f", "an_f")), (("hip_n", "kn_n"), ("kn_n", "an_n"))),
+}
+
+
+def twin_points(J, pts, far_bones, near_bones):
+    """Each point near a far limb, carried to the same place on the near limb: nearest far bone,
+    the share along it and the distance across it, laid on the matching near bone."""
+    best = np.full(len(pts), np.inf)
+    out = np.zeros_like(pts)
+    for (fa, fb), (na, nb) in zip(far_bones, near_bones):
+        a, b = np.array(J[fa]), np.array(J[fb])
+        v = b - a
+        length = np.hypot(*v) or 1.0
+        u = v / length
+        t = np.clip((pts - a) @ u / length, 0, 1)
+        across = (pts - a) @ np.array([-u[1], u[0]])
+        dist = np.hypot(*(pts - (a + np.outer(t * length, u))).T)
+        c, d = np.array(J[na]), np.array(J[nb])
+        vn = d - c
+        ln = np.hypot(*vn) or 1.0
+        un = vn / ln
+        target = c + np.outer(t * ln, un) + np.outer(across, np.array([-un[1], un[0]]))
+        closer = dist < best
+        best[closer] = dist[closer]
+        out[closer] = target[closer]
+    return out
+
+
+def region_fill(rgba, source, regions, target, own_px):
+    """Colours for target pixels: the mean colour of the nearest sizeable painted region of the layer."""
+    from scipy import ndimage as ndi
+    labels = regions * source
+    sizes = np.bincount(labels.ravel(), minlength=regions.max() + 1)
+    big = sizes >= max(FILL_MIN_PX, FILL_MIN_SHARE * own_px)
+    big[0] = False
+    seed = big[labels]
+    if not seed.any():
+        seed = source
+        labels = np.where(source, 1, 0)
+        sizes = np.bincount(labels.ravel(), minlength=2)
+    rgb = rgba[..., :3].astype(np.float64)
+    means = np.stack([np.bincount(labels[seed], weights=rgb[seed][:, c], minlength=len(sizes))
+                      for c in range(3)], 1) / np.maximum(np.bincount(labels[seed], minlength=len(sizes)), 1)[:, None]
+    _, (iy, ix) = ndi.distance_transform_edt(~seed, return_indices=True)
+    return np.clip(means[labels[iy[target], ix[target]]], 0, 255).astype(np.uint8)
 
 
 def measured_radii(fg, J, ppu):
@@ -239,7 +373,7 @@ def split(img, joints):
     # Painted regions stay whole: an area enclosed by outline ink (a hem panel, a sleeve, a trouser
     # leg) goes entirely to the layer holding most of it, instead of being sliced by capsules into
     # flaps that swing loose with the wrong part.
-    regions, count = ink_regions(rgba, fg)
+    regions, count, ink = ink_regions(rgba, fg)
     if count:
         valid = (regions > 0) & (layer_of >= 0)
         votes = np.bincount(regions[valid] * len(names) + layer_of[valid],
@@ -258,7 +392,10 @@ def split(img, joints):
         trunk = (layer_of == rank["torso"]) & (regions > 0)
         low = np.bincount(regions[trunk & below], minlength=count + 1)
         all_ = np.bincount(regions[trunk], minlength=count + 1)
-        leggy = (all_ > 0) & (low > 0.5 * all_)
+        # ...and mostly over a thigh: a hem panel hanging below the hip beside the legs stays.
+        thighs = (capsule(J, "leg_n_up", ppu, radius, xx, yy) | capsule(J, "leg_f_up", ppu, radius, xx, yy))
+        over = np.bincount(regions[trunk & thighs], minlength=count + 1)
+        leggy = (all_ > 0) & (low > 0.5 * all_) & (over > 0.5 * all_)
         leggy[0] = False
         move = trunk & leggy[regions]
         if move.any():
@@ -266,6 +403,14 @@ def split(img, joints):
             far = cp.seg_dist(xx, yy, J["hip_f"], J["kn_f"])
             layer_of[move & (near <= far)] = rank["leg_near"]
             layer_of[move & (near > far)] = rank["leg_far"]
+        # Outline ink goes with the nearest painted region, so a line stays on the shape it draws
+        # instead of being cut into loose strokes on other layers.
+        from scipy import ndimage as ndi
+        painted = (regions > 0) & (layer_of >= 0)
+        if painted.any():
+            _, (iy, ix) = ndi.distance_transform_edt(~painted, return_indices=True)
+            line = ink & fg
+            layer_of[line] = layer_of[iy[line], ix[line]]
     # A layer drawn in front owns the core of its own bones. cut_parts' colour tie-break can hand a
     # sleeve's middle to a same-coloured part behind it, which would punch a hole in the limb.
     for n in names:
@@ -276,7 +421,10 @@ def split(img, joints):
     report = {"px_per_unit": round(ppu, 3), "measured_radius": radius, "layers": {}, "warnings": list(cut_report["warnings"]),
               "blockers": [], "image_generation_calls": 0}
     layers = {}
-    for n in names:
+    # Near limbs first: a far limb's hidden part is rebuilt from its finished twin. The torso before
+    # the hidden hip core, which must stay inside it.
+    later = ("hips",) + FAR_LIMBS
+    for n in [m for m in names if m not in later] + [m for m in names if m in later]:
         parts = GROUPS[n] or ("pelvis",)
         own = layer_of == rank[n]
         area = np.zeros((h, w), bool)
@@ -293,6 +441,9 @@ def split(img, joints):
             down = np.subtract(J["hip"], J["waist"])
             along = ((xx - J["waist"][0]) * down[0] + (yy - J["waist"][1]) * down[1]) / float(down @ down)
             area &= along <= 1.0
+            # Inside the finished trunk, short of its hem: never seen at rest or between the legs.
+            if "torso" in layers:
+                area &= eroded(layers["torso"][..., 3] > 0, max(1, round(HIP_CORE_INSET * ppu)))
             own = area & (layer_of == rank["torso"])
         if n == "head":
             # The head keeps its own neck down past the collar, so it stays seated under the torso.
@@ -304,10 +455,13 @@ def split(img, joints):
         hidden = area & ~own & ((layer_of > rank[n]) | (n == "hips"))
         if n != "head":
             hidden &= layer_of != rank["head"]
-        if n == "torso":
-            # A trunk is never wider than its own visible outline: a sleeve that crossed it is not
-            # hidden trunk, and filling it would leave a flap where the arm swings away.
-            hidden &= hull(own)
+        if n in OUTLINE_BONES:
+            # Hidden outline continues the visible one along the bones: where a layer in front
+            # covers this layer's edge, the edge runs on from the uncovered edge above and below.
+            # Guessing a shape there (a hull, a capsule, a neighbour's outline) leaves a flap where
+            # the cover moves away.
+            free = ~fg | (layer_of < rank[n])
+            hidden &= outline_limit(own, free, [(J[a], J[b]) for a, b in OUTLINE_BONES[n] if a in J and b in J])
         visible = float(own[area].mean()) if area.any() else 0.0
         info = {"visible": round(visible, 3), "own_px": int(own.sum()), "filled_px": int(hidden.sum())}
         report["layers"][n] = info
@@ -329,14 +483,27 @@ def split(img, joints):
         steps = int(cp.PARTS[parts[0]][2] * ppu * 2) + 2
         pix, have = cp.fill_from(rgba, seed, own | hidden, steps + max(1, round(INK_UNITS * ppu)))
         keep = have & (own | hidden)
-        # Flat colours, not a blurred ramp: each filled pixel takes the nearest of the layer's own
-        # main colours, as cel art is painted. A soft ramp reads as a smear when a limb swings away.
+        # Hidden art continues the painted areas beside it, each in its own flat colour (a green
+        # panel stays green, a white sleeve white). No blurred ramp (it reads as a smear when a limb
+        # swings away) and no colour from small details such as trim, which would streak.
         filled = keep & ~own
-        if filled.any() and seed.sum() > 8:
-            cent = cp.palette(rgba[seed][:, :3].astype(np.float32), k=FILL_COLOURS)
-            rgb = pix[filled][:, :3].astype(np.float32)
-            nearest = ((rgb[:, None, :] - cent[None]) ** 2).sum(-1).argmin(1)
-            pix[filled, :3] = np.clip(cent[nearest], 0, 255).astype(np.uint8)
+        if filled.any():
+            pix[filled, :3] = region_fill(rgba, own & ~ink, regions, filled, own.sum())
+        if n in TWINS and TWINS[n][0] in layers and filled.any():
+            # A far arm or leg is drawn like its near twin: its hidden part takes the twin's art at
+            # the same place along the same bone (shape, outline and shading), and nothing where the
+            # twin has none, so the far limb never grows a flap past a limb's outline.
+            twin, far_bones, near_bones = TWINS[n]
+            ys, xs = np.nonzero(filled)
+            mapped = twin_points(J, np.column_stack([xs, ys]).astype(float), far_bones, near_bones)
+            mx, my = np.round(mapped).astype(int).T
+            ok = (mx >= 0) & (mx < w) & (my >= 0) & (my < h)
+            src = np.zeros((len(xs), 4), np.uint8)
+            src[ok] = layers[twin][my[ok], mx[ok]]
+            has = src[:, 3] > 0
+            pix[ys[has], xs[has]] = src[has]
+            keep[ys[~has], xs[~has]] = False
+            info["from_twin_px"] = int(has.sum())
         # Only art joined to the layer's own bones: a stray sliver would float beside the limb.
         joined = cp.reached(keep, core & keep) if (core & keep).any() else keep
         if (keep & ~joined).any():

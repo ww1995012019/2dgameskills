@@ -330,7 +330,11 @@ def raster(layer, verts, mip, w, h):
     if not dst_y:
         return out
     yy, xx = np.concatenate(dst_y), np.concatenate(dst_x)
-    u, v = np.concatenate(src_u).clip(0, iw - 1.001), np.concatenate(src_v).clip(0, ih - 1.001)
+    u, v = np.concatenate(src_u), np.concatenate(src_v)
+    # A mesh cell reaches past a layer cropped tight to its art. Past the picture there is nothing
+    # to draw: clamping there would stretch the edge column into a band.
+    inside = (u >= 0) & (u <= iw) & (v >= 0) & (v <= ih)
+    yy, xx, u, v = yy[inside], xx[inside], u[inside].clip(0, iw - 1.001), v[inside].clip(0, ih - 1.001)
     u0, v0 = u.astype(np.int32), v.astype(np.int32)
     fu, fv = (u - u0)[:, None], (v - v0)[:, None]
     sample = (img[v0, u0] * (1 - fu) * (1 - fv) + img[v0, u0 + 1] * fu * (1 - fv)
