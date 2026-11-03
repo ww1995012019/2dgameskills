@@ -33,6 +33,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "game-sprite-animator/scripts"))
 import cut_parts as cp  # noqa: E402
+import layer_parts as lp  # noqa: E402
 
 # Layer: the cut_parts parts merged into it. Back to front, as the layered puppet draws them.
 GROUPS = {
@@ -48,8 +49,13 @@ GROUPS = {
 FAR_LIMBS = ("arm_far", "leg_far")
 MIN_VISIBLE = 0.5     # of a far limb's capsule over the art that must be its own visible pixels
 NECK_REACH = 0.35     # of head_base->neck, past the neck joint: the head keeps its neck under the collar
+LIMB_BONES = ("arm_f_up", "arm_f_lo", "leg_f_up", "leg_f_lo", "leg_n_up", "leg_n_lo", "arm_n_up", "arm_n_lo")
+WIDTH_PERCENTILE = 80  # of the half-widths measured along a bone
+WIDTH_PAD = 1.15      # measured half-width times this: the capsule just covers the limb's outline
+CORE_SHARE = 0.7      # of a bone's measured radius: inside this a layer drawn in front owns the pixel
 FILL_WARN = 0.15      # of a layer's capsule area: more local fill than this is reported for review
 INK_UNITS = 0.6       # rig units: a fill takes colour from this far inside the layer, past its outline
+FILL_COLOURS = 4      # main colours of a layer a hidden fill is painted with
 INK_DARK = 0.5        # of the layer's median brightness: darker pixels are outline ink, not fill colour
 
 
@@ -81,10 +87,114 @@ def capsule(J, part, ppu, radius, xx, yy, share=1.0):
     return cp.seg_dist(xx, yy, pa, pb) < rad * share
 
 
+def keyed(img):
+    """Straight RGBA. A solid magenta background (the workflow's contract) is keyed out with the
+    background unmixed from edge pixels; anything else uses cut_parts' border flood."""
+    a = np.asarray(img.convert("RGBA"))
+    border = np.concatenate([a[0, :, :3], a[-1, :, :3], a[:, 0, :3], a[:, -1, :3]]).astype(int)
+    if a[..., 3].min() >= 250 and (np.abs(border - lp.KEY_COLOR).max(axis=1) < 40).mean() > 0.9:
+        rgb = a[..., :3].astype(np.float32)
+        k = np.minimum(rgb[..., 0], rgb[..., 2]) - rgb[..., 1]
+        alpha = np.clip(1 - (k - 22) / 70, 0, 1)
+        mix = np.clip(k / 255, 0, 0.92)[..., None]
+        fg = (rgb - mix * np.array(lp.KEY_COLOR, np.float32)) / (1 - mix)
+        out = np.dstack([np.clip(fg, 0, 255), alpha * 255]).astype(np.uint8)
+        out[alpha < 0.02] = 0
+        return out
+    return cp.foreground(img)
+
+
+def hull(mask):
+    """The convex hull of a mask's pixels, as a mask (monotone chain over the pixel corners)."""
+    ys, xs = np.nonzero(mask)
+    if len(xs) < 3:
+        return mask.copy()
+    pts = sorted(set(zip(xs.tolist(), ys.tolist())))
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    poly = lower[:-1] + upper[:-1]
+    im = Image.new("1", (mask.shape[1], mask.shape[0]))
+    ImageDraw.Draw(im).polygon(poly, fill=1, outline=1)
+    return np.asarray(im, dtype=bool)
+
+
+def measured_radii(fg, J, ppu):
+    """Each limb bone's half-width in rig units, measured on the silhouette: from points along the
+    bone's middle, half the width across it (one side's distance where the other meets other art). A bone with no clear edge
+    (an arm laid over the chest) takes its limb's other bone. Defaults stay for unmeasurable limbs."""
+    h, w = fg.shape
+    out = {}
+    for name in LIMB_BONES:
+        a, b = (np.array(J[k]) for k in cp.PARTS[name][:2])
+        v = b - a
+        across = np.array([-v[1], v[0]]) / (np.hypot(*v) or 1)
+        limit = int(2 * cp.PARTS[name][2] * ppu)
+        found = []
+        # Away from the root, which sits under the trunk's clothes: a scan there runs through the
+        # hem and would count it as limb.
+        for t in np.linspace(0.35, 0.9, 12):
+            sides = []
+            for side in (1, -1):
+                for d in range(1, limit):
+                    x, y = np.round(a + v * t + across * side * d).astype(int)
+                    if not (0 <= x < w and 0 <= y < h) or not fg[y, x]:
+                        sides.append(d)
+                        break
+            if len(sides) == 2:
+                found.append(sum(sides) / 2)       # the limb's own half-width, wherever the bone sits
+            elif sides:
+                found.append(sides[0])
+        if len(found) >= 3:
+            # The wide end of the limb (a sleeve gathered at the elbow), not its middle: cloth past
+            # the capsule would be left on the trunk when the limb moves.
+            out[name] = float(np.percentile(found, WIDTH_PERCENTILE)) / ppu * WIDTH_PAD
+    # The trunk, measured at the waist and over the hips, where the arms hang clear of it. A chibi
+    # default would take in a sleeve hanging beside the body.
+    spine, pelvis = np.array(J["neck"]) - np.array(J["waist"]), np.array(J["waist"]) - np.array(J["hip"])
+    trunk = []
+    for base, v, ts in ((np.array(J["waist"]), spine, np.linspace(0.0, 0.15, 4)),
+                        (np.array(J["hip"]), pelvis, np.linspace(0.3, 0.9, 5))):
+        across = np.array([-v[1], v[0]]) / (np.hypot(*v) or 1)
+        for t in ts:
+            sides = []
+            for side in (1, -1):
+                for d in range(1, int(2 * cp.PARTS["torso"][2] * ppu)):
+                    x, y = np.round(base + v * t + across * side * d).astype(int)
+                    if not (0 <= x < w and 0 <= y < h) or not fg[y, x]:
+                        sides.append(d)
+                        break
+            if len(sides) == 2:
+                trunk.append(sum(sides) / 2)
+    if len(trunk) >= 3:
+        out["torso"] = out["pelvis"] = float(np.median(trunk)) / ppu * WIDTH_PAD
+    for name in LIMB_BONES:
+        twin = name[:-2] + ("lo" if name.endswith("up") else "up")
+        if name not in out and twin in out:
+            out[name] = out[twin]
+    return {k: round(min(v, cp.PARTS[k][2]), 2) for k, v in out.items()}
+
+
 def split(img, joints):
     """Returns (layers {name: RGBA array on the picture's canvas}, layer joints, order, report)."""
-    _, _, cut_report, owner, order = cp.cut(img, joints)
+    rgba = keyed(img)
     J = {k: tuple(map(float, v)) for k, v in joints.items() if not k.startswith("_")}
+    leg_px = math.dist(J["hip_n"], J["kn_n"]) + math.dist(J["kn_n"], J["an_n"])
+    ppu0 = leg_px / (cp.Body().thigh + cp.Body().shin)
+    joints = dict(joints)
+    # Measured limb widths unless the joints file states them.
+    joints["_radius"] = {**measured_radii(rgba[..., 3] > 24, J, ppu0), **joints.get("_radius", {})}
+    _, _, cut_report, owner, order = cp.cut(Image.fromarray(rgba, "RGBA"), joints)
     if "hand_n" not in J:
         J["hand_n"] = tuple(np.add(J["wr_n"], np.subtract(J["wr_n"], J["el_n"]) * 0.42))
     if "hand_f" not in J and "wr_f" in J:
@@ -93,7 +203,6 @@ def split(img, joints):
     if missing:
         raise ValueError(f"far limbs need joints {missing}; the layered puppet binds both sides")
     radius = {k: float(v) for k, v in joints.get("_radius", {}).items()}
-    rgba = cp.foreground(img)
     h, w = rgba.shape[:2]
     fg = rgba[..., 3] > 24
     ppu = float(cut_report["px_per_unit"])
@@ -107,7 +216,20 @@ def split(img, joints):
     for i, p in enumerate(order):
         if p in part_layer:
             layer_of[owner == i] = rank[part_layer[p]]
-    report = {"px_per_unit": round(ppu, 3), "layers": {}, "warnings": list(cut_report["warnings"]),
+    # The trunk starts at the neck joint: what the torso was given above it (hair ends, the chin,
+    # the throat) is the head's, so it turns with the head and the head seats over the collar.
+    up_axis = np.subtract(J["neck"], J["waist"])
+    up_axis = up_axis / (np.hypot(*up_axis) or 1)
+    above = (xx - J["neck"][0]) * up_axis[0] + (yy - J["neck"][1]) * up_axis[1] > 0
+    layer_of[above & (layer_of == rank["torso"])] = rank["head"]
+    # A layer drawn in front owns the core of its own bones. cut_parts' colour tie-break can hand a
+    # sleeve's middle to a same-coloured part behind it, which would punch a hole in the limb.
+    for n in names:
+        for p in GROUPS[n]:
+            if p in LIMB_BONES:
+                core = capsule(J, p, ppu, radius, xx, yy, CORE_SHARE) & fg
+                layer_of[core & (layer_of < rank[n])] = rank[n]
+    report = {"px_per_unit": round(ppu, 3), "measured_radius": radius, "layers": {}, "warnings": list(cut_report["warnings"]),
               "blockers": [], "image_generation_calls": 0}
     layers = {}
     for n in names:
@@ -133,6 +255,10 @@ def split(img, joints):
         hidden = area & ~own & ((layer_of > rank[n]) | (n == "hips"))
         if n != "head":
             hidden &= layer_of != rank["head"]
+        if n == "torso":
+            # A trunk is never wider than its own visible outline: a sleeve that crossed it is not
+            # hidden trunk, and filling it would leave a flap where the arm swings away.
+            hidden &= hull(own)
         visible = float(own[area].mean()) if area.any() else 0.0
         info = {"visible": round(visible, 3), "own_px": int(own.sum()), "filled_px": int(hidden.sum())}
         report["layers"][n] = info
@@ -154,6 +280,14 @@ def split(img, joints):
         steps = int(cp.PARTS[parts[0]][2] * ppu * 2) + 2
         pix, have = cp.fill_from(rgba, seed, own | hidden, steps + max(1, round(INK_UNITS * ppu)))
         keep = have & (own | hidden)
+        # Flat colours, not a blurred ramp: each filled pixel takes the nearest of the layer's own
+        # main colours, as cel art is painted. A soft ramp reads as a smear when a limb swings away.
+        filled = keep & ~own
+        if filled.any() and seed.sum() > 8:
+            cent = cp.palette(rgba[seed][:, :3].astype(np.float32), k=FILL_COLOURS)
+            rgb = pix[filled][:, :3].astype(np.float32)
+            nearest = ((rgb[:, None, :] - cent[None]) ** 2).sum(-1).argmin(1)
+            pix[filled, :3] = np.clip(cent[nearest], 0, 255).astype(np.uint8)
         # Only art joined to the layer's own bones: a stray sliver would float beside the limb.
         joined = cp.reached(keep, core & keep) if (core & keep).any() else keep
         if (keep & ~joined).any():
