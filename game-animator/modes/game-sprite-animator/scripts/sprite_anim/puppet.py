@@ -38,6 +38,7 @@ def rounded(points, radius):
     pts = [np.asarray(p, dtype=np.float64) for p in points]
     reach = 0.68 if len(pts) == 3 else 0.45     # a bone with one corner has room for a longer arc
     runs = [0.0] + [corner_run(pts[i - 1], pts[i], pts[i + 1], radius, reach) for i in range(1, len(pts) - 1)] + [0.0]
+    t = _STEPS[:, None]
     out = []
     for i in range(len(pts) - 1):
         a, b = pts[i], pts[i + 1]
@@ -45,15 +46,18 @@ def rounded(points, radius):
         u = (b - a) / length
         start = a + u * runs[i] if i else a
         end = b - u * runs[i + 1] if i < len(pts) - 2 else b
-        for t in np.linspace(0, 1, CURVE_STEPS, endpoint=False):
-            out.append(start + (end - start) * t)
+        out.append(start + (end - start) * t)
         if i < len(pts) - 2:
             next_len = np.hypot(*(pts[i + 2] - b)) or 1e-6
             tail = b + (pts[i + 2] - b) / next_len * runs[i + 1]
-            for t in np.linspace(0, 1, CURVE_STEPS, endpoint=False):
-                out.append((1 - t) ** 2 * end + 2 * t * (1 - t) * b + t * t * tail)
-    out.append(pts[-1])
-    return np.array(out)
+            out.append(_ARC[0] * end + _ARC[1] * b + _ARC[2] * tail)
+    out.append(pts[-1][None])
+    return np.concatenate(out)
+
+
+# Sample positions along one bone or corner arc, and the arc's quadratic Bezier weights.
+_STEPS = np.linspace(0, 1, CURVE_STEPS, endpoint=False)
+_ARC = ((1 - _STEPS) ** 2)[:, None], (2 * _STEPS * (1 - _STEPS))[:, None], (_STEPS * _STEPS)[:, None]
 
 
 def frames_of(curve):
@@ -246,44 +250,76 @@ def rigid(vx, vy, pivot_src, pivot_out, angle, scale):
     return np.stack([pivot_out[0] + x * c - y * s, pivot_out[1] + x * s + y * c], -1)
 
 
+RASTER_BUDGET = 1 << 21   # bounding-box pixels evaluated at once while rasterising triangles
+
+
 def raster(layer, verts, mip, w, h):
-    """Draw the layer's mesh into a premultiplied RGBA float image of (h, w)."""
+    """Draw the layer's mesh into a premultiplied RGBA float image of (h, w).
+
+    Each cell is two triangles, (p00, p10, p01) then (p11, p01, p10). All are tested at once
+    in batches; pixels keep the same per-triangle, row-major order, so a later triangle still
+    overwrites an earlier one where they share an edge, exactly as drawing them one by one.
+    """
     img, k = mip
     out = np.zeros((h, w, 4), np.float32)
     ih, iw = img.shape[:2]
-    dst_y, dst_x, src_u, src_v = [], [], [], []
+    cells = layer.cells
+    if not len(cells):
+        return out
+    j, i = cells[:, 0], cells[:, 1]
     u_grid, v_grid = layer.gx * k, layer.gy * k
+    p00, p10, p01, p11 = verts[j, i], verts[j, i + 1], verts[j + 1, i], verts[j + 1, i + 1]
+    t00 = np.stack([u_grid[i], v_grid[j]], -1)
+    t10 = np.stack([u_grid[i + 1], v_grid[j]], -1)
+    t01 = np.stack([u_grid[i], v_grid[j + 1]], -1)
+    t11 = np.stack([u_grid[i + 1], v_grid[j + 1]], -1)
+    # Interleave the two triangles of each cell: (tri, corner, xy).
+    pos = np.stack([np.stack([p00, p10, p01], 1), np.stack([p11, p01, p10], 1)], 1).reshape(-1, 3, 2)
+    tex = np.stack([np.stack([t00, t10, t01], 1), np.stack([t11, t01, t10], 1)], 1).reshape(-1, 3, 2)
+    lo, hi = pos.min(1), pos.max(1)
+    if not np.isfinite(lo).all() or not np.isfinite(hi).all():
+        raise ValueError("puppet mesh has non-finite vertices in layer " + layer.name)
+    x0 = np.maximum(np.floor(lo[:, 0]).astype(np.int64), 0)
+    x1 = np.minimum(np.ceil(hi[:, 0]).astype(np.int64) + 1, w)
+    y0 = np.maximum(np.floor(lo[:, 1]).astype(np.int64), 0)
+    y1 = np.minimum(np.ceil(hi[:, 1]).astype(np.int64) + 1, h)
+    q0, q1, q2 = pos[:, 0], pos[:, 1], pos[:, 2]
+    det = (q1[:, 0] - q0[:, 0]) * (q2[:, 1] - q0[:, 1]) - (q2[:, 0] - q0[:, 0]) * (q1[:, 1] - q0[:, 1])
+    keep = np.flatnonzero((x1 > x0) & (y1 > y0) & (np.abs(det) >= 1e-9))
+    if not len(keep):
+        return out
+    dst_y, dst_x, src_u, src_v = [], [], [], []
 
-    def tri(p0, p1, p2, t0, t1, t2):
-        x0 = max(int(math.floor(min(p0[0], p1[0], p2[0]))), 0)
-        x1 = min(int(math.ceil(max(p0[0], p1[0], p2[0]))) + 1, w)
-        y0 = max(int(math.floor(min(p0[1], p1[1], p2[1]))), 0)
-        y1 = min(int(math.ceil(max(p0[1], p1[1], p2[1]))) + 1, h)
-        if x1 <= x0 or y1 <= y0:
+    def batch(sel):
+        bw, bh = int((x1[sel] - x0[sel]).max()), int((y1[sel] - y0[sel]).max())
+        if len(sel) > 1 and len(sel) * bw * bh > RASTER_BUDGET:
+            half = len(sel) // 2
+            batch(sel[:half])
+            batch(sel[half:])
             return
-        det = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p2[0] - p0[0]) * (p1[1] - p0[1])
-        if abs(det) < 1e-9:
+        xx = (x0[sel, None, None] + np.arange(bw)[None, None, :]).astype(np.float64)
+        yy = (y0[sel, None, None] + np.arange(bh)[None, :, None]).astype(np.float64)
+        a0, b0, c0 = q0[sel], q1[sel], q2[sel]
+        px, py = a0[:, 0, None, None], a0[:, 1, None, None]
+        e1x, e1y = (b0[:, 0] - a0[:, 0])[:, None, None], (b0[:, 1] - a0[:, 1])[:, None, None]
+        e2x, e2y = (c0[:, 0] - a0[:, 0])[:, None, None], (c0[:, 1] - a0[:, 1])[:, None, None]
+        d = det[sel][:, None, None]
+        a = ((xx - px) * e2y - e2x * (yy - py)) / d
+        b = (e1x * (yy - py) - (xx - px) * e1y) / d
+        inside = ((a >= -1e-3) & (b >= -1e-3) & (a + b <= 1.001)
+                  & (xx < x1[sel, None, None]) & (yy < y1[sel, None, None]))
+        n, r, c = np.nonzero(inside)
+        if not len(n):
             return
-        yy, xx = np.mgrid[y0:y1, x0:x1].astype(np.float32)
-        a = ((xx - p0[0]) * (p2[1] - p0[1]) - (p2[0] - p0[0]) * (yy - p0[1])) / det
-        b = ((p1[0] - p0[0]) * (yy - p0[1]) - (xx - p0[0]) * (p1[1] - p0[1])) / det
-        inside = (a >= -1e-3) & (b >= -1e-3) & (a + b <= 1.001)
-        if not inside.any():
-            return
-        a, b = a[inside], b[inside]
-        dst_y.append(yy[inside].astype(np.int32))
-        dst_x.append(xx[inside].astype(np.int32))
-        src_u.append(t0[0] + a * (t1[0] - t0[0]) + b * (t2[0] - t0[0]))
-        src_v.append(t0[1] + a * (t1[1] - t0[1]) + b * (t2[1] - t0[1]))
+        a, b = a[n, r, c], b[n, r, c]
+        dst_y.append((y0[sel][n] + r).astype(np.int32))
+        dst_x.append((x0[sel][n] + c).astype(np.int32))
+        t = tex[sel][n]
+        src_u.append(t[:, 0, 0] + a * (t[:, 1, 0] - t[:, 0, 0]) + b * (t[:, 2, 0] - t[:, 0, 0]))
+        src_v.append(t[:, 0, 1] + a * (t[:, 1, 1] - t[:, 0, 1]) + b * (t[:, 2, 1] - t[:, 0, 1]))
 
-    for j, i in layer.cells:
-        p00, p10, p01, p11 = verts[j, i], verts[j, i + 1], verts[j + 1, i], verts[j + 1, i + 1]
-        t00 = (u_grid[i], v_grid[j])
-        t10 = (u_grid[i + 1], v_grid[j])
-        t01 = (u_grid[i], v_grid[j + 1])
-        t11 = (u_grid[i + 1], v_grid[j + 1])
-        tri(p00, p10, p01, t00, t10, t01)
-        tri(p11, p01, p10, t11, t01, t10)
+    for start in range(0, len(keep), 4096):
+        batch(keep[start:start + 4096])
     if not dst_y:
         return out
     yy, xx = np.concatenate(dst_y), np.concatenate(dst_x)
