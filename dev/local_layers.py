@@ -24,6 +24,7 @@ for a sword. Numerical output only: visual review and the user's motion approval
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 
 import sys
@@ -333,7 +334,41 @@ def measured_radii(fg, J, ppu):
     return {k: round(min(v, cp.PARTS[k][2]), 2) for k, v in out.items()}
 
 
-def split(img, joints):
+class Inpainter:
+    """Optional local inpainting (a TorchScript LaMa model): fills only masked pixels of a picture.
+    Experimental: the public LaMa weights were trained on Places2, whose terms are non-commercial;
+    clear the licence before shipping anything made with them."""
+
+    def __init__(self, path):
+        import torch
+        self.torch = torch
+        torch.set_num_threads(max(1, os.cpu_count() or 1))
+        self.model = torch.jit.load(str(path), map_location="cpu").eval()
+        self.calls = 0
+
+    def __call__(self, rgb, mask, pad=48):
+        """rgb uint8 (h, w, 3), mask bool (h, w): returns rgb with masked pixels painted."""
+        torch = self.torch
+        ys, xs = np.nonzero(mask)
+        h, w = mask.shape
+        y0, y1 = max(ys.min() - pad, 0), min(ys.max() + pad + 1, h)
+        x0, x1 = max(xs.min() - pad, 0), min(xs.max() + pad + 1, w)
+        crop, m = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1]
+        ch, cw = crop.shape[:2]
+        ph, pw = (-ch) % 8, (-cw) % 8
+        image = np.pad(crop, ((0, ph), (0, pw), (0, 0)), mode="edge").astype(np.float32) / 255
+        hole = np.pad(m, ((0, ph), (0, pw))).astype(np.float32)
+        with torch.no_grad():
+            out = self.model(torch.from_numpy(image).permute(2, 0, 1)[None],
+                             torch.from_numpy(hole)[None, None])
+        self.calls += 1
+        painted = (out[0].permute(1, 2, 0).numpy()[:ch, :cw] * 255).clip(0, 255).astype(np.uint8)
+        result = rgb.copy()
+        result[y0:y1, x0:x1][m] = painted[m]
+        return result
+
+
+def split(img, joints, inpaint=None):
     """Returns (layers {name: RGBA array on the picture's canvas}, layer joints, order, report)."""
     rgba = keyed(img)
     J = {k: tuple(map(float, v)) for k, v in joints.items() if not k.startswith("_")}
@@ -489,6 +524,13 @@ def split(img, joints):
         filled = keep & ~own
         if filled.any():
             pix[filled, :3] = region_fill(rgba, own & ~ink, regions, filled, own.sum())
+        if inpaint is not None and filled.any():
+            # Context is this layer alone: other layers' art (the arm in front) is flattened to the
+            # layer's own colour so it is not continued into the hidden area. Only filled pixels change.
+            context = rgba[..., :3].copy()
+            context[~own] = np.median(rgba[own & ~ink][:, :3], axis=0).astype(np.uint8) if (own & ~ink).any() else 128
+            painted = inpaint(context, filled)
+            pix[filled, :3] = painted[filled]
         if n in TWINS and TWINS[n][0] in layers and filled.any():
             # A far arm or leg is drawn like its near twin: its hidden part takes the twin's art at
             # the same place along the same bone (shape, outline and shading), and nothing where the
@@ -501,7 +543,8 @@ def split(img, joints):
             src = np.zeros((len(xs), 4), np.uint8)
             src[ok] = layers[twin][my[ok], mx[ok]]
             has = src[:, 3] > 0
-            pix[ys[has], xs[has]] = src[has]
+            if inpaint is None:
+                pix[ys[has], xs[has]] = src[has]       # without an inpainter, the twin's art too
             keep[ys[~has], xs[~has]] = False
             info["from_twin_px"] = int(has.sum())
         # Only art joined to the layer's own bones: a stray sliver would float beside the limb.
@@ -543,13 +586,17 @@ def overview(layers, order, size):
     return sheet
 
 
-def run(image, joints_path, out, name="character"):
+def run(image, joints_path, out, name="character", inpaint_model=None):
     out = Path(out)
     if out.exists():
         raise ValueError("output exists; choose a new version folder")
     img = Image.open(image).convert("RGBA")
     joints = json.loads(Path(joints_path).read_text(encoding="utf-8"))
-    layers, lj, order, report = split(img, joints)
+    inpaint = Inpainter(inpaint_model) if inpaint_model else None
+    layers, lj, order, report = split(img, joints, inpaint)
+    if inpaint is not None:
+        report["local_inpaint_calls"] = inpaint.calls
+        report["inpaint_model"] = str(inpaint_model)
     out.mkdir(parents=True)
     (out / "layers").mkdir()
     for n, pix in layers.items():
@@ -570,8 +617,9 @@ def main():
     ap.add_argument("--joints", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--name", default="character")
+    ap.add_argument("--inpaint-model", help="TorchScript LaMa model for hidden areas (experimental, check licence)")
     a = ap.parse_args()
-    report = run(a.image, a.joints, a.out, a.name)
+    report = run(a.image, a.joints, a.out, a.name, a.inpaint_model)
     for line in report["warnings"]:
         print("warning:", line)
     for line in report["blockers"]:
