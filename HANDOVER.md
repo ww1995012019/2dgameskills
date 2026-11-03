@@ -1,5 +1,19 @@
 # 交接文档
 
+## Skill 发布前完整验证（2026-11-03）
+
+本次实现提交 `a02f0e1` 包含免生图known-joint绑定、手掌/根部保护、实测脚底支撑、
+独立/统一包同步，以及实验图集适配器和真实男女角色案例。八部件图集流程仍仅在dev，
+没有切换默认AI人物流程。在线素材在外部案例目录，不进git或Skill包。
+
+发布前重新执行完整单测，使用系统浏览器路径：
+`CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium /workspace/2dgameskills-venv/bin/python -m unittest discover -s dev/tests -v`。
+结果：354项，350通过、4项原有expectedFailure，0错误、0新增失败，耗时1560.124秒。
+完整日志 `/tmp/skill-main-tests-chromium.log`。首次未指定浏览器路径的尝试因Playwright缓存浏览器
+缺失导致CSS测试启动失败，确认环境原因后中断并从头重跑，没有改测试、跳过用例或放宽阈值。
+共用文件同步、统一快照同步、全部五个技能包新鲜度和diff空白检查均通过。
+以前26套HEAD隔离回归的0差异记录继续保留，本次只补完整单测，没有再次跑无变化的26套渲染。
+
 ## 粉色古装女侠待机/走路已发布（2026-11-03）
 
 用户认可粉色可爱系立绘后要求按此制作，沿用实验八部件图集适配器和正式known-joint绑定。

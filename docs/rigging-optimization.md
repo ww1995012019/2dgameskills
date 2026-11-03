@@ -63,3 +63,12 @@
 最终产物及机器检查：`browser-check-final.json`、`pixel-reuse-check.json`、
 `original-control-comparison.json` 均在外部验证目录。原始武侠案例素材不在本环境，
 没有将合成测试结果当作该真实人物的最终验收。
+
+## main发布前的新进程完整复测（2026-11-03）
+
+使用现有系统Chromium路径，重新跑完整套件：
+`CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium /workspace/2dgameskills-venv/bin/python -m unittest discover -s dev/tests -v`。
+354项测试，350通过、4项原有expectedFailure，0错误、0新增失败，耗时1560.124秒。
+日志 `/tmp/skill-main-tests-chromium.log`；此前旧进程root_lock兼容性错误在本次完整新进程中未复现。
+首次未指定浏览器路径的尝试因缺少Playwright缓存浏览器而导致CSS启动失败，确认后中断，从头重跑。
+没有改测试、跳过检查或放宽阈值。五个包的新鲜度、shared/modes同步和diff检查均通过。
