@@ -76,9 +76,9 @@ class Renderer:
                     # Source cells, not skeleton joints, bound a painted robe
                     # or hair fan. Raw mesh bounds are conservative: subsequent
                     # relaxation averages neighbouring vertices inside them.
-                    for layer, vertices in self.art.puppet.meshes(
-                            mesh_canvas, sk, self.cloth_at(clip, t), 'ground' in clip.tags, relax=False):
-                        points = vertices[layer.used]
+                    for _, points in self.art.puppet.meshes(
+                            mesh_canvas, sk, self.cloth_at(clip, t), 'ground' in clip.tags,
+                            relax=False, used_only=True):
                         half = max(half, float(np.abs(points[:, 0] - mesh_canvas.ox).max()))
                         up = max(up, float((-points[:, 1]).max()))
                         down = max(down, float(points[:, 1].max()))

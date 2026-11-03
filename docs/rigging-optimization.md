@@ -96,10 +96,24 @@ compact pixel 6 个动作 27.4s→9.4s，124 个文件逐字节相同。26 套�
 1. 远侧肢体复用近侧骨长：`known_joint_rig.build_spec` 只把 near 臂/腿长度写进 `body`，
    运行时 `Body` 只有一套 `thigh/shin/up_arm/lo_arm`。配对检查允许 25% 差异，所以远侧图层
    最多会被拉伸/压缩 25%。分侧骨长要改 rig 与动作，会改变画面。
-2. `fit_scale` 仍占出帧约 60%：120Hz 采样，每次为全部网格顶点建曲线。只算 `layer.used`
-   顶点可保持结果不变；降低采样率更快，但会改变缩放结果。
+2. ~~`fit_scale` 为全部网格顶点建曲线~~：已改为只算 `layer.used` 顶点，见下节。
+   降低 120Hz 采样率仍未做，会改变缩放结果。
 3. `bind_known_joints.py` 的握点检查用固定 2px，其它检查按骨长比例（如 `check_limb` 的 2%），
    高分辨率素材会过严、低分辨率会过松。
 4. `canonical_arm` 在手腕与肩重合时（手臂完全折叠）除以零得 NaN，没有前置拒绝。
 5. `head_size` 按头顶到颈的竖直距离量，头部倾斜的素材会量小。
 6. 输入层要求 PNG 模式恰好为 RGBA；带透明的调色板/LA 图会被拒绝而不是无损转换。
+
+## fit_scale 只算有画面的顶点（2026-11-03，输出逐字节不变）
+
+`Puppet.meshes(..., relax=False, used_only=True)` 直接给出 `verts[layer.used]`；`mapped`、
+脚部混合、`lock_tip`、刚体层和落地压缩都按顶点独立计算，所以只算这些顶点与先算全网格再取子集相同。
+`used_only` 必须配 `relax=False`（松弛要整张网格），否则报错。`fit_scale` 改用该路径，渲染与
+`puppet_check` 仍走全网格。
+
+- 两个合成体型、27 个动作、每动作 40 个时刻、每层（8640 层帧/体型）逐位相等。
+- `test_puppet_raster.UsedVertexBounds` 覆盖 tube（含脚部、根/末端锁定）、robe、cloth、刚体层
+  和落地压缩；故障注入（selected 路径跳过脚部混合）在 `leg_near` 处失败。
+- 与原 main 的完整输出对比：slim hd idle/walk 110 个文件、compact pixel 6 动作 124 个文件
+  全部逐字节相同。耗时 11.0s→10.5s、9.4s→8.4s（累计自原始 29.5s、27.4s）。
+  收益小，因为剩余成本是每帧每层建曲线的固定开销，与顶点数无关。

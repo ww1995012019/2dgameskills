@@ -152,12 +152,18 @@ class Layer:
             s = np.clip((depth + self.foot["blend"]) / (2 * self.foot["blend"]), 0, 1)
             self.foot_w = s * s * (3 - 2 * s)
 
-    def mapped(self, points, scale):
-        """Mesh vertices for a curve through this frame's joints, in output pixels."""
+    def mapped(self, points, scale, sel=None):
+        """Mesh vertices for a curve through this frame's joints, in output pixels.
+
+        sel (a mask over the vertex grid) maps only those vertices; each vertex is independent
+        until relaxation, so the selected values equal the same entries of the full grid."""
         cur = extended(rounded(points, self.radius * scale), self.reach * scale)
         tan = frames_of(cur)
-        i0 = np.floor(self.place).astype(int).clip(0, len(cur) - 2)
-        f = (self.place - i0)[..., None]
+        place = self.place if sel is None else self.place[sel]
+        along = self.along if sel is None else self.along[sel]
+        across = self.across if sel is None else self.across[sel]
+        i0 = np.floor(place).astype(int).clip(0, len(cur) - 2)
+        f = (place - i0)[..., None]
         c = cur[i0] * (1 - f) + cur[i0 + 1] * f
         t = tan[i0] * (1 - f) + tan[i0 + 1] * f
         t /= np.hypot(t[..., 0], t[..., 1])[..., None] + 1e-9
@@ -168,15 +174,15 @@ class Layer:
         step = np.hypot(*np.gradient(cur, axis=0).T) + 1e-9
         bend = np.gradient(ang) / step
         k = (bend[i0] * (1 - f[..., 0]) + bend[i0 + 1] * f[..., 0])
-        across = self.across * scale
+        across = across * scale
         inner = across * k > 0
         limit = INNER_LIMIT / (np.abs(k) + 1e-6)
         x = np.abs(across) / limit
         eased = np.where(inner, np.sign(across) * limit * x / (1 + x ** 4) ** 0.25, across)
-        return c + t * self.along[..., None] * scale + n * eased[..., None]
+        return c + t * along[..., None] * scale + n * eased[..., None]
 
 
-def lock_tip(layer, verts, points, scale, root=False):
+def lock_tip(layer, verts, points, scale, root=False, sel=None):
     """Keep distal hand art rigid; blend only on the proximal side of the wrist.
 
     Source joints and pixels remain unchanged. Existing rigs opt out by default.
@@ -187,11 +193,12 @@ def lock_tip(layer, verts, points, scale, root=False):
     target = points[end] - points[adjacent]
     source_angle = math.atan2(source[1], source[0])
     target_angle = math.atan2(target[1], target[0])
-    held = rigid(layer.vx + layer.offset[0], layer.vy + layer.offset[1],
+    vx, vy = (layer.vx, layer.vy) if sel is None else (layer.vx[sel], layer.vy[sel])
+    held = rigid(vx + layer.offset[0], vy + layer.offset[1],
                  layer.rest[end], points[end], target_angle - source_angle, scale)
     axis = source / max(float(np.linalg.norm(source)), 1e-9)
-    depth = ((layer.vx + layer.offset[0] - layer.rest[end][0]) * axis[0]
-             + (layer.vy + layer.offset[1] - layer.rest[end][1]) * axis[1])
+    depth = ((vx + layer.offset[0] - layer.rest[end][0]) * axis[0]
+             + (vy + layer.offset[1] - layer.rest[end][1]) * axis[1])
     blend = min(max(layer.radius * 1.5, GRID * 2), float(np.linalg.norm(source)) * .4)
     weight = np.clip(1 + depth / blend, 0, 1)
     weight = weight * weight * (3 - 2 * weight)
@@ -382,28 +389,36 @@ class Puppet:
         length = self.robe_len if name == "robe_hem" else self.skirt_len
         return tuple(hip + np.array((math.cos(turn), math.sin(turn))) * length)
 
-    def meshes(self, cv, sk, cloth, ground_contact=False, relax=True):
-        """Each layer, back to front, with its mesh for this frame in canvas pixels."""
+    def meshes(self, cv, sk, cloth, ground_contact=False, relax=True, used_only=False):
+        """Each layer, back to front, with its mesh for this frame in canvas pixels.
+
+        used_only (requires relax=False) yields only the vertices of cells holding art, as an
+        (n, 2) array equal to verts[layer.used] of the full mesh: bounds without the empty grid."""
+        if used_only and relax:
+            raise ValueError("used_only vertices cannot be relaxed: relaxation needs the full grid")
         scale = cv.s / self.px_per_unit
         for layer in self.layers:
+            sel = layer.used if used_only else None
             if layer.kind == "rigid":
-                verts = self.rigid_verts(layer, sk, cv, scale)
+                verts = self.rigid_verts(layer, sk, cv, scale, sel)
             elif layer.kind == "cloth":
-                verts = layer.mapped([np.array(cv.T(p)) for p in cloth[layer.chain]], scale)
+                verts = layer.mapped([np.array(cv.T(p)) for p in cloth[layer.chain]], scale, sel)
             else:
-                verts = layer.mapped(self.tube_points(layer, sk, cv), scale)
+                verts = layer.mapped(self.tube_points(layer, sk, cv), scale, sel)
                 if layer.foot:
                     side = layer.foot["side"]
                     angle = self.foot_turn(layer, sk, cv)
-                    held = rigid(layer.vx + layer.offset[0], layer.vy + layer.offset[1], layer.foot["ankle"],
+                    vx, vy = (layer.vx, layer.vy) if sel is None else (layer.vx[sel], layer.vy[sel])
+                    held = rigid(vx + layer.offset[0], vy + layer.offset[1], layer.foot["ankle"],
                                  cv.T(sk["an_" + side]), angle, scale)
-                    verts = verts * (1 - layer.foot_w[..., None]) + held * layer.foot_w[..., None]
+                    foot_w = layer.foot_w if sel is None else layer.foot_w[sel]
+                    verts = verts * (1 - foot_w[..., None]) + held * foot_w[..., None]
             if layer.kind != "rigid" and relax:
                 verts = untangle(blur(verts, EASE_PASSES), layer.cells)
             if getattr(layer, 'root_lock', False) and layer.kind == "tube":
-                verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale, root=True)
+                verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale, root=True, sel=sel)
             if getattr(layer, 'tip_lock', False) and layer.kind == "tube":
-                verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale)
+                verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale, sel=sel)
             if ground_contact and (layer.kind == "cloth" or layer.name == "robe"):
                 # The chain supports its centreline. The painted sheet has
                 # width too: compress the contacting fabric continuously onto
@@ -438,8 +453,9 @@ class Puppet:
             rgb = np.where(out_a > 1e-4, rgb / np.maximum(out_a, 1e-4), 0)
             cv.buf[box[0]:box[1], box[2]:box[3]] = np.clip(np.concatenate([rgb, out_a], -1) * 255 + 0.5, 0, 255).astype(np.uint8)
 
-    def rigid_verts(self, layer, sk, cv, scale):
-        vx, vy = layer.vx + layer.offset[0], layer.vy + layer.offset[1]
+    def rigid_verts(self, layer, sk, cv, scale, sel=None):
+        vx, vy = (layer.vx, layer.vy) if sel is None else (layer.vx[sel], layer.vy[sel])
+        vx, vy = vx + layer.offset[0], vy + layer.offset[1]
         joint, angle_key = layer.follow
         pivot_src = np.array(layer.anchor)
         if layer.name == "weapon":     # the fist closes on it just past the wrist, as drawn weapons
