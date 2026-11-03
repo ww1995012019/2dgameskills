@@ -368,7 +368,16 @@ class Inpainter:
         return result
 
 
-def split(img, joints, inpaint=None):
+# Layers whose hidden art is worth an AI completion, with what the hidden part is, for the prompt.
+COMPLETE = {
+    "torso": "the side of the upper-body garment (the same panels, colours, trim and pattern) where the arm covered it",
+    "arm_far": "the shoulder end of the same rear sleeve, where the body covered it",
+    "leg_far": "the top of the same rear trouser leg, where the front leg and the tunic covered it",
+    "leg_near": "the top of the same front trouser leg, where the tunic covered it",
+}
+
+
+def split(img, joints, inpaint=None, completions=None, masks_out=None):
     """Returns (layers {name: RGBA array on the picture's canvas}, layer joints, order, report)."""
     rgba = keyed(img)
     J = {k: tuple(map(float, v)) for k, v in joints.items() if not k.startswith("_")}
@@ -524,7 +533,18 @@ def split(img, joints, inpaint=None):
         filled = keep & ~own
         if filled.any():
             pix[filled, :3] = region_fill(rgba, own & ~ink, regions, filled, own.sum())
-        if inpaint is not None and filled.any():
+        if masks_out is not None and n in COMPLETE and filled.any():
+            masks_out[n] = (own & (rgba[..., 3] == 255), filled.copy())
+        done = completions and Path(completions, n, "completed.png").exists()
+        if done and filled.any():
+            # An approved masked completion: its pixels inside the recorded completion mask only.
+            expected = np.asarray(Image.open(Path(completions, n, "completion_mask.png"))) > 0
+            if not np.array_equal(expected, filled):
+                raise ValueError(f"{n}: completion mask no longer matches this split; export again")
+            completed = np.asarray(Image.open(Path(completions, n, "completed.png")).convert("RGBA"))
+            pix[filled] = completed[filled]
+            info["completed_by"] = "masked AI completion"
+        elif inpaint is not None and filled.any():
             # Context is this layer alone: other layers' art (the arm in front) is flattened to the
             # layer's own colour so it is not continued into the hidden area. Only filled pixels change.
             context = rgba[..., :3].copy()
@@ -543,7 +563,7 @@ def split(img, joints, inpaint=None):
             src = np.zeros((len(xs), 4), np.uint8)
             src[ok] = layers[twin][my[ok], mx[ok]]
             has = src[:, 3] > 0
-            if inpaint is None:
+            if inpaint is None and not done:
                 pix[ys[has], xs[has]] = src[has]       # without an inpainter, the twin's art too
             keep[ys[~has], xs[~has]] = False
             info["from_twin_px"] = int(has.sum())
@@ -586,14 +606,41 @@ def overview(layers, order, size):
     return sheet
 
 
-def run(image, joints_path, out, name="character", inpaint_model=None):
+def export_completions(rgba, masks, folder):
+    """One masked-completion request per layer: plate.png (visible art on grey, the area to paint in
+    pure green), the masks, and the prompt. Generated plates go back through compose()."""
+    import masked_completion as mc
+    folder = Path(folder)
+    keyed_path = folder / "keyed.png"
+    folder.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rgba, "RGBA").save(keyed_path)
+    for n, (visible, completion) in masks.items():
+        d = folder / n
+        d.mkdir()
+        Image.fromarray((visible & ~completion).astype(np.uint8) * 255, "L").save(d / "visible_mask.png")
+        Image.fromarray(completion.astype(np.uint8) * 255, "L").save(d / "completion_mask.png")
+        mc.prepare(keyed_path, d / "visible_mask.png", d / "completion_mask.png", d / "request")
+        (d / "prompt.txt").write_text(
+            "Edit the attached image. Paint ONLY the pure bright green (#00FF00) area. Fill it with "
+            f"{COMPLETE[n]}, continuing the surrounding artwork seamlessly: same linework, colours, "
+            "shading and painting style. Keep every non-green pixel exactly as it is: do not move, "
+            "redraw, recolour or extend anything else, and keep the light grey background grey. "
+            "No green may remain. Output one square image, same framing and size as the input.\n",
+            encoding="utf-8")
+
+
+def run(image, joints_path, out, name="character", inpaint_model=None, completions=None,
+        export=None):
     out = Path(out)
     if out.exists():
         raise ValueError("output exists; choose a new version folder")
     img = Image.open(image).convert("RGBA")
     joints = json.loads(Path(joints_path).read_text(encoding="utf-8"))
     inpaint = Inpainter(inpaint_model) if inpaint_model else None
-    layers, lj, order, report = split(img, joints, inpaint)
+    masks = {} if export else None
+    layers, lj, order, report = split(img, joints, inpaint, completions, masks)
+    if export:
+        export_completions(keyed(img), masks, export)
     if inpaint is not None:
         report["local_inpaint_calls"] = inpaint.calls
         report["inpaint_model"] = str(inpaint_model)
@@ -618,8 +665,10 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--name", default="character")
     ap.add_argument("--inpaint-model", help="TorchScript LaMa model for hidden areas (experimental, check licence)")
+    ap.add_argument("--export-completion", help="folder: write one masked AI-completion request per layer")
+    ap.add_argument("--completions", help="folder of composed completions (completed.png per layer) to use")
     a = ap.parse_args()
-    report = run(a.image, a.joints, a.out, a.name, a.inpaint_model)
+    report = run(a.image, a.joints, a.out, a.name, a.inpaint_model, a.completions, a.export_completion)
     for line in report["warnings"]:
         print("warning:", line)
     for line in report["blockers"]:
