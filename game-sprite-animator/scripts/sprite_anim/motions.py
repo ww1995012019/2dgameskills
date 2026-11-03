@@ -499,7 +499,7 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
         prev="idle", next="idle", speed=520, events=[(0.05 * tm, "dash_burst")])
 
     WALL = dict(root_y=6, root_x=-4, pelvis=-16, spine=-12, head=-6, arm_f_up=108, arm_f_lo=12,
-                arm_n_up=-30, arm_n_lo=40, wep=-98, foot_n_x=16, foot_n_y=8, foot_n_p=40, foot_f_x=9,
+                arm_n_up=-48, arm_n_lo=40, wep=-98, foot_n_x=16, foot_n_y=8, foot_n_p=40, foot_f_x=9,
                 foot_f_y=20, foot_f_p=46, eye=0.8)
     wall_slide = Keyed("wall_slide", keys((0, P(WALL)), (0.5, P(WALL))), loop=True, period=0.5 * tm,
                        add=wobble("arm_n_up", "arm_n_lo", a=1.8), vel=[(0, 0, -150), (0.5 * tm, 0, -150)])

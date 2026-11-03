@@ -197,6 +197,37 @@ def placed(layer, fit, size):
     return (np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8)
 
 
+def registered_head(layer, ref, colour_fit):
+    """Keep a correctly registered head outline when cel shading changes.
+
+    Colour-only fitting can shrink or rotate an already aligned face to match
+    its new shadow tones. Compare the searched fit with the authored placement
+    using the exposed upper head silhouette, excluding the hidden neck cut.
+    A genuinely displaced drawing still uses the better searched placement.
+    """
+    from sprite_anim.integrity import spread
+    def edge(mask):
+        inside = mask.copy()
+        inside[1:] &= mask[:-1]
+        inside[:-1] &= mask[1:]
+        inside[:, 1:] &= mask[:, :-1]
+        inside[:, :-1] &= mask[:, 1:]
+        return mask & ~inside
+    reference_edge = spread(edge(ref[..., 3] > 128), 1)
+    size = ref.shape[1], ref.shape[0]
+    def agreement(fit):
+        mask = placed(layer, fit, size)[..., 3] > 128
+        ys, _ = np.nonzero(mask)
+        if not len(ys):
+            return 0.0
+        outline = edge(mask)
+        outline[round(ys.min() + (ys.max() - ys.min()) * 0.75):] = False
+        return float(reference_edge[outline].mean()) if outline.any() else 0.0
+    authored = dict(s=1., deg=0., dx=0., dy=0., cx=0., cy=0.,
+                    error=score(small(layer, 8), small(ref, 8), (1., 0., 0., 0.), 0., 0.))
+    return authored if agreement(authored) > agreement(colour_fit) else colour_fit
+
+
 def place_leg(layer, ref, side):
     """Anchor separated legs to the two planted shoes, not similarly coloured robes.
 
@@ -349,6 +380,78 @@ def legal_elbow(mask, shoulder, elbow, wrist):
     return candidates[np.argmin(((candidates - elbow) ** 2).sum(axis=1))]
 
 
+def exposed_elbow(art, hand, joints):
+    """An optional elbow landmark where a rolled sleeve reveals the forearm.
+
+    The hand supplies the material palette. A substantial elongated matching
+    region proximal to the wrist supplies its own axis and proximal cap. Metal
+    cuffs and other colours remain excluded. This proposes a landmark only;
+    anatomical limits and painted bone support still have to accept it.
+    """
+    if hand is None:
+        return None
+    from sprite_anim.integrity import components
+    mask = art[..., 3] > 128
+    hand = hand & mask
+    if not hand.any():
+        return None
+    palette = np.median(art[hand, :3], axis=0)
+    matching = np.abs(art[..., :3].astype(float) - palette).mean(2) < 28
+    labels = components(matching & mask & ~hand)
+    areas = np.bincount(labels.ravel())
+    shoulder, wrist = (np.asarray(joints[k]) for k in ('shoulder', 'wrist'))
+    reach = float(np.linalg.norm(wrist - shoulder))
+    for label in sorted(range(1, len(areas)), key=lambda i: areas[i], reverse=True):
+        if areas[label] < max(3, hand.sum() * 0.4):
+            continue
+        ys, xs = np.nonzero(labels == label)
+        points = np.column_stack((xs, ys)).astype(float)
+        if np.linalg.norm(points - wrist, axis=1).min() > reach * 0.25:
+            continue
+        values, vectors = np.linalg.eigh(np.cov(points.T))
+        axis = vectors[:, -1]
+        if axis @ (points.mean(0) - wrist) < 0:
+            axis = -axis
+        t = (points - wrist) @ axis
+        lo, hi = np.quantile(t, (0.05, 0.95))
+        if hi - lo < reach * 0.15 or values[-1] < 1.5 * values[0]:
+            continue
+        cap = points[t >= np.quantile(t, 0.88)].mean(0)
+        elbow = cap + axis * math.sqrt(max(values[0], 0))
+        try:
+            elbow = legal_elbow(mask, shoulder, elbow, wrist)
+            check_limb('exposed arm', mask, (shoulder, elbow, wrist))
+        except Rejected:
+            continue
+        return elbow
+    return None
+
+
+def paired_arm_landmarks(art_near, art_far, hand_near, hand_far, near, far):
+    """Choose between supported shape and exposed-forearm landmarks as a pair.
+
+    A fold in a loose rolled sleeve need not be the anatomical elbow. Prefer
+    the pair whose measured segment proportions agree; never alter lengths,
+    hand positions, shoulder seats, or the existing pair rejection limit.
+    """
+    options = []
+    for art, hand, joints in ((art_near, hand_near, near), (art_far, hand_far, far)):
+        candidates = [(joints, 'medial')]
+        elbow = exposed_elbow(art, hand, joints)
+        if elbow is not None:
+            candidates.append((dict(joints, elbow=elbow), 'exposed_forearm'))
+        options.append(candidates)
+    def lengths(joints):
+        return np.linalg.norm(np.diff([joints[k] for k in ('shoulder', 'elbow', 'wrist')], axis=0), axis=1)
+    best = None
+    for n, method_n in options[0]:
+        for f, method_f in options[1]:
+            score = float(np.sum(np.log(np.maximum(lengths(n), 1e-9) / np.maximum(lengths(f), 1e-9)) ** 2))
+            if best is None or score < best[0]:
+                best = score, n, f, {'near': method_n, 'far': method_f}
+    return best[1:]
+
+
 def check_limb(name, mask, points):
     """Reject unsupported or degenerate inferred joints, independent of image scale."""
     points = np.asarray(points, dtype=float)
@@ -442,11 +545,22 @@ def align_hips(layer, waist, hip):
 
 
 def neck_core(torso):
-    """A narrow cross-section just inside the torso's upper attachment."""
+    """A narrow cross-section just inside the torso's upper attachment.
+
+    On a right-facing profile a raised rear hood can share this row with
+    the bare neck, separated by background. Do not draw a fictitious neck
+    section through both islands and the gap between them. The frontmost
+    substantial run is the neck; ignore runs narrower than the central 60%
+    of the widest run so a stray pixel cannot replace a real cross-section.
+    The central section and its 95% contact gate remain unchanged.
+    """
     ys, _ = np.nonzero(torso)
     height = int(ys.max() - ys.min())
     row = int(ys.min()) + max(1, round(height * 0.02))
     columns = np.flatnonzero(torso[row])
+    runs = np.split(columns, np.flatnonzero(np.diff(columns) > 1) + 1)
+    widest = max(len(run) for run in runs)
+    columns = next(run for run in reversed(runs) if len(run) >= 0.6 * widest)
     lo, hi = np.quantile(columns, (0.2, 0.8))
     return row, np.arange(int(math.ceil(lo)), int(math.floor(hi)) + 1), height
 
@@ -458,6 +572,29 @@ def neck_coverage(head, torso, dx=0, dy=0):
     if y < 0 or y >= head.shape[0] or not len(columns):
         return 0.0
     return float(head[y, x[valid]].sum() / len(columns))
+
+
+def torso_attachment(torso):
+    """Use the actual neck island when a raised hood biases the top centroid."""
+    root, _ = root_and_tip(torso)
+    row, columns, _ = neck_core(torso)
+    occupied = np.flatnonzero(torso[row])
+    if np.any(np.diff(occupied) > 1):
+        return np.array([float(columns.mean()), float(row)])
+    return root
+
+
+def waist_half_width(torso, waist):
+    """Measure the body about its axis without adding a rear pack's width.
+
+    Equipment behind a right-facing body can extend an otherwise connected
+    row far past the back. The forward half of the torso still bounds the
+    hidden body core. This affects hidden completion only, never source art.
+    """
+    columns = np.flatnonzero(torso[int(round(waist[1]))])
+    half = 0.5 * len(columns)
+    front = float(columns[-1] - waist[0]) if len(columns) else half
+    return min(half, front) if front > 0 else half
 
 
 def seat_head(head, torso):
@@ -533,6 +670,19 @@ def registration(name, layer, ref, cache_dir=None):
     return fit
 
 
+def trailing_frame(root, hip, waist, neck, body_rest, chest_rest):
+    """Attach upper-back cloth to the thorax; waist tails follow the pelvis.
+
+    A cape rooted above the waist must rotate with the same body segment as
+    its sewn attachment. A hip-relative offset opens a gap when the spine
+    bends, even though it reconstructs the reference pose exactly.
+    """
+    spine = np.asarray(neck) - np.asarray(waist)
+    if float((np.asarray(root) - waist) @ spine) > 0:
+        return "waist", "chest_rot", waist, chest_rest
+    return "hip", "body_rot", hip, body_rest
+
+
 def bind(ref, layers, fit_cache=None, diagnostics=None):
     """Keep the current partial registration available even when acceptance fails."""
     state = diagnostics if diagnostics is not None else {}
@@ -563,6 +713,8 @@ def _bind(ref, layers, fit_cache, diagnostics):
             fit = dict(s=1.0, deg=0.0, dx=0.0, dy=0.0, cx=0.0, cy=0.0, error=0.0)
         else:
             fit = registration(name, layers[name], ref, fit_cache)
+            if name == "head":
+                fit = registered_head(layers[name], ref, fit)
         # Attachment seating may adjust a fit later; never mutate a search
         # result shared by a caller, a cache, or another layer.
         fit = dict(fit)
@@ -619,6 +771,9 @@ def _bind(ref, layers, fit_cache, diagnostics):
         hand_masks[arm] = hand
     an = read_arm(masks["arm_near"], hand_masks.get("arm_near"))
     af = read_arm(masks["arm_far"], hand_masks.get("arm_far"))
+    an, af, methods = paired_arm_landmarks(out["arm_near"], out["arm_far"],
+        hand_masks.get("arm_near"), hand_masks.get("arm_far"), an, af)
+    diagnostics["arm_landmarks"] = methods
     diagnostics["joint_chains"] = {
         name: [[float(v) for v in joints[k]] for k in keys]
         for name, joints, keys in (("arm_near", an, ("shoulder", "elbow", "wrist")),
@@ -640,7 +795,7 @@ def _bind(ref, layers, fit_cache, diagnostics):
     far_px = np.hypot(*(lf["knee"] - lf["hip"])) + np.hypot(*(lf["ankle"] - lf["knee"]))
     ppu = (near_px + far_px) / 2 / LEG_LEN
 
-    troot, _ = root_and_tip(masks["torso"])
+    troot = torso_attachment(masks["torso"])
     hip = (ln["hip"] + lf["hip"]) / 2 + np.array([0.0, 0.5 * np.hypot(*(ln["hip"] - lf["hip"]))])
     neck = troot
     waist = neck + (hip - neck) * 0.62
@@ -649,7 +804,7 @@ def _bind(ref, layers, fit_cache, diagnostics):
     head_base = neck + np.array([0.0, -0.02 * np.hypot(*(hip - neck))])
 
     # The robe around the hips can split and swing clear, so what's behind it has to be solid.
-    waist_half = 0.5 * float(masks["torso"][int(round(waist[1]))].sum())
+    waist_half = waist_half_width(masks["torso"], waist)
     core_px = CORE_SHARE * waist_half
     out["hips"] = trimmed(out["hips"], waist, hip, HIPS_WIDTH * waist_half)
     masks["hips"] = out["hips"][..., 3] > 128
@@ -784,7 +939,9 @@ def _bind(ref, layers, fit_cache, diagnostics):
     if "hair_back" in out:
         chain("hair_back", "head_base", "head_rot", head_ref, 0.0, 6, gravity=260, drag=7.0, stiff=0.09, flutter=160, ground=False, max_bend=CLOTH_BEND, max_curl=CLOTH_CURL)
     if "cloth_back" in out:
-        chain("cloth_back", "hip", "body_rot", hip, body_rest, 7, gravity=320, drag=6.0, stiff=0.05, flutter=520, ground=True, max_bend=CLOTH_BEND, max_curl=CLOTH_CURL)
+        root, _ = root_and_tip(masks["cloth_back"])
+        joint, frame, base, rest_rot = trailing_frame(root, hip, waist, neck, body_rest, chest_rest)
+        chain("cloth_back", joint, frame, base, rest_rot, 7, gravity=320, drag=6.0, stiff=0.05, flutter=520, ground=True, max_bend=CLOTH_BEND, max_curl=CLOTH_CURL)
 
     # Depth is part of the side-view contract. Matching a sleeve's colour in
     # the reference cannot promote the far arm in front of the torso, especially
