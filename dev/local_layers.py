@@ -55,6 +55,9 @@ WIDTH_PAD = 1.15      # measured half-width times this: the capsule just covers 
 CORE_SHARE = 0.7      # of a bone's measured radius: inside this a layer drawn in front owns the pixel
 FILL_WARN = 0.15      # of a layer's capsule area: more local fill than this is reported for review
 INK_UNITS = 0.6       # rig units: a fill takes colour from this far inside the layer, past its outline
+INK_ABS = 60          # 0-255 brightness: darker is outline ink wherever it is
+INK_LOCAL = 0.6       # of the neighbourhood's median brightness: darker is a drawn line
+REGION_MAJORITY = 0.6 # share of a painted region one layer must hold to take all of it
 FILL_COLOURS = 4      # main colours of a layer a hidden fill is painted with
 INK_DARK = 0.5        # of the layer's median brightness: darker pixels are outline ink, not fill colour
 
@@ -127,6 +130,17 @@ def hull(mask):
     im = Image.new("1", (mask.shape[1], mask.shape[0]))
     ImageDraw.Draw(im).polygon(poly, fill=1, outline=1)
     return np.asarray(im, dtype=bool)
+
+
+def ink_regions(rgba, fg):
+    """Label the areas of the figure that outline ink encloses: (labels, count). Ink is a pixel far
+    darker than its neighbourhood or plain dark; it belongs to no region."""
+    from scipy import ndimage as ndi
+    luma = rgba[..., :3].astype(np.float32) @ np.array([0.299, 0.587, 0.114], np.float32)
+    local = ndi.median_filter(np.where(fg, luma, 255), size=9)
+    ink = fg & ((luma < INK_ABS) | (luma < INK_LOCAL * local))
+    labels, count = ndi.label(fg & ~ink)
+    return labels, count
 
 
 def measured_radii(fg, J, ppu):
@@ -222,6 +236,36 @@ def split(img, joints):
     up_axis = up_axis / (np.hypot(*up_axis) or 1)
     above = (xx - J["neck"][0]) * up_axis[0] + (yy - J["neck"][1]) * up_axis[1] > 0
     layer_of[above & (layer_of == rank["torso"])] = rank["head"]
+    # Painted regions stay whole: an area enclosed by outline ink (a hem panel, a sleeve, a trouser
+    # leg) goes entirely to the layer holding most of it, instead of being sliced by capsules into
+    # flaps that swing loose with the wrong part.
+    regions, count = ink_regions(rgba, fg)
+    if count:
+        valid = (regions > 0) & (layer_of >= 0)
+        votes = np.bincount(regions[valid] * len(names) + layer_of[valid],
+                            minlength=(count + 1) * len(names)).reshape(count + 1, len(names))
+        total = votes.sum(1)
+        winner = votes.argmax(1)
+        sure = (total > 0) & (votes.max(1) >= REGION_MAJORITY * np.maximum(total, 1))
+        sure[0] = False
+        pick = sure[regions] & (regions > 0)
+        report_regions = int(sure.sum())
+        layer_of[pick] = winner[regions[pick]]
+        # A painted region lying mostly below the hip joint is a leg's (trouser tops under a hem),
+        # not the trunk's: left on the trunk it hangs below the hem when the legs swing.
+        down = np.subtract(J["hip"], J["waist"])
+        below = ((xx - J["waist"][0]) * down[0] + (yy - J["waist"][1]) * down[1]) / float(down @ down) > 1.0
+        trunk = (layer_of == rank["torso"]) & (regions > 0)
+        low = np.bincount(regions[trunk & below], minlength=count + 1)
+        all_ = np.bincount(regions[trunk], minlength=count + 1)
+        leggy = (all_ > 0) & (low > 0.5 * all_)
+        leggy[0] = False
+        move = trunk & leggy[regions]
+        if move.any():
+            near = cp.seg_dist(xx, yy, J["hip_n"], J["kn_n"])
+            far = cp.seg_dist(xx, yy, J["hip_f"], J["kn_f"])
+            layer_of[move & (near <= far)] = rank["leg_near"]
+            layer_of[move & (near > far)] = rank["leg_far"]
     # A layer drawn in front owns the core of its own bones. cut_parts' colour tie-break can hand a
     # sleeve's middle to a same-coloured part behind it, which would punch a hole in the limb.
     for n in names:
@@ -244,6 +288,11 @@ def split(img, joints):
         if n == "hips":
             # Hidden core under the legs: a copy of the visible trunk over the pelvis, with what the
             # legs cover filled in. Never shown at rest; it keeps the body closed when legs swing.
+            # Only between the waist and the hip joint: below it the legs part, and anything the core
+            # carried there (a hem slit, trouser tops) would show between them.
+            down = np.subtract(J["hip"], J["waist"])
+            along = ((xx - J["waist"][0]) * down[0] + (yy - J["waist"][1]) * down[1]) / float(down @ down)
+            area &= along <= 1.0
             own = area & (layer_of == rank["torso"])
         if n == "head":
             # The head keeps its own neck down past the collar, so it stays seated under the torso.
