@@ -24,6 +24,15 @@ JOINTS = {'head': ('head_base',), 'hips': ('hip', 'waist'),
           'arm_far': ('shoulder', 'elbow', 'wrist'),
           'leg_near': ('hip', 'knee', 'ankle'), 'leg_far': ('hip', 'knee', 'ankle'),
           'weapon': ('grip',)}
+GRIP_SHARE = 0.02   # of the near arm's length: grip-to-art tolerance, as check_limb's bone support
+GRIP_MIN_PX = 2.0   # never tighter than the former fixed tolerance
+
+
+def grip_tolerance(arm):
+    """Pixels a measured grip may sit from the hand/weapon art: a share of the near arm's length."""
+    length = sum(float(np.linalg.norm(np.subtract(arm[b], arm[a])))
+                 for a, b in (('shoulder', 'elbow'), ('elbow', 'wrist')))
+    return max(GRIP_MIN_PX, GRIP_SHARE * length)
 
 
 def digest(path):
@@ -47,9 +56,13 @@ def bind(manifest, destination):
     images = {}
     for name, path in paths.items():
         with Image.open(path) as im:
-            if im.mode != 'RGBA':
-                raise ValueError(f'{name}: supply an RGBA layer with transparent background')
-            images[name] = im.copy()
+            if im.mode == 'RGBA':
+                images[name] = im.copy()
+            elif im.mode in ('LA', 'PA') or (im.mode == 'P' and 'transparency' in im.info):
+                # Alpha-carrying palette/grey PNGs convert to RGBA without changing any pixel.
+                images[name] = im.convert('RGBA')
+            else:
+                raise ValueError(f'{name}: supply a layer with an alpha channel and transparent background')
         alpha = np.asarray(images[name])[..., 3]
         if not (alpha > 128).any():
             raise ValueError(f'{name}: empty layer')
@@ -95,9 +108,10 @@ def bind(manifest, destination):
             raise ValueError('spine joints must be distinct')
     if 'weapon' in images:
         grip = np.asarray(job['joints']['weapon']['grip'], dtype=float)
+        tolerance = grip_tolerance(job['joints']['arm_near'])
         for name in ('arm_near', 'weapon'):
             ys, xs = np.nonzero(np.asarray(images[name])[..., 3] > 128)
-            if np.min((xs-grip[0])**2 + (ys-grip[1])**2) > 4:
+            if np.min((xs-grip[0])**2 + (ys-grip[1])**2) > tolerance ** 2:
                 raise ValueError(f'{name}: measured grip misses the artwork; correct the joint/contact')
     spec, metrics = build_spec(images, job['joints'], order)
     arrays = {n: np.asarray(images[n]) for n in order}

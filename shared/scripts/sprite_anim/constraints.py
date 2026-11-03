@@ -206,10 +206,16 @@ def frame_metrics(sk, body, span=None):
     m = {"excess": round(max(sk.get("excess", [0.0])), 2)}
     bones = []
     for s in "nf":
-        bones.append(abs(math.dist(sk["hip_" + s], sk["kn_" + s]) - body.thigh))
-        bones.append(abs(math.dist(sk["kn_" + s], sk["an_" + s]) - body.shin))
-        bones.append(abs(math.dist(sk["sh_" + s], sk["el_" + s]) - body.up_arm))
-        bones.append(abs(math.dist(sk["el_" + s], sk["wr_" + s]) - body.lo_arm))
+        # Measured far limbs may carry their own lengths (sprite Body.thigh_f etc.).
+        far = s == "f"
+        thigh = (far and getattr(body, "thigh_f", None)) or body.thigh
+        shin = (far and getattr(body, "shin_f", None)) or body.shin
+        up_arm = (far and getattr(body, "up_arm_f", None)) or body.up_arm
+        lo_arm = (far and getattr(body, "lo_arm_f", None)) or body.lo_arm
+        bones.append(abs(math.dist(sk["hip_" + s], sk["kn_" + s]) - thigh))
+        bones.append(abs(math.dist(sk["kn_" + s], sk["an_" + s]) - shin))
+        bones.append(abs(math.dist(sk["sh_" + s], sk["el_" + s]) - up_arm))
+        bones.append(abs(math.dist(sk["el_" + s], sk["wr_" + s]) - lo_arm))
     m["bone_err"] = round(max(bones), 3)
 
     knees = [_flex(sk["hip_" + s], sk["kn_" + s], sk["an_" + s]) for s in "nf"]

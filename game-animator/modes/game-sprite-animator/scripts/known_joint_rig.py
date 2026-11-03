@@ -6,6 +6,8 @@ from sprite_anim.rig import Body
 from sprite_anim.motions import build_clips
 from sprite_anim.puppet_check import core_mask, HOLE_SHARE
 
+FOLDED_SHARE = 0.05   # of the arm's length: closer shoulder-wrist spacing cannot define a mirror line
+
 def canonical_arm(points):
     """Keep source endpoints/lengths but choose a legal forward elbow for motion.
 
@@ -17,9 +19,24 @@ def canonical_arm(points):
     delta=(lo-up+180)%360-180
     changed=delta<0
     if changed:
-        line=wr-root;projection=root+line*((el-root)@line)/(line@line)
+        line=wr-root;reach=np.linalg.norm(el-root)+np.linalg.norm(wr-el)
+        # A wrist on the shoulder leaves no line to mirror the elbow across.
+        if np.linalg.norm(line)<FOLDED_SHARE*reach:
+            raise ValueError('arm: shoulder and wrist nearly coincide with a backward elbow; supply a less folded rest arm')
+        projection=root+line*((el-root)@line)/(line@line)
         el=2*projection-el;up=lp.angle_down(root,el);lo=lp.angle_down(el,wr)
     return up,(lo-up+180)%360-180,changed
+
+
+def head_length(mask, neck):
+    """Head length from its neck seat along the head's own axis (neck to the art's centroid).
+
+    A tilted head measures as it would upright; for an upright head this is the height of its top.
+    """
+    ys, xs = np.nonzero(mask)
+    axis = np.array([xs.mean(), ys.mean()]) - neck
+    axis /= max(float(np.linalg.norm(axis)), 1e-9)
+    return float(((np.column_stack([xs, ys]) - neck) @ axis).max())
 
 
 def build_spec(images,joints,order):
@@ -36,19 +53,24 @@ def build_spec(images,joints,order):
     pelvic=(waist-hip)/np.linalg.norm(waist-hip);pforward=np.array([-pelvic[1],pelvic[0]])
     def seat(p):
         v=(p-hip)/ppu;return [float(np.clip(v@pforward,-lp.HIP_SPREAD,lp.HIP_SPREAD)),float(v@pelvic)]
-    near=j['leg_near'];far=j['leg_far'];legs=sum(lengths['leg_near'])/ppu
+    near=j['leg_near'];far=j['leg_far'];legs=sum(lengths['leg_near'])/ppu;legs_f=sum(lengths['leg_far'])/ppu
     seat_up=(seat(near['hip'])[1]+seat(far['hip'])[1])/2
+    # Each leg keeps its measured length. The far hip seat moves by the length difference
+    # times the standing reach, so both legs stand equally extended: no limp, both feet down.
+    seat_up_f=seat_up+(legs_f-legs)*lp.REACH_MID
     mid=lp.REACH_MID*legs;low=math.sqrt((lp.REACH_END*legs)**2-(lp.CONTACT_AHEAD*lp.STRIDE*legs)**2)
     soles={s:lp.read_leg(masks[s]) for s in ('leg_near','leg_far')}
     ankle_h=float(np.mean([soles[s]['heel'][1]-j[s]['ankle'][1] for s in soles])/ppu)
-    head_top=int(np.nonzero(masks['head'])[0].min())
+    head_len=head_length(masks['head'],neck)
     body=dict(thigh=float(lengths['leg_near'][0]/ppu),shin=float(lengths['leg_near'][1]/ppu),
       up_arm=float(lengths['arm_near'][0]/ppu),lo_arm=float(lengths['arm_near'][1]/ppu),
       ankle_h=ankle_h,hip_h=ankle_h+lp.GAIT_DROP+(mid+low)/2-seat_up,
       pelvis_len=float(np.linalg.norm(waist-hip)/ppu),chest_len=float(along(neck)[1]),neck_len=0.,
-      head_size=float((neck[1]-head_top)/ppu/30),leg_soft=lp.IK_SOFT,foot_wrap=True,
+      head_size=float(head_len/ppu/30),leg_soft=lp.IK_SOFT,foot_wrap=True,
       sh_n_at=along(j['arm_near']['shoulder']),sh_f_at=along(j['arm_far']['shoulder']),
-      hip_n_at=[seat(near['hip'])[0],seat_up],hip_f_at=[seat(far['hip'])[0],seat_up])
+      hip_n_at=[seat(near['hip'])[0],seat_up],hip_f_at=[seat(far['hip'])[0],seat_up_f],
+      thigh_f=float(lengths['leg_far'][0]/ppu),shin_f=float(lengths['leg_far'][1]/ppu),
+      up_arm_f=float(lengths['arm_far'][0]/ppu),lo_arm_f=float(lengths['arm_far'][1]/ppu))
     for side,word in (('n','near'),('f','far')):
         slot='leg_'+word
         for target,source in (('heel','heel'),('ball','toe')):
