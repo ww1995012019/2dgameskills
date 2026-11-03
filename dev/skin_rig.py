@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Whole-picture skinned rig (prototype): one mesh over the reference, bones move it, no hidden art.
 
-    python dev/skin_rig.py --image reference.png --joints joints.json --base rig/ --out skin-rig/
+    python dev/skin_rig.py --image reference.png --joints joints.json --out skin-rig/
     python dev/skin_runtime.py --character skin-rig/character.json --clips idle,walk --preset hd512 --no-fx --out build/
 
 The layered puppet needs every part complete, so art one part hides behind another must be invented.
@@ -9,13 +9,12 @@ Here the reference is one sheet: each mesh vertex follows the bone of the body p
 (ownership from local_layers), blended across joints; where parts part, the sheet stretches instead
 of revealing invented art. Cells draw back to front by part, so a near limb stays in front.
 
-`--base` supplies the body proportions, gait and rest angles of a known-joint binding of the same
-picture and joints. Experimental, dev only: not packaged, not user-approved.
+Body proportions, gait and rest angles come from the joints and the whole figure (measure()).
+Experimental, dev only: not packaged, not user-approved.
 """
 import argparse
 import json
 import math
-import shutil
 import sys
 from pathlib import Path
 
@@ -106,13 +105,73 @@ def chain_weights(p, J, part):
     return w
 
 
-def build(image, joints_path, base, out):
-    out, base = Path(out), Path(base)
+def measure(rgba, J, layer_of, names, has_weapon):
+    """Body proportions, gait and rest angles from the joints and the whole figure.
+
+    A skinned sheet needs no part to be complete, so the layered binder's measurements run on masks
+    that are the figure itself: every bone lies on art. Only the feet need their own leg: each leg
+    takes the figure below the hips nearer its own bones. The sword keeps its own pixels.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "game-sprite-animator/scripts"))
+    import known_joint_rig as kr
+    fig = rgba[..., 3] > 128
+    h, w = fig.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    pts = np.column_stack([xx.ravel(), yy.ravel()]).astype(float)
+
+    def chain_dist(keys):
+        best = np.full(len(pts), np.inf)
+        for a, b in zip(keys[:-1], keys[1:]):
+            best = np.minimum(best, seg_param(pts, J[a], J[b])[1])
+        return best.reshape(h, w)
+    near = chain_dist(["hip_n", "kn_n", "an_n", "toe_n"])
+    far = chain_dist(["hip_f", "kn_f", "an_f", "toe_f"])
+    below = yy > J["hip"][1]
+    masks = {n: fig for n in ("torso", "hips", "arm_near", "arm_far")}
+    # The head's own pixels: its size is read along its own axis, and the whole figure would run
+    # that axis down to the feet.
+    head = layer_of == names.index("head")
+    masks["head"] = head if head.any() else fig & (yy < J["head_base"][1])
+    masks["leg_near"] = fig & below & (near <= far)
+    masks["leg_far"] = fig & below & (far < near)
+    order = ["arm_far", "hips", "leg_far", "leg_near", "head", "torso", "arm_near"]
+    if has_weapon:
+        masks["weapon"] = layer_of == names.index("weapon")
+        order.insert(6, "weapon")
+    images = {}
+    for n, m in masks.items():
+        a = np.zeros((h, w, 4), np.uint8)
+        a[m] = (128, 128, 128, 255)
+        images[n] = Image.fromarray(a, "RGBA")
+    joints = {
+        "head": {"head_base": J["head_base"]}, "hips": {"hip": J["hip"], "waist": J["waist"]},
+        "arm_near": {"shoulder": J["sh_n"], "elbow": J["el_n"], "wrist": J["wr_n"]},
+        "arm_far": {"shoulder": J["sh_f"], "elbow": J["el_f"], "wrist": J["wr_f"]},
+        "leg_near": {"hip": J["hip_n"], "knee": J["kn_n"], "ankle": J["an_n"]},
+        "leg_far": {"hip": J["hip_f"], "knee": J["kn_f"], "ankle": J["an_f"]}}
+    if has_weapon:
+        joints["weapon"] = {"grip": J["weapon_grip"]}
+    spec, _ = kr.build_spec(images, {n: {k: list(map(float, v)) for k, v in r.items()} for n, r in joints.items()}, order)
+    return spec
+
+
+def build(image, joints_path, out, name="character"):
+    out = Path(out)
     if out.exists():
         raise ValueError("output exists; choose a new version folder")
     joints = json.loads(Path(joints_path).read_text(encoding="utf-8"))
     own = {}
-    ll.split(Image.open(image).convert("RGBA"), joints, ownership_out=own)
+    picture = Image.open(image).convert("RGBA")
+    report = ll.split(picture, joints, ownership_out=own)[3]
+    depth = list(DEPTH)
+    if report["layers"].get("arm_far", {}).get("visible", 1.0) < ll.MIN_VISIBLE:
+        # Behind the trunk the far arm would barely show, yet art lies along its bones: a three-quarter
+        # view draws it in front of the chest. Cut and draw it in front of the trunk.
+        joints = dict(joints, _front=sorted(set(joints.get("_front", [])) | {"arm_f_up", "arm_f_lo", "hand_f"}))
+        own = {}
+        ll.split(picture, joints, ownership_out=own)
+        depth.remove("arm_far")
+        depth.insert(depth.index("torso") + 1, "arm_far")
     rgba, layer_of, names, J = own["rgba"], own["layer_of"], own["names"], dict(own["J"])
     alpha = rgba[..., 3] > 0
     ys, xs = np.nonzero(alpha)
@@ -151,7 +210,7 @@ def build(image, joints_path, base, out):
         field = avg
     weights = (field / np.maximum(field.sum(-1, keepdims=True), 1e-9)).reshape(weights.shape)
     # Cells with art, drawn back to front by the part most of their pixels belong to.
-    cells, depth = [], []
+    cells, rank = [], []
     for j in range(len(gy) - 1):
         for i in range(len(gx) - 1):
             sy, sx = slice(int(gy[j]), min(int(gy[j + 1]) + 1, h)), slice(int(gx[i]), min(int(gx[i + 1]) + 1, w))
@@ -161,21 +220,24 @@ def build(image, joints_path, base, out):
                 lab = lab[lab >= 0]
                 part = names[np.bincount(lab).argmax()] if len(lab) else "torso"
                 cells.append((j, i))
-                depth.append(DEPTH.index(part))
-    order = np.argsort(np.array(depth), kind="stable")
+                rank.append(depth.index(part))
+    order = np.argsort(np.array(rank), kind="stable")
     cells = np.array(cells)[order]
-    shutil.copytree(base, out)
+    has_weapon = "weapon" in names and (layer_of == names.index("weapon")).any()
+    spec = measure(rgba, J, layer_of, names, has_weapon)
+    out.mkdir(parents=True)
     Image.fromarray(crop, "RGBA").save(out / "body.png")
+    Image.fromarray(rgba, "RGBA").save(out / "source.png")     # the picture QA compares details with
     rest = {}
     for name, (kind, data) in BONES.items():
         if kind == "seg":
             rest[name] = [list(map(float, J[data[0]])), list(map(float, J[data[1]]))]
         else:
-            pivot = J[data[0]] if data[0] != "weapon_grip" else J["weapon_grip"]
+            pivot = J.get(data[0], J["wr_n"])     # an unarmed rig's weapon bone moves no vertex
             rest[name] = [list(map(float, pivot))]
     np.savez_compressed(out / "skin.npz", cells=cells, weights=weights.reshape(vx.shape + (len(NAMES),)),
                         gx=gx, gy=gy)
-    spec = json.loads((out / "character.json").read_text(encoding="utf-8"))
+    spec.update(name=name, weapon="sword" if has_weapon else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
     spec["puppet"]["layers"] = {"body": {"kind": "skin", "image": "body.png", "offset": [x0, y0],
                                          "skin": "skin.npz", "bones": NAMES, "rest": rest,
                                          "bone_defs": {n: [k, list(d)] for n, (k, d) in BONES.items()}}}
@@ -188,10 +250,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--image", required=True)
     ap.add_argument("--joints", required=True)
-    ap.add_argument("--base", required=True, help="a known-joint binding of the same picture (proportions, gait)")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--name", default="character")
     a = ap.parse_args()
-    print("[skin]", build(a.image, a.joints, a.base, a.out), "image generation calls: 0")
+    print("[skin]", build(a.image, a.joints, a.out, a.name), "image generation calls: 0")
 
 
 if __name__ == "__main__":

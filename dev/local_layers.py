@@ -50,6 +50,7 @@ GROUPS = {
 FAR_LIMBS = ("arm_far", "leg_far")
 MIN_VISIBLE = 0.5     # of a far limb's capsule over the art that must be its own visible pixels
 NECK_REACH = 0.35     # of head_base->neck, past the neck joint: the head keeps its neck under the collar
+BG_MARGIN = 6         # 0-255 past the backdrop's own noise that still counts as backdrop
 SOLID_ALPHA = 200     # 0-255: art at least this opaque anchors the pixels joined to it
 LIMB_BONES = ("arm_f_up", "arm_f_lo", "leg_f_up", "leg_f_lo", "leg_n_up", "leg_n_lo", "arm_n_up", "arm_n_lo")
 WIDTH_PERCENTILE = 80  # of the half-widths measured along a bone
@@ -108,7 +109,23 @@ def keyed(img):
         out = np.dstack([np.clip(fg, 0, 255), alpha * 255]).astype(np.uint8)
         out[alpha < 0.02] = 0
         return attached(out)
-    return attached(cp.foreground(img))
+    return attached(flat_background(a))
+
+
+def flat_background(a):
+    """Remove a flat backdrop of any colour: pixels joined to the border within the backdrop's own
+    noise. A fixed tolerance eats pale skin or white cloth next to a light grey backdrop."""
+    from scipy import ndimage as ndi
+    rgb = a[..., :3].astype(np.int16)
+    border = np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]])
+    bg = np.median(border, axis=0)
+    noise = float(np.percentile(np.abs(border - bg).max(axis=1), 99))
+    near = np.abs(rgb - bg).max(axis=2) <= noise + BG_MARGIN
+    labels, _ = ndi.label(near)
+    edge = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
+    out = a.copy()
+    out[np.isin(labels, edge[edge > 0])] = 0
+    return out
 
 
 def attached(rgba):
