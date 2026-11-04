@@ -380,8 +380,30 @@ def legal_elbow(mask, shoulder, elbow, wrist):
     return candidates[np.argmin(((candidates - elbow) ** 2).sum(axis=1))]
 
 
-def exposed_elbow(art, hand, joints):
-    """An optional elbow landmark where a rolled sleeve reveals the forearm.
+def hand_material_palettes(art, hand):
+    """Keep distinct hand materials instead of averaging a glove into skin.
+
+    The original median remains first for plain hands. Quantized colour groups
+    also retain minority fingertips and their shading; tiny colour specks do
+    not propose a material. No skin colour or character coordinates are assumed.
+    """
+    colours = art[hand, :3].astype(float)
+    if not len(colours):
+        return []
+    palettes = [np.median(colours, axis=0)]
+    bins = (colours // 32).astype(int)
+    groups, counts = np.unique(bins, axis=0, return_counts=True)
+    for group, count in zip(groups, counts):
+        if count < max(3, len(colours) * 0.01):
+            continue
+        palette = np.median(colours[(bins == group).all(axis=1)], axis=0)
+        if not any(np.array_equal(palette, old) for old in palettes):
+            palettes.append(palette)
+    return palettes
+
+
+def exposed_elbows(art, hand, joints):
+    """Optional elbow landmarks where a rolled sleeve reveals the forearm.
 
     The hand supplies the material palette. A substantial elongated matching
     region proximal to the wrist supplies its own axis and proximal cap. Metal
@@ -389,42 +411,58 @@ def exposed_elbow(art, hand, joints):
     anatomical limits and painted bone support still have to accept it.
     """
     if hand is None:
-        return None
+        return []
     from sprite_anim.integrity import components
     mask = art[..., 3] > 128
     hand = hand & mask
     if not hand.any():
-        return None
-    palette = np.median(art[hand, :3], axis=0)
-    matching = np.abs(art[..., :3].astype(float) - palette).mean(2) < 28
-    labels = components(matching & mask & ~hand)
-    areas = np.bincount(labels.ravel())
+        return []
     shoulder, wrist = (np.asarray(joints[k]) for k in ('shoulder', 'wrist'))
     reach = float(np.linalg.norm(wrist - shoulder))
-    for label in sorted(range(1, len(areas)), key=lambda i: areas[i], reverse=True):
-        if areas[label] < max(3, hand.sum() * 0.4):
+    candidates = []
+    for palette in hand_material_palettes(art, hand):
+        matching = np.abs(art[..., :3].astype(float) - palette).mean(2) < 28
+        # Compare like material with like material. A large glove is not a
+        # lower bound on how much exposed forearm the fingertips can identify.
+        material_area = int((matching & hand).sum())
+        if material_area < 3:
+            # The median of two materials can be a third colour absent from
+            # the hand. It cannot establish a matching forearm material.
             continue
-        ys, xs = np.nonzero(labels == label)
-        points = np.column_stack((xs, ys)).astype(float)
-        if np.linalg.norm(points - wrist, axis=1).min() > reach * 0.25:
-            continue
-        values, vectors = np.linalg.eigh(np.cov(points.T))
-        axis = vectors[:, -1]
-        if axis @ (points.mean(0) - wrist) < 0:
-            axis = -axis
-        t = (points - wrist) @ axis
-        lo, hi = np.quantile(t, (0.05, 0.95))
-        if hi - lo < reach * 0.15 or values[-1] < 1.5 * values[0]:
-            continue
-        cap = points[t >= np.quantile(t, 0.88)].mean(0)
-        elbow = cap + axis * math.sqrt(max(values[0], 0))
-        try:
-            elbow = legal_elbow(mask, shoulder, elbow, wrist)
-            check_limb('exposed arm', mask, (shoulder, elbow, wrist))
-        except Rejected:
-            continue
-        return elbow
-    return None
+        labels = components(matching & mask & ~hand)
+        areas = np.bincount(labels.ravel())
+        for label in sorted(range(1, len(areas)), key=lambda i: areas[i], reverse=True):
+            if areas[label] < max(3, material_area * 0.4):
+                continue
+            ys, xs = np.nonzero(labels == label)
+            points = np.column_stack((xs, ys)).astype(float)
+            if np.linalg.norm(points - wrist, axis=1).min() > reach * 0.25:
+                continue
+            values, vectors = np.linalg.eigh(np.cov(points.T))
+            axis = vectors[:, -1]
+            if axis @ (points.mean(0) - wrist) < 0:
+                axis = -axis
+            t = (points - wrist) @ axis
+            lo, hi = np.quantile(t, (0.05, 0.95))
+            if hi - lo < reach * 0.15 or values[-1] < 1.5 * values[0]:
+                continue
+            cap = points[t >= np.quantile(t, 0.88)].mean(0)
+            elbow = cap + axis * math.sqrt(max(values[0], 0))
+            try:
+                elbow = legal_elbow(mask, shoulder, elbow, wrist)
+                check_limb('exposed arm', mask, (shoulder, elbow, wrist))
+            except Rejected:
+                continue
+            if not any(np.linalg.norm(elbow - old) < 1e-6 for old in candidates):
+                candidates.append(elbow)
+            break
+    return candidates
+
+
+def exposed_elbow(art, hand, joints):
+    """First supported material landmark for callers needing a single result."""
+    candidates = exposed_elbows(art, hand, joints)
+    return candidates[0] if candidates else None
 
 
 def paired_arm_landmarks(art_near, art_far, hand_near, hand_far, near, far):
@@ -437,8 +475,7 @@ def paired_arm_landmarks(art_near, art_far, hand_near, hand_far, near, far):
     options = []
     for art, hand, joints in ((art_near, hand_near, near), (art_far, hand_far, far)):
         candidates = [(joints, 'medial')]
-        elbow = exposed_elbow(art, hand, joints)
-        if elbow is not None:
+        for elbow in exposed_elbows(art, hand, joints):
             candidates.append((dict(joints, elbow=elbow), 'exposed_forearm'))
         options.append(candidates)
     def lengths(joints):

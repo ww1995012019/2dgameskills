@@ -24,6 +24,28 @@ sprites from anywhere: `python scripts/qa_motion.py path/to/frames --loop`.
 
 Attacks allow a higher `spike`: a strike is supposed to accelerate hard, and the smear carries it.
 
+## Exported playback clock
+
+Rendered samples retain their authored poses, but rounding the frame count changes
+the time between those poses at the requested FPS. The exporter therefore retimes
+`speed_px_s` by `source_duration * fps / intervals`, where intervals is the frame
+count for loops and one less for one-shots. `duration` is the actual full playback
+length (`frames / fps`, including the final held frame of a one-shot);
+`source_duration` records the original authored curve duration. Events remain on
+their sampled frames. Use the exported speed rather than rederiving it from the
+source period. PNG output and requested FPS are unchanged by this correction.
+
+QA uses the manifest's `1 / fps` and `speed_px_s`, including when checking an old
+export whose trace stored the authored interval. A clean authored contact is not
+enough to certify world-space playback at another clock.
+
+The `locomotion` report checks that the walking controller shares this clock and
+that both displayed stop frames have two-foot support. Removing a required policy,
+changing its period/speed, or losing a support contact fails and flags the affected
+clip/frame. This checks the controller's endpoints; it does not approve the
+appearance of new art or bridge arbitrary attacks to walking. See
+`walk-transitions.md` for the state machine and its limits.
+
 
 ## Joint continuity checks
 

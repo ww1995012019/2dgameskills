@@ -31,8 +31,11 @@ class SpritePlayer {
     const stepMs = 1000 / this.clip.fps;
     this.acc += dtMs * speed;
     const n = this.clip.frames.length;
-    while (this.acc >= stepMs) {
-      this.acc -= stepMs;
+    // Retimed phase deltas can sum to one ulp below an exact frame boundary.
+    // Keep selection/events on that boundary instead of holding the old frame
+    // for another simulation tick. This tolerance is a fraction of one frame.
+    while (this.acc + stepMs * 1e-10 >= stepMs) {
+      this.acc = Math.max(0, this.acc - stepMs);
       if (this.frame + 1 >= n) {
         if (this.clip.loop) this.frame = 0;
         else { this.done = true; this.acc = 0; break; }
@@ -59,21 +62,24 @@ class SpritePlayer {
 
 if (typeof module !== "undefined") module.exports = { SpritePlayer };
 
-// Opt-in natural-walk clock. Idle is a held double-support walk pose, NOT the
+// Phase-preserving walk clock. Idle is a held double-support walk pose, NOT the
 // authored idle clip. No image crossfade or skeletal interpolation is performed.
 // Pass update().dx to the world's x position; drawing at a fixed x is in-place
 // preview only. Baked poses retain ordinary frame-quantization contact error.
 class GroundedWalkController {
   constructor(doc, images, {name = 'walk', rampSeconds = 0.3} = {}) {
     const clip = doc.clips[name], m = clip && clip.locomotion;
-    if (!clip || !clip.loop || !m || m.profile !== 'natural_walk_v1' ||
+    if (!clip || !clip.loop || !m || !['natural_walk_v1', 'phase_walk_v1'].includes(m.profile) ||
         !Number.isFinite(m.period_s) || m.period_s <= 0 ||
         !Number.isFinite(m.duty) || m.duty <= 0.5 || m.duty >= 1 ||
         !Number.isFinite(m.speed_px_s) || m.speed_px_s <= 0 ||
         !clip.frames.length || !Number.isFinite(rampSeconds) || rampSeconds <= 0)
-      throw new Error('grounded walk requires valid natural_walk_v1 metadata and positive rampSeconds');
+      throw new Error('grounded walk requires supported phase-walk metadata and positive rampSeconds');
     this.period = m.period_s;
-    this.centre = (m.duty - 0.5) * this.period / 2;
+    const holdPhase = m.hold_phase === undefined ? (m.duty - 0.5) / 2 : m.hold_phase;
+    if (!Number.isFinite(holdPhase) || holdPhase < 0 || holdPhase >= m.duty - 0.5)
+      throw new Error('walk hold phase must be inside double support');
+    this.centre = holdPhase * this.period;
     this.speed = m.speed_px_s;
     this.rampSeconds = rampSeconds;
     // The held baked sample must itself show both planted feet. Low-frame-count

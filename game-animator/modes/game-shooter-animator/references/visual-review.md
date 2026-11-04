@@ -99,7 +99,11 @@ visual issue slipped past QA and can be measured, consider adding a check for it
 
 Start from `review/verdict_template.json`, which is pending and cannot pass as generated.
 Write a JSON file covering exactly every sheet. Copy `review_id` from `review/index.json`.
-It hashes the current frames, sheets, animation metadata, rig trace and QA report. Changes invalidate
+It hashes the current frames, sheets, animation metadata, rig trace, QA report and
+delivery atlas images/JSON, including declared custom page filenames. A replaced,
+missing or unreadable atlas invalidates the pass; declared pages cannot point
+outside the export folder. Image recompression alone does not change decoded-pixel
+hashes. Changes invalidate
 the verdict; rebuild sheets and review again. Rebuilding or a rejected recording removes the old
 current `visual_report.json`; archived reviews remain in `review/history/`.
 

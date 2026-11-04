@@ -20,12 +20,12 @@ from sprite_anim.art import Canvas  # noqa: E402
 from sprite_anim.rig_data import JointRecorder  # noqa: E402
 from sprite_anim.constraints import frame_metrics  # noqa: E402
 from sprite_anim.fx import build_fx  # noqa: E402
-from sprite_anim.motions import SEAMS, NaturalWalk, GroundedGaitHold, build_clips  # noqa: E402
+from sprite_anim.motions import SEAMS, Gait, NaturalWalk, GroundedGaitHold, build_clips  # noqa: E402
 from sprite_anim.integrity import HUMANOID_BONES  # noqa: E402
 from sprite_anim.part_check import check_parts  # noqa: E402
 from sprite_anim.occlusion_review import clip_candidates, write_report as write_occlusion_report  # noqa: E402
 from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion, check_attachments  # noqa: E402
-from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_count, frame_time, to_u8  # noqa: E402
+from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_count, frame_time, playback_speed, walk_hold_phase, to_u8  # noqa: E402
 from sprite_anim.rig import Body  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
 
@@ -70,7 +70,7 @@ def rig_trace(clip, n, fps, art, unit_px, size):
                 feet[s][key].append([round(pt[0] * unit_px, 3), round(pt[1] * unit_px, 3)])
             contacts[s].append(bool(c.get(s, False)))
     return dict(joints=tr, skeleton=skeleton, smear=smear, feet=feet, contacts=contacts, metrics=metrics,
-                frame_dt=clip.duration / (n if clip.loop else n - 1))
+                frame_dt=1.0 / fps)
 
 
 def main():
@@ -107,6 +107,15 @@ def main():
     unknown = [c for c in names if c not in clips]
     if unknown:
         sys.exit(f"unknown clips: {unknown}\navailable: {list(clips)}")
+    if fps <= 0 or any(value <= 0 for value in over.values()):
+        sys.exit('FPS must be positive')
+    if 'walk' in names and isinstance(clips['walk'], Gait):
+        walk = clips['walk']
+        count = frame_count(walk, over.get('walk', fps))
+        try:
+            walk_hold_phase(walk, count)
+        except ValueError as error:
+            sys.exit(str(error))
 
     settle_banks = []
     if a.grounded_settle:
@@ -114,7 +123,7 @@ def main():
         if 'walk' not in names or not isinstance(walk, NaturalWalk):
             sys.exit('--grounded-settle requires selected natural_walk_v1 walk')
         count = frame_count(walk, over.get('walk', fps))
-        centre = (walk.duty - .5) * walk.duration / 2
+        centre = walk_hold_phase(walk, count) * walk.duration
         for side in range(2):
             clock_phase = centre + side * walk.duration / 2
             source_frame = int(math.floor(clock_phase / walk.duration * count + 1e-10))
@@ -159,23 +168,33 @@ def main():
         sheets[nm] = export.write_sheet(root, nm, frames, size)
         step = c.duration / n if c.loop else c.duration / (n - 1)
         meta[nm] = dict(
-            fps=cfps, loop=c.loop, duration=round(c.duration, 4),
-            speed_px_s=round(c.speed * unit_px, 2),
+            fps=cfps, loop=c.loop, duration=n / cfps,
+            source_duration=c.duration,
+            speed_px_s=round(playback_speed(c, cfps, n) * unit_px, 2),
             events=[dict(frame=min(n - 1, int(round(t / step))), name=e) for t, e in c.events],
             next=c.next if not c.loop else None, prev=c.prev,
             chain_frame=int(round(c.chain_at / step)) if c.chain_at else None,
             tags=sorted(c.tags))
-        if isinstance(c, NaturalWalk):
-            # Exact sample clock for opt-in grounded stop/resume. The ordinary
-            # fps/duration fields and other engine exports remain unchanged.
-            meta[nm]['locomotion'] = dict(profile='natural_walk_v1',
-                period_s=c.duration, duty=c.duty, speed_px_s=c.speed * unit_px,
+        if isinstance(c, Gait) and nm == 'walk':
+            # Both the legacy and natural walking loop can retain their phase
+            # while braking to a two-foot support frame. Use the baked clock.
+            meta[nm]['locomotion'] = dict(profile='natural_walk_v1' if isinstance(c, NaturalWalk) else 'phase_walk_v1',
+                period_s=n / cfps, duty=c.duty, speed_px_s=playback_speed(c, cfps, n) * unit_px,
+                hold_phase=walk_hold_phase(c, n),
                 idle_mode='held_double_support', contact_sampling='baked_frames')
             if settle_banks:
                 meta[nm]['locomotion']['settle_banks'] = settle_banks
                 meta[nm]['locomotion']['idle_mode'] = 'settled_double_support'
         traces[nm] = rig_trace(c, n, cfps, r.art, unit_px, size)
         print(f"[clip] {nm:<14} {n:>3}f @ {cfps}fps {'loop' if c.loop else 'once'}")
+
+    for bank in settle_banks:
+        # Pose-bank registration follows the same discrete clock as the walk;
+        # source sample times above are retained only for rendering its pixels.
+        walk_fps = meta['walk']['fps']
+        bank['sample_time_s'] = bank['source_frame'] / walk_fps
+        bank['clock_phase_s'] *= meta['walk']['locomotion']['period_s'] / clips['walk'].duration
+        bank['duration_s'] = (len(rendered[bank['clip']]['frames']) - 1) / meta[bank['clip']]['fps']
 
     for nm in names:
         c = clips[nm]
@@ -248,7 +267,8 @@ def main():
                        part_problems=problems, **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
                        head_size=r.art.body.head_size,
-                       unit_px=unit_px, speeds={n: clips[n].speed * unit_px for n in names}), fh)
+                       locomotion_required=[n for n in names if 'locomotion' in meta[n]],
+                       unit_px=unit_px, speeds={n: meta[n]['speed_px_s'] for n in names}), fh)
     if r.art.puppet and spec.get('puppet', {}).get('attachment_checks', False):
         with open(os.path.join(root, 'attachment_scope.json'), 'w', encoding='utf-8') as fh:
             json.dump(dict(method='isolated_layer_alpha',

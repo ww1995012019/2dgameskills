@@ -185,6 +185,16 @@ hint when the inferred wrist is ambiguous. Synthetic fixtures of two body builds
 and scale invariance tests exercise these gates; real-art acceptance still needs
 visual review.
 
+Rolled sleeves can expose a forearm while fingerless gloves dominate the hand
+hint. Forearm landmark proposals preserve distinct colours actually present in
+the hand instead of averaging glove and fingertip colours. Each material's
+forearm area is compared with that same material's hand area. Supported shape
+and material landmarks are compared as a pair; the 1.25 bone ratio, segment
+support and joint-limit gates still apply unchanged. These are colour/geometry
+proposals, not semantic skin or elbow recognition. Inspect the chosen joint
+chains and the resulting bends; fully covered forearms supply no exposed-material
+evidence. Tests cover two materials and scales plus covered-forearm rejection.
+
 A weapon must intersect the near arm inside the inferred hand region (a disc at
 the wrist with radius wrist-to-tip). The existing runtime grip, 14% of the forearm
 past the wrist, must be within 20% of that hand radius of weapon pixels (minimum
@@ -244,6 +254,12 @@ including their real width and any reach below the pivot; skeleton endpoints and
 cloth centrelines alone do not bound a wide robe or hair fan. Mesh relaxation
 averages neighbouring vertices, so the raw mapped bounds conservatively contain
 the relaxed art. Frame size and QA thresholds are not widened to hide cropping.
+
+Tight-cropped layers are filtered before warping. The mip records separate x/y
+texture-coordinate scales after resizing: rounded width and height rarely have
+exactly the same ratio. Sharing only the width ratio can shorten a narrow weapon
+or stretch a wide layer even under rigid motion. Non-square strip regressions
+check the visible extent on both axes, including one-pixel-wide source artwork.
 
 In clips tagged `ground`, puppet cloth chains participate in floor contact even
 when the same chain is free in air clips. The painted width of loose cloth and

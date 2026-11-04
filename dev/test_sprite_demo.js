@@ -42,6 +42,47 @@ const send = (type, code) => listeners[type].forEach((f) => f({ code, repeat: fa
   const advance = (n) => { for (let i = 0; i < n; i++) tick(); };
   const until = (test) => { for (let i = 0; i < 300; i++) { if (test()) return; tick(); } assert.fail('state timeout: ' + P.state); };
   const tap = (code) => { send('keydown', code); tick(); send('keyup', code); };
+  if (process.argv.includes('--locomotion')) {
+    const control = win.__demo.locomotion;
+    assert.ok(control, 'the normal preview must use the exported walk controller');
+    const scale = hero.doc.frame_size < 128 ? Math.max(2, Math.round(180/hero.doc.frame_size)) : 1.15*256/hero.doc.frame_size;
+    const origin = P.x, distance = control.distance;
+    const allowed = new Set(['walk', ...(control.settleBanks || []).map(b => b.clip)]);
+    const check = () => {
+      assert.strictEqual(win.__demo.locomotion, control, 'ordinary movement must retain its phase clock');
+      assert.ok(allowed.has(hero.name), 'start/stop must not reset to the unrelated authored idle');
+      assert.equal(hero.frame, control.player.frame);
+      assert.ok(Math.abs(P.x-origin-(control.distance-distance)*scale) < 1e-7, 'root movement must use phase displacement');
+      if (hero.name === 'walk') {
+        const m = hero.doc.clips.walk.locomotion, n = hero.clip.frames.length;
+        const sample = ((control.phase%m.period_s)+m.period_s)%m.period_s/m.period_s*n;
+        assert.equal(hero.frame, Math.floor(sample+1e-10)%n, 'display must retain walk phase');
+      }
+    };
+    const sampleTicks = n => { for(let i=0;i<n;i++){ tick(); check(); } };
+    sampleTicks(30);
+    for (const offset of [1,7,19,37,59]) {
+      send('keydown','KeyD'); sampleTicks(offset);
+      send('keyup','KeyD');
+      for(let i=0;i<300 && control.state!=='hold';i++){ tick(); check(); }
+      assert.equal(control.state,'hold');
+      const phase = control.phase, x = P.x, frame = hero.frame;
+      sampleTicks(30);
+      assert.equal(control.phase,phase); assert.equal(P.x,x); assert.equal(hero.frame,frame);
+      const m = hero.doc.clips.walk.locomotion;
+      const p = Math.floor(((phase%m.period_s)+m.period_s)%m.period_s/m.period_s*hero.doc.clips.walk.frames.length+1e-10)/hero.doc.clips.walk.frames.length;
+      assert.ok(p<m.duty && (p+.5)%1<m.duty, 'stop must display two-foot support');
+    }
+    if (hero.doc.clips.attack_1) {
+      tap('KeyJ'); assert.equal(P.state,'attack_1'); assert.equal(win.__demo.locomotion,null);
+      until(() => P.state==='idle');
+      assert.ok(win.__demo.locomotion, 'actions must return to a usable locomotion stance');
+      send('keydown','KeyD'); advance(60); send('keyup','KeyD');
+      until(() => win.__demo.locomotion.state==='hold');
+    }
+    console.log('main preview: phase-preserving start/stop and exact displacement OK');
+    return;
+  }
   if (process.argv.includes('--subset')) {
     // Reduced exports are supported by --clips. Missing actions must not crash the loop.
     let drawScale;
