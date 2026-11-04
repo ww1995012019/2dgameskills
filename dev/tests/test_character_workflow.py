@@ -119,7 +119,14 @@ class CharacterWorkflow(unittest.TestCase):
         spec = cw.read_json(self.job/'rig/character.json')
         self.assertEqual(spec['weapon'],'sword')
         self.assertIn('weapon',spec['puppet']['layers'])
-        np.testing.assert_allclose(spec['puppet']['layers']['weapon']['anchor'],grip,atol=0.02)
+        measured = np.asarray(spec['puppet']['layers']['weapon']['anchor'])
+        weapon = keyed(sword)[...,3] > 128
+        self.assertTrue((arm & hint & weapon)[round(measured[1]), round(measured[0])])
+        self.assertTrue(spec['puppet']['layers']['arm_near']['tip_lock'])
+        self.assertIn('weapon_hand_angle',spec['body'])
+        frame = cw.lp.measured_grip_frame(measured, measured+axis*100, joints)
+        for key in ('weapon_grip_along','weapon_grip_across'):
+            self.assertAlmostEqual(spec['body'][key],frame[key],places=5)
 
     def test_installable_packages_include_the_same_default_workflow(self):
         import zipfile

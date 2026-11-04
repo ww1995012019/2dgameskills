@@ -533,6 +533,41 @@ def check_grip(arm, weapon, joints):
     return grip
 
 
+def measured_hand_grip(arm, weapon, joints, hand):
+    """Use registered hand/weapon contact when an inspected hand hint is available.
+
+    The legacy fixed palm offset is not a measurement of a drawn fist. Keep its
+    distal-hand contact constraint, but derive the pivot from actual overlapping
+    pixels. This does not identify a handle semantically: source/layer review must
+    still establish that the character holds the intended grip rather than a blade.
+    """
+    wrist, tip = (np.asarray(joints[k]) for k in ('wrist', 'tip'))
+    radius = max(2., float(np.linalg.norm(tip - wrist)))
+    yy, xx = np.indices(arm.shape)
+    distal = (xx - wrist[0]) ** 2 + (yy - wrist[1]) ** 2 <= radius ** 2
+    contact = arm & weapon & hand & distal
+    ys, xs = np.nonzero(contact)
+    if not len(xs):
+        raise Rejected("weapon: no contact with the registered hand; remake weapon/arm or supply hand_near_hint")
+    points = np.column_stack((xs, ys)).astype(float)
+    # Pick an occupied contact pixel: a centroid can fall in a gap between fingers.
+    centre = points.mean(axis=0)
+    return points[np.argmin(np.sum((points - centre) ** 2, axis=1))]
+
+
+def measured_grip_frame(grip, tip, joints):
+    """The existing runtime palm transform, measured in the source forearm frame."""
+    wrist, elbow = (np.asarray(joints[k]) for k in ('wrist', 'elbow'))
+    forearm = (wrist - elbow) * (1, -1)
+    offset = (grip - wrist) * (1, -1)
+    length_sq = float(forearm @ forearm)
+    if length_sq <= 0 or not np.isfinite(length_sq):
+        raise Rejected("weapon: invalid forearm for the measured grip")
+    return dict(weapon_grip_along=float(offset @ forearm / length_sq),
+                weapon_grip_across=float(offset @ np.array([-forearm[1], forearm[0]]) / length_sq),
+                weapon_hand_angle=angle_down(grip, tip) - angle_down(elbow, wrist))
+
+
 def angle_down(a, b):
     """Degrees from straight down to a->b, forward positive. Picture pixels, y down."""
     return math.degrees(math.atan2(b[0] - a[0], b[1] - a[1]))
@@ -720,6 +755,26 @@ def trailing_frame(root, hip, waist, neck, body_rest, chest_rest):
     return "hip", "body_rot", hip, body_rest
 
 
+def rear_appendage_binding(mask, parent, hip, leg_px):
+    """Carry a whole rear shape with a measured covered pelvic root.
+
+    Source curvature stays rigid; the existing pelvis frame supplies its motion.
+    This does not model a flexible tail or approve the appendage's anatomy.
+    """
+    ys, xs = np.nonzero(mask & parent)
+    if not len(xs):
+        raise Rejected("appendage_back: no overlapping pelvic root; reconstruct the hidden attachment")
+    distances = (xs - hip[0]) ** 2 + (ys - hip[1]) ** 2
+    index = int(np.argmin(distances))
+    distance = float(np.sqrt(distances[index]))
+    if distance > float(leg_px) * .25:
+        raise Rejected("appendage_back: contact is away from the pelvis; reconstruct the pelvic root")
+    layer = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
+    contact = dict(model="rigid_pelvis_follow", root_source_px=[int(xs[index]), int(ys[index])],
+                   root_distance_leg_share=round(distance / leg_px, 5), articulated=False)
+    return layer, contact
+
+
 def bind(ref, layers, fit_cache=None, diagnostics=None):
     """Keep the current partial registration available even when acceptance fails."""
     state = diagnostics if diagnostics is not None else {}
@@ -794,6 +849,10 @@ def _bind(ref, layers, fit_cache, diagnostics):
 
     masks = {n: a[..., 3] > 128 for n, a in out.items()}
     check_neck_contact(masks)
+    # Cloth slots must not repeat the same garment as torso. A rear biological
+    # root is deliberately covered by the torso/hip garment, like an arm root;
+    # alpha overlap there does not establish duplicated artwork. Its measured
+    # pelvic contact and explicit source/motion review are separate gates.
     for name in ("cloth_back", "hair_back", "robe"):
         if name in masks and (masks[name] & masks["torso"]).sum() > MAX_SHARED * masks[name].sum():
             raise Rejected(f"torso: it also holds the art of {name}, so that cloth would be drawn twice; make torso again")
@@ -938,18 +997,29 @@ def _bind(ref, layers, fit_cache, diagnostics):
         tube("robe", ["robe_hem", "hip", "waist"], [robe_hem, hip, waist])
     data["head"] = dict(kind="rigid", follow=["head_base", "head_rot"], anchor=[round(float(v), 2) for v in head_base])
     data["hips"] = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
+    if "appendage_back" in out:
+        data["appendage_back"], contact = rear_appendage_binding(
+            masks["appendage_back"], masks["hips"] | masks["torso"], hip, (near_px + far_px) / 2)
+        diagnostics["rear_appendage"] = contact
 
     weapon_len = None
     weapon_back = 0.0
     wep_rest = None
     fa_n = angle_down(an["elbow"], an["wrist"])
     if "weapon" in out:
-        grip = check_grip(masks["arm_near"], masks["weapon"], an)
+        measured_hand = hand_masks.get("arm_near")
+        grip = (measured_hand_grip(masks["arm_near"], masks["weapon"], an, measured_hand)
+                if measured_hand is not None else check_grip(masks["arm_near"], masks["weapon"], an))
         ys, xs = np.nonzero(masks["weapon"])
         far = np.argmax((xs - grip[0]) ** 2 + (ys - grip[1]) ** 2)
         tip = np.array([float(xs[far]), float(ys[far])])
         weapon_len = float(np.hypot(*(tip - grip)) / ppu)
         wep_rest = angle_down(grip, tip)
+        if measured_hand is not None:
+            frame = measured_grip_frame(grip, tip, an)
+            body.update(frame)
+            data["arm_near"]["tip_lock"] = True
+            diagnostics["weapon_binding"] = dict(method="registered_hand_contact", grip_source_px=grip.tolist(), **frame)
         axis = (tip - grip) / (np.hypot(*(tip - grip)) or 1)
         weapon_back = max(float(-((xs - grip[0]) * axis[0] + (ys - grip[1]) * axis[1]).min()) / ppu, 0.0)
         data["weapon"] = dict(kind="rigid", follow=["wr_n", "wep_a"], anchor=[round(float(v), 2) for v in grip])

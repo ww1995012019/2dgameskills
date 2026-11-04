@@ -28,6 +28,8 @@ Rules:
 # name: (what to keep, what to remove, required). Back to front, as the puppet draws them.
 # An optional layer is left out for a character that has nothing of that kind.
 SLOTS = {
+    "appendage_back": ("ONE complete biological appendage attached behind the pelvis, from its narrow reconstructed hidden root through its complete original curved silhouette to its whole tip. Keep the appendage's own scales, spines, tip armour and painted details. Reconstruct only enough scaled root beneath the rear pelvis for a covered overlap, without retaining the body mass it emerges from. The pelvic body, buttock muscle and hip armour are NOT its root. No outlined cut edge. This is one whole rear appendage, not fabric, and will remain a rigid source shape following the pelvis",
+                       "the head, hair, neck, chest, belt, the entire pelvis and buttocks, all hip and thigh armour belonging to the body, hips garment, both arms and hands, both whole legs and feet, every piece of cloth, every weapon and every other object. Keep no duplicate body mass, thigh-shaped branch or detached fragment", False),
     "hair_back": ("all the long hair that hangs behind the head and back, complete from the scalp down to its tips, plus any hair ribbons hanging behind the head",
                   "the face, the top of the head, every hair ornament, the whole body, all clothing, both arms, both legs and the weapon", False),
     "cloth_back": ("only the loose cloth trailing BEHIND the body: the rear robe tail, rear sash or cape, from its rear attachment seam to its tips. Keep only the REARMOST trailing fabric, behind the rear leg and rear hip, on the LEFT of the body. The central front apron is NOT part of this layer, even where a walking stride makes its lower hem extend left of the hip. Preserve the COMPLETE rear train silhouette, including ALL of its inner lining and underside fabric visible along the leftmost and bottommost rear hems. A pale or white lining sewn to the rear train is rear cloth, not trousers or a front apron: keep it in full with its original folds and colour. Reconstruct the hidden attachment, but exclude the separate central front apron. When a finished torso layer is supplied as an additional reference, it is an EXCLUSION GUIDE: remove every skirt panel and embroidered hem already present in that torso. Keep only the remaining rear train and its lining. Do not redraw the torso guide into this output. End the attachment at the back of the hip, not around the whole waist. Omit the entire wraparound skirt: no front-facing panel, no rightward-pointing flap and no white fabric between the thighs. Reconstruct only the hidden rear attachment as matching fabric",
@@ -69,6 +71,8 @@ def hand_prompt():
 
 def prompt(slot):
     keep, remove, _ = SLOTS[slot]
+    if slot != "appendage_back":
+        remove += ", the complete separate rear biological appendage including its hidden root, scales, spikes and tip"
     return COMMON.format(keep=keep, remove=remove)
 
 # The supported first production profile. The older SLOTS/prompts remain an

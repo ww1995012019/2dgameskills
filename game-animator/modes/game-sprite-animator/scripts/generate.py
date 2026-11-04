@@ -82,6 +82,7 @@ def main():
     ap.add_argument("--fps-override", help="per-clip fps, e.g. idle=15,crouch_idle=15")
     ap.add_argument("--pixel", action="store_true", help="force pixel-art output")
     ap.add_argument("--clips", default="all", help="comma list; default all")
+    ap.add_argument("--fit-selected-clips", action="store_true", help="frame only the exported clips; other clips retain simulation dependencies but are not included in the viewport guarantee")
     ap.add_argument("--motion-blur", type=int, default=1, help="temporal samples per frame (HD only)")
     ap.add_argument("--grounded-settle", action="store_true", help="bake contact-locked flat-foot standing banks for natural walk")
     ap.add_argument("--no-fx", action="store_true")
@@ -150,10 +151,12 @@ def main():
         os.makedirs(os.path.join(root, sub), exist_ok=True)
 
     t0 = time.time()
-    r = Renderer(spec, size, pixel, motion_blur=a.motion_blur, clips=clips)
+    r = Renderer(spec, size, pixel, motion_blur=a.motion_blur, clips=clips,
+                 fit_clips={n: clips[n] for n in names} if a.fit_selected_clips else None)
     print(f"[bake] cloth chains {[d.name for d in r.defs]} in {time.time() - t0:.1f}s")
     unit_px = r.unit
-    print(f"[fit] character scale {r.fit:.3f} to keep every action inside the frame")
+    fit_scope = "exported clips" if a.fit_selected_clips else "every available action"
+    print(f"[fit] character scale {r.fit:.3f} to keep {fit_scope} inside the frame")
     pivot = (size // 2, int(size * GROUND_FRAC))
 
     rendered, meta, sheets, traces = {}, {}, {}, {}
@@ -264,6 +267,7 @@ def main():
             print(f"[review] {occlusion_summary['check_command']}")
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
+                       **({"framing_scope": names} if a.fit_selected_clips else {}),
                        part_problems=problems, **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
                        head_size=r.art.body.head_size,

@@ -64,7 +64,7 @@ def walk_hold_phase(clip, n):
 
 
 class Renderer:
-    def __init__(self, spec, size, pixel=False, motion_blur=1, clips=None):
+    def __init__(self, spec, size, pixel=False, motion_blur=1, clips=None, fit_clips=None):
         self.art = CharacterArt(spec)
         self.size, self.pixel = size, pixel
         self.motion_blur = motion_blur
@@ -79,6 +79,7 @@ class Renderer:
                     raise ValueError('conflicting cloth source clip: ' + source.name)
                 clips[source.name] = source
         self.clips = clips
+        self.fit_clips = clips if fit_clips is None else fit_clips
         bake_weapon_contacts(clips, self.art.body, solve, full_pose)
         contact_chains = ({layer.chain for layer in self.art.puppet.layers if layer.kind == 'cloth'}
                           if self.art.puppet else ())
@@ -98,7 +99,7 @@ class Renderer:
         because the character scales with the frame."""
         half, up, down = 0.0, 0.0, 0.0
         mesh_canvas = Canvas(2, 1, 1.0, 0.0, 1.0, False, self.art.ink) if self.art.puppet else None
-        for clip in self.clips.values():
+        for clip in self.fit_clips.values():
             # 120 Hz: a fast swing crosses its widest point between 30 Hz samples, and
             # hd60 frames or the smear land right on it.
             n = max(8, int(clip.duration * 120))
@@ -126,7 +127,9 @@ class Renderer:
                     hist = self.smear_history(clip, t, pose, dt)
                     for p in catmull_open(hist[0], 5) if hist else ():
                         half, up = max(half, abs(p[0]) * wide), max(up, p[1] * pose["squash"])
-        for by_chain in self.bakes.values():
+        for name, by_chain in self.bakes.items():
+            if name not in self.fit_clips:
+                continue
             for bake in by_chain.values():
                 half = max(half, float(np.abs(bake.pos[..., 0]).max()) + 8.0)
                 up = max(up, float(bake.pos[..., 1].max()) + 8.0)

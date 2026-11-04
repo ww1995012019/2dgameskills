@@ -68,6 +68,45 @@ class BindingGuards(unittest.TestCase):
             with Image.open(path/'layers_check.png') as im:
                 self.assertEqual(im.size, (32, 32))
 
+    def test_registered_hand_measures_two_fist_proportions_and_scales(self):
+        for scale in (1, 3):
+            for reach, half_width in ((24, 6), (40, 10)):
+                with self.subTest(scale=scale, reach=reach):
+                    arm = np.zeros((160*scale, 160*scale), bool)
+                    arm[20*scale:(80+reach)*scale, (80-half_width)*scale:(81+half_width)*scale] = True
+                    hand = np.zeros_like(arm)
+                    hand[80*scale:(80+reach)*scale] = arm[80*scale:(80+reach)*scale]
+                    weapon = np.zeros_like(arm)
+                    row = (80+reach-6)*scale
+                    weapon[row:row+2*scale, 20*scale:140*scale] = True
+                    joints = {k: np.array(p, float)*scale for k, p in
+                              dict(elbow=(80, 20), wrist=(80, 80), tip=(80, 80+reach)).items()}
+                    # The drawn handle crosses the palm, away from the old guessed pivot.
+                    with self.assertRaisesRegex(lp.Rejected, 'grip misses'):
+                        lp.check_grip(arm, weapon, joints)
+                    grip = lp.measured_hand_grip(arm, weapon, joints, hand)
+                    self.assertTrue((arm & hand & weapon)[int(grip[1]), int(grip[0])])
+                    frame = lp.measured_grip_frame(grip, grip+np.array([40, -90])*scale, joints)
+                    v = (joints['wrist']-joints['elbow'])*[1, -1]
+                    mapped = v*frame['weapon_grip_along']+np.array([-v[1], v[0]])*frame['weapon_grip_across']
+                    np.testing.assert_allclose(mapped, (grip-joints['wrist'])*[1, -1], atol=1e-10)
+
+    def test_registered_hand_rejects_forearm_contact_and_displaced_hint(self):
+        arm = np.zeros((120, 100), bool)
+        arm[5:101, 40:61] = True
+        hand = np.zeros_like(arm)
+        hand[80:101, 40:61] = True
+        joints = {k: np.array(p, float) for k, p in
+                  dict(elbow=(50, 40), wrist=(50, 80), tip=(50, 100)).items()}
+        weapon = np.zeros_like(arm)
+        weapon[65:68, 20:80] = True
+        with self.assertRaisesRegex(lp.Rejected, 'registered hand'):
+            lp.measured_hand_grip(arm, weapon, joints, hand)
+        weapon[:] = False
+        weapon[90:93, 20:80] = True
+        with self.assertRaisesRegex(lp.Rejected, 'registered hand'):
+            lp.measured_hand_grip(arm, weapon, joints, np.roll(hand, 40, axis=1))
+
     def test_cli_writes_current_diagnostics_when_binding_refuses(self):
         with tempfile.TemporaryDirectory() as folder:
             ref = np.zeros((32, 32, 4), np.uint8)
