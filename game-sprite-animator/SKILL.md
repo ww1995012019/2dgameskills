@@ -1,7 +1,7 @@
 ---
 name: game-sprite-animator
 description: >
-  Generate complete, smooth 2D game character animation sets and export them as sprite sheets,
+  Generate and review supported 2D game character animation sets and export them as sprite sheets,
   atlases and engine-ready files. Covers idle, walk, run, skid, the full jump chain (start, rise,
   apex, fall, land, double jump), crouch, roll, dash, wall slide, three-hit combos, air attack, cast,
   block, hurt and death, in HD or pixel-art style. Use this skill whenever the user wants game sprites,
@@ -18,13 +18,42 @@ description: >
 For complete aligned layers with known joints, prefer the [zero-generation binding entry](references/known-joint-binding.md). Reuse existing pixels and joint metadata; hand-hint generation is unnecessary for this entry. Visual review remains required.
 
 
-Every frame is computed from a skeleton, not drawn by an image model. That is what makes the output
-smooth: poses come from continuous curves, so any frame rate is available, loops close exactly, and
-feet stay planted. Joint limits, floor contact and clipping checks keep poses physically believable,
-and you review the frames by eye before delivery. Reference images can't be traced; a look is described through a character spec or
+Frames are computed from a skeleton. Continuous joint curves, fixed bone lengths and a passing
+numeric report do not establish that the painted body follows those joints or that clothing stays
+closed. Review both the rendered pixels and the actual driving skeleton before delivery.
+Reference images can't be traced; a look is described through a character spec or
 supplied as layered art.
 
 Requires Python 3 with `pillow` and `numpy`. Scripts are in `scripts/`, run from the skill root.
+
+## Binding and garment continuity are release blockers
+
+Read [skin-binding-audit.md](references/skin-binding-audit.md) when binding existing artwork or
+integrating a custom mesh renderer. Preserve a complete pelvis/garment bridge. Cutting one painted
+pair of trousers down the middle and letting each half follow only its own leg is not a valid
+layered rig: two copies of the same source boundary can separate even while every bone length and
+hip landmark is correct. Do not hide that defect with a belt, flat colour, torso overlap or an
+unreviewed patch. If the source lacks the needed hidden fabric, stop that binding at a failed
+art/resource stage rather than claiming a continuous animation.
+
+For every delivered full-body humanoid clip, inspect `review/hips_*.png` at full size, alongside
+the original source and the driving bones: waist, near/far hip, crotch, thigh roots and both knees.
+Inspect rest, deepest crouch, maximum leg separation, landings and source-pose switches. A straight
+cut edge, background slit, doubled trouser panel or bone emerging from the wrong painted joint is
+a blocker. Mandatory `rig_alignment` and `pelvis_continuity` observations must name the actual
+clip/frame. Missing trace or missing close-up evidence cannot become a pass.
+
+For an external/custom atlas skin, export its **actual** source points, skin weights, per-frame
+matrices and isolated RGBA frames to a binding manifest, then run
+`python scripts/audit_skin_binding.py binding_manifest.json --out out/c/binding_audit.json`.
+This checks registered landmarks and declared shared seams; a numeric pass still requires visual
+review. Preserve the manifest and its assets with the report. A hand-written game renderer, its
+unit tests, or unrelated synthetic output is not evidence that this skill reviewed the character.
+If the runtime cannot export those data, state that the custom binding is unverified.
+
+Rebuild and record the current review after any change to art, trace, atlas, sprite sheets or
+runtime preview. Old/unversioned passes do not carry forward. Never claim the complete set is
+approved when only a few sampled poses or the skeleton math have been checked.
 
 
 ## AI-generated characters: read this first

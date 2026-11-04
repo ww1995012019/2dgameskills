@@ -62,6 +62,15 @@ pose (including uniform rotation/translation/scale) therefore retains its source
 shifting vertices or compressing an already painted elbow again. Existing rigs without the flag
 retain their previous output; rebind from the archived manifest to opt into the corrected mapping.
 This preserves the supplied rest shape, not hidden anatomy or the appearance of arbitrary extreme poses.
+
+The required `hips` layer must preserve the actual pelvic/garment bridge. Two independently
+skinned half-trousers do not supply that bridge. Bone support and parent contact can both pass
+while the shared trouser boundary opens. Inspect source/rest alignment and every requested
+motion's waist, crotch and thigh roots in `review/hips_*.png`; record `rig_alignment` and
+`pelvis_continuity` with per-frame observations. The existing body-core measurement stops above
+the leg split and is not a crotch-seam proof. For a custom mesh/atlas adapter, also follow
+[the explicit source-boundary audit](skin-binding-audit.md). Missing artwork must be corrected
+as artwork rather than silently replaced with a colour fill or a different pose's trousers.
 Invalid finite/nonfinite body values, zero/negative bone lengths, malformed joint seats and unsafe
 soft-IK settings are rejected when loading a body, before they can corrupt later actions.
 Measured-foot idle derives standing support height from the soles, avoiding the default crouched stance on differently proportioned art. Measured-foot walking eases swing lift near contact to keep pelvis support smooth across loops.

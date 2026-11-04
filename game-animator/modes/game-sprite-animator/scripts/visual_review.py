@@ -20,11 +20,14 @@ import hashlib
 import json
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 CELL = 180
+PELVIS_CELL = 256
+REVIEW_SCHEMA = 2
 PER_SHEET = 6
 MAX_POSES = 8
 CROP_PAD = 4      # frame pixels kept around the art
@@ -32,6 +35,8 @@ JOINT_UNITS = 28  # rig units shown around a joint in its close-up
 JOINTS = (("kn_n", "hip_n", "an_n"), ("kn_f", "hip_f", "an_f"), ("el_n", "sh_n", "wr_n"), ("el_f", "sh_f", "wr_f"))
 GROUND = (240, 184, 74, 255)
 BG = (58, 62, 74, 255)
+PELVIS_JOINTS = ("waist", "neck", "hip_n", "hip_f", "kn_n", "kn_f", "an_n", "an_f")
+PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity")
 
 
 def pick_frames(n, flagged):
@@ -236,7 +241,179 @@ def shoulder_sheets(root, doc, trace, out, full_arms=False):
     return files
 
 
+def clip_layer(clip):
+    layer = clip.get("layer")
+    if layer is None or layer == "":
+        return None
+    if layer not in ("upper", "lower"):
+        raise ValueError(f"unknown animation layer {layer!r}: only upper/lower are layered clips")
+    return layer
+
+
+def humanoid_scope(doc, trace):
+    """Review full-body humanoid clips only when the rendered joint trace exists.
+
+    Upper/lower composited shooter clips retain their existing scoped review.
+    Absence of measured hips must never silently turn a body review into a pass.
+    """
+    scope = {}
+    for name, clip in doc.get("clips", {}).items():
+        if clip_layer(clip):
+            continue
+        count = len(clip.get("frames", []))
+        sk = trace.get("traces", {}).get(name, {}).get("skeleton", {})
+        missing = [key for key in PELVIS_JOINTS if len(sk.get(key, [])) != count or not count]
+        if missing:
+            raise ValueError(f"{name}: full-body review requires complete rendered pelvis/leg trace: {', '.join(missing)}")
+        for key in PELVIS_JOINTS:
+            points = np.asarray(sk[key], dtype=float)
+            if points.shape != (count, 2) or not np.isfinite(points).all():
+                raise ValueError(f"{name}: invalid rendered joint trace: {key}")
+        scope[name] = sk
+    return scope
+
+
+def pelvic_frames(sk, clip, trace_clip):
+    """Every clip contributes its own seam-risk poses, with no global top-eight cap."""
+    count = len(sk["waist"])
+    reasons = {}
+    def add(frame, reason):
+        reasons.setdefault(int(frame), set()).add(reason)
+    add(0, "first/rest"); add(count - 1, "last/recovery")
+    legs = np.stack([sk[key] for key in ("hip_n", "hip_f", "kn_n", "kn_f", "an_n", "an_f")])
+    add(np.argmax(np.ptp(legs[:, :, 0], axis=0)), "maximum leg separation")
+    add(np.argmax(np.mean([sk["hip_n"], sk["hip_f"]], axis=0)[:, 1]), "lowest pelvis/deepest crouch")
+    for side in "nf":
+        add(min(range(count), key=lambda i: bend(sk["hip_" + side][i], sk["kn_" + side][i], sk["an_" + side][i])), f"sharpest {side} knee")
+        add(min(range(count), key=lambda i: bend(sk["neck"][i], sk["hip_" + side][i], sk["kn_" + side][i])), f"sharpest {side} hip")
+    for meta in (clip, trace_clip):
+        for key in ("source_frames", "attachment_frames"):
+            sources = meta.get(key)
+            if sources is None:
+                continue
+            if not isinstance(sources, list) or len(sources) != count:
+                raise ValueError(f"{key}: source-switch metadata must match the rendered frame count")
+            for i in range(1, count):
+                if sources[i] != sources[i - 1]:
+                    for adjacent in (i - 1, i, min(count - 1, i + 1)):
+                        add(adjacent, f"{key} switch at {i}")
+    return [dict(frame=frame, reasons=sorted(why)) for frame, why in sorted(reasons.items())]
+
+
+def pelvic_rows(doc, trace):
+    rows = []
+    for name, sk in humanoid_scope(doc, trace).items():
+        poses = pelvic_frames(sk, doc["clips"][name], trace.get("traces", {}).get(name, {}))
+        for start in range(0, len(poses), MAX_POSES):
+            rows.append((name, sk, poses[start:start + MAX_POSES]))
+    return rows
+
+
+def pelvic_sheets(root, doc, trace, out):
+    """Enlarged waist/hip/inner-thigh art followed by the exact rendered bones."""
+    files, rows = [], pelvic_rows(doc, trace)
+    unit = float(trace.get("unit_px", 1))
+    for start in range(0, len(rows), PER_SHEET):
+        group = rows[start:start + PER_SHEET]
+        sheet = Image.new("RGBA", (PELVIS_CELL * MAX_POSES, (28 + 2 * PELVIS_CELL) * len(group)), BG)
+        draw = ImageDraw.Draw(sheet)
+        evidence = []
+        for row, (name, sk, poses) in enumerate(group):
+            top = row * (28 + 2 * PELVIS_CELL)
+            draw.text((4, top + 2), f"{name}: pelvis / crotch seam; art then rendered bones", fill="white")
+            for col, pose in enumerate(poses):
+                frame, x = pose["frame"], col * PELVIS_CELL
+                points = np.array([sk[key][frame] for key in ("waist", "hip_n", "hip_f")]
+                                  + [(np.asarray(sk["hip_" + side][frame]) * .5 + np.asarray(sk["kn_" + side][frame]) * .5).tolist() for side in "nf"])
+                low, high = points.min(0), points.max(0)
+                pad = max(8, unit * 10)
+                side = max(float(max(high - low)) + 2 * pad, unit * 38, 24)
+                center = (low + high) / 2
+                box = (int(center[0] - side / 2), int(center[1] - side / 2), int(center[0] + side / 2 + 1), int(center[1] + side / 2 + 1))
+                im = composite(root, doc, name, frame).crop(box).resize((PELVIS_CELL, PELVIS_CELL), Image.NEAREST)
+                cell = Image.new("RGBA", im.size, BG)
+                checker = ImageDraw.Draw(cell)
+                for yy in range(0, PELVIS_CELL, 16):
+                    for xx in range(0, PELVIS_CELL, 16):
+                        if (xx // 16 + yy // 16) % 2:
+                            checker.rectangle((xx, yy, xx + 15, yy + 15), fill=(91, 95, 107, 255))
+                cell.alpha_composite(im)
+                sheet.alpha_composite(cell, (x, top + 28))
+                overlay = cell.copy(); lines = ImageDraw.Draw(overlay)
+                def point(key):
+                    px, py = sk[key][frame]
+                    return ((px - box[0]) * PELVIS_CELL / (box[2] - box[0]), (py - box[1]) * PELVIS_CELL / (box[3] - box[1]))
+                lines.line((*point("waist"), *point("neck")), fill="white", width=2)
+                for limb, color in (("n", (40, 235, 225)), ("f", (255, 145, 55))):
+                    keys = ["waist", "hip_" + limb, "kn_" + limb, "an_" + limb]
+                    lines.line([point(key) for key in keys], fill=color, width=2)
+                    for key in keys[1:]:
+                        px, py = point(key); lines.ellipse((px - 3, py - 3, px + 3, py + 3), outline=color, width=2)
+                sheet.alpha_composite(overlay, (x, top + 28 + PELVIS_CELL))
+                draw.text((x + 4, top + 16), f"#{frame}  {pose['reasons'][0]}", fill="white")
+                evidence.append(dict(clip=name, frame=frame, reasons=pose["reasons"], crop=list(box)))
+        filename = f"hips_{len(files):02d}.png"
+        sheet.convert("RGB").save(os.path.join(out, filename))
+        files.append(dict(sheet=filename, kind="pelvis", clips=sorted({name for name, _, _ in group}), poses=evidence))
+    return files
+
+
+def selected_clips(doc, qa):
+    def key(name):
+        return (0 if qa.get(name, {}).get("flags") else 1, name)
+    names = []
+    for name in sorted(doc["clips"], key=key):
+        clip = doc["clips"][name]
+        tag = name.rsplit("_", 1)[-1]
+        sparse = clip.get("layer") == "upper" and ("_aim_" in name or "_fire_" in name) and tag not in ("0", "p90", "m90", "p45", "m45")
+        if not sparse or qa.get(name, {}).get("flags"):
+            names.append(name)
+    return names
+
+
+def binding_sheets(root):
+    path = os.path.join(root, "binding_audit.json")
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        report = json.load(source)
+    names = report.get("review_sheets", [])
+    if not isinstance(names, list) or len(names) != len(set(names)) or (report.get("status") == "pass" and not names):
+        raise ValueError("binding audit requires its source/registration visual review sheets")
+    for name in names:
+        if not isinstance(name, str) or os.path.basename(name) != name or not name.startswith("binding_review_") or not name.endswith(".png"):
+            raise ValueError("binding audit has an invalid visual review sheet path")
+        if not os.path.isfile(os.path.join(root, name)):
+            raise ValueError(f"missing binding review sheet: {name}")
+    return [dict(sheet=name, kind="binding_registration", clips=[]) for name in names]
+
+
+def sheet_file(root, name):
+    return os.path.join(root, name) if name.startswith("binding_review_") else os.path.join(root, "review", name)
+
+
+def expected_sheets(doc, trace, qa, root=None):
+    names = selected_clips(doc, qa)
+    expected = {f"sheet_{i:02d}.png" for i in range((len(names) + PER_SHEET - 1) // PER_SHEET)}
+    traces = trace.get("traces", {})
+    if any(sharpest(traces, doc, joint, a, b) for joint, a, b in JOINTS):
+        expected.add("joints_00.png")
+    for full_arms, prefix in ((False, "shoulders"), (True, "arms")):
+        keys = ("neck", "waist", "sh_n", "el_n", "sh_f", "el_f") + (("wr_n", "wr_f") if full_arms else ())
+        count = sum(not doc["clips"].get(name, {}).get("layer") and all(sk.get(key) for key in keys)
+                    for name, tr in traces.items() for sk in [tr.get("skeleton", {})])
+        expected.update(f"{prefix}_{i:02d}.png" for i in range((count + PER_SHEET - 1) // PER_SHEET))
+    rows = pelvic_rows(doc, trace)
+    expected.update(f"hips_{i:02d}.png" for i in range((len(rows) + PER_SHEET - 1) // PER_SHEET))
+    if root is not None:
+        expected.update(entry["sheet"] for entry in binding_sheets(root))
+    return expected
+
+
 def build(root):
+    report_path = os.path.join(root, "visual_report.json")
+    if os.path.exists(report_path):
+        os.remove(report_path)
     with open(os.path.join(root, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
     qa = {}
@@ -244,26 +421,18 @@ def build(root):
     if os.path.exists(qp):
         with open(qp, encoding="utf-8") as fh:
             qa = json.load(fh).get("clips", {})
-    report_path = os.path.join(root, "visual_report.json")
-    if os.path.exists(report_path):
-        os.remove(report_path)
+    tp = os.path.join(root, "rig_trace.json")
+    trace = {}
+    if os.path.exists(tp):
+        with open(tp, encoding="utf-8") as fh:
+            trace = json.load(fh)
+    humanoid_scope(doc, trace)
     out = os.path.join(root, "review")
     os.makedirs(out, exist_ok=True)
     for old in glob.glob(os.path.join(out, "*.png")):
         os.remove(old)
 
-    def key(name):
-        """Clips QA is unsure about first, then the rest. Near-identical aim variants review as one."""
-        return (0 if qa.get(name, {}).get("flags") else 1, name)
-
-    names = []
-    for n in sorted(doc["clips"], key=key):
-        c = doc["clips"][n]
-        tag = n.rsplit("_", 1)[-1]
-        sparse = c.get("layer") == "upper" and ("_aim_" in n or "_fire_" in n) and tag not in ("0", "p90", "m90", "p45", "m45")
-        if sparse and not qa.get(n, {}).get("flags"):
-            continue
-        names.append(n)
+    names = selected_clips(doc, qa)
 
     index = []
     for s in range(0, len(names), PER_SHEET):
@@ -277,20 +446,26 @@ def build(root):
         fn = f"sheet_{len(index):02d}.png"
         sheet.convert("RGB").save(os.path.join(out, fn))
         index.append(dict(sheet=fn, clips=group))
-    tp = os.path.join(root, "rig_trace.json")
-    if os.path.exists(tp):
-        with open(tp, encoding="utf-8") as fh:
-            trace = json.load(fh)
+    if trace:
         fn = joint_sheet(root, doc, trace, out)
         if fn:     # listed like any sheet, so --record refuses a verdict that skips it
             index.append(dict(sheet=fn, clips=["joints"]))
         index.extend(shoulder_sheets(root, doc, trace, out))
         index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True))
+        index.extend(pelvic_sheets(root, doc, trace, out))
+    index.extend(binding_sheets(root))
+    value = dict(schema_version=REVIEW_SCHEMA, sheets=index, required_sheets=sorted(expected_sheets(doc, trace, qa, root)),
+                 skipped=sorted(set(doc["clips"]) - set(names)),
+                 qa_flags={n: qa[n]["flags"] for n in names if qa.get(n, {}).get("flags")})
     with open(os.path.join(out, "index.json"), "w", encoding="utf-8") as fh:
-        json.dump(dict(review_id=review_id(review_assets(root)), sheets=index, skipped=sorted(set(doc["clips"]) - set(names)),
-                       qa_flags={n: qa[n]["flags"] for n in names if qa.get(n, {}).get("flags")}), fh, ensure_ascii=False, indent=1)
+        json.dump(value, fh, ensure_ascii=False, indent=1)
+    value["review_id"] = review_id(review_assets(root))
+    with open(os.path.join(out, "index.json"), "w", encoding="utf-8") as fh:
+        json.dump(value, fh, ensure_ascii=False, indent=1)
     template = dict(reviewer="", review_id=review_id(review_assets(root)), sheets={
-        e["sheet"]: dict(verdict="fail", checks={name: dict(status="pending", evidence="") for name in CHECKS}, issues=[])
+        e["sheet"]: dict(verdict="fail", checks={name: dict(status="pending", evidence="", **(
+            {"observations": [dict(clip=p["clip"], frame=p["frame"], evidence="") for p in e.get("poses", [])]}
+            if name in PELVIS_CHECKS else {})) for name in checks_for_sheet(e["sheet"])}, issues=[])
         for e in index})
     with open(os.path.join(out, "verdict_template.json"), "w", encoding="utf-8") as target:
         json.dump(template, target, ensure_ascii=False, indent=1)
@@ -302,24 +477,41 @@ def build(root):
 
 CHECKS = ("complete_limbs", "continuous_garments", "no_ghosting", "expected_weapons", "anatomy", "readable_motion")
 CATEGORIES = {"missing_limb", "broken_garment", "ghosting", "extra_weapon", "anatomy", "unreadable_motion", "cosmetic"}
+CATEGORIES.update(("pelvis_gap", "rig_misalignment"))
+
+
+def checks_for_sheet(name):
+    if name.startswith("binding_review_"):
+        return ("binding_registration",)
+    return CHECKS + PELVIS_CHECKS if name.startswith("hips_") else CHECKS
 
 
 def file_hash(path):
+    if os.path.basename(str(path)) == "index.json" and os.path.basename(os.path.dirname(str(path))) == "review":
+        with open(path, encoding="utf-8") as source:
+            data = json.load(source)
+        data.pop("review_id", None)  # avoid self-referential hashing; all coverage data remains bound
+        return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
     if str(path).lower().endswith(".png"):
-        with Image.open(path) as image:
-            rgba = image.convert("RGBA")
-            return hashlib.sha256(str(rgba.size).encode() + rgba.tobytes()).hexdigest()
+        return pixel_hash(path)
     with open(path, "rb") as source:
         return hashlib.sha256(source.read()).hexdigest()
+
+
+def pixel_hash(path):
+    """Match actual reviewed pixels, independent of lossless image encoding."""
+    with Image.open(path) as image:
+        rgba = image.convert("RGBA")
+        return hashlib.sha256(str(rgba.size).encode() + rgba.tobytes()).hexdigest()
 
 
 def review_assets(root):
     """Bind a verdict to the exact frames, sheets and QA it actually reviewed."""
     paths = []
-    for pattern in ("frames/*/*.png", "review/*.png", "atlas*.png", "atlas*.json", "fx*.png", "fx*.json",
-                    "animations.json", "rig_trace.json", "qa_report.json",
-                    "occlusion_review.json", "occlusion_decisions.json"):
-        paths.extend(glob.glob(os.path.join(root, pattern)))
+    for pattern in ("frames/*/*.png", "review/*.png", "review/index.json", "animations.json", "rig_trace.json", "qa_report.json",
+                    "atlas*.png", "atlas*.json", "sheets/*.png", "preview.html", "fx*.png", "fx*.json", "engine/**/*",
+                    "binding_audit.json", "binding_review_*.png", "occlusion_review.json", "occlusion_decisions.json"):
+        paths.extend(glob.glob(os.path.join(root, pattern), recursive=True))
     # Follow declared page names too, including nested/custom atlas filenames.
     # A missing required page must fail closed, even when it was absent before
     # a reviewer tried recording a pass. Never hash paths outside this export.
@@ -339,12 +531,119 @@ def review_assets(root):
             image = os.path.realpath(os.path.join(base, name))
             if os.path.commonpath((base, image)) != base:
                 raise ValueError(f"{manifest}: atlas page is outside the export")
+            if not os.path.isfile(image):
+                raise ValueError(f"{manifest}: missing required atlas page: {name}")
             paths.append(image)
-    return {os.path.relpath(p, root).replace(os.sep, "/"): file_hash(p) for p in sorted(set(paths))}
+    return {os.path.relpath(p, root).replace(os.sep, "/"): file_hash(p) for p in sorted(set(paths)) if os.path.isfile(p)}
 
 
 def review_id(assets):
     return hashlib.sha256(json.dumps(assets, sort_keys=True).encode()).hexdigest()
+
+
+def validate_index(root, index):
+    if index.get("schema_version") != REVIEW_SCHEMA:
+        raise ValueError("stale or unversioned review: rebuild current anatomy review sheets")
+    with open(os.path.join(root, "animations.json"), encoding="utf-8") as source:
+        doc = json.load(source)
+    trace_path = os.path.join(root, "rig_trace.json")
+    trace = {}
+    if os.path.isfile(trace_path):
+        with open(trace_path, encoding="utf-8") as source:
+            trace = json.load(source)
+    qa_path = os.path.join(root, "qa_report.json")
+    qa = {}
+    if os.path.isfile(qa_path):
+        with open(qa_path, encoding="utf-8") as source:
+            qa = json.load(source).get("clips", {})
+    expected = expected_sheets(doc, trace, qa, root)
+    entries = index.get("sheets", [])
+    actual = [entry["sheet"] for entry in entries]
+    if len(actual) != len(set(actual)) or set(actual) != expected or index.get("required_sheets") != sorted(expected):
+        raise ValueError("missing or unexpected required review sheets; rebuild the complete review")
+    for name in expected:
+        if not os.path.isfile(sheet_file(root, name)):
+            raise ValueError(f"missing required review sheet: {name}")
+    rows = pelvic_rows(doc, trace)
+    for start in range(0, len(rows), PER_SHEET):
+        name = f"hips_{start // PER_SHEET:02d}.png"
+        entry = next(row for row in entries if row["sheet"] == name)
+        want = [(clip, pose["frame"], pose["reasons"]) for clip, _, poses in rows[start:start + PER_SHEET] for pose in poses]
+        got = [(pose["clip"], pose["frame"], pose["reasons"]) for pose in entry.get("poses", [])]
+        if got != want:
+            raise ValueError(f"{name}: missing or altered required pelvis pose coverage")
+    return {entry["sheet"]: entry for entry in entries}
+
+
+def validate_checklist(sheet, row, entry):
+    if row.get("verdict") not in ("pass", "fail"):
+        raise ValueError(f"{sheet}: verdict must be pass or fail")
+    for name in checks_for_sheet(sheet):
+        check = row.get("checks", {}).get(name, {})
+        if check.get("status") not in ("pass", "fail", "not_applicable") or not isinstance(check.get("evidence"), str) or not check["evidence"].strip():
+            raise ValueError(f"{sheet}: {name} needs status and visual evidence")
+        if check["status"] == "not_applicable" and name not in ("continuous_garments", "expected_weapons"):
+            raise ValueError(f"{sheet}: {name} cannot be skipped")
+        if check["status"] == "fail" and row["verdict"] != "fail":
+            raise ValueError(f"{sheet}: failed {name} cannot have a pass verdict")
+        if name in PELVIS_CHECKS:
+            observations = check.get("observations", [])
+            expected = {(pose["clip"], pose["frame"]) for pose in entry["poses"]}
+            cited = []
+            for pose in observations:
+                if type(pose.get("frame")) is not int or not isinstance(pose.get("evidence"), str) or not pose["evidence"].strip():
+                    raise ValueError(f"{sheet}: {name} needs concrete evidence for each required clip/frame")
+                cited.append((pose.get("clip"), pose["frame"]))
+            if len(cited) != len(set(cited)) or set(cited) != expected:
+                raise ValueError(f"{sheet}: {name} must cover every required pelvis pose exactly once")
+
+
+def binding_gate(root):
+    path = os.path.join(root, "binding_audit.json")
+    try:
+        trace_path = os.path.join(root, "rig_trace.json")
+        trace = {}
+        if os.path.isfile(trace_path):
+            with open(trace_path, encoding="utf-8") as source:
+                trace = json.load(source)
+        if not os.path.isfile(path):
+            if trace.get("binding_audit_required") is True:
+                print("binding audit: missing required report for this external skin binding")
+                return 1
+            return 0
+        with open(path, encoding="utf-8") as source:
+            report = json.load(source)
+        if report.get("status") != "pass":
+            print("binding audit: current measurements are not passing")
+            return 1
+        with open(os.path.join(root, "animations.json"), encoding="utf-8") as source:
+            doc = json.load(source)
+        checked = report.get("scope", {}).get("clip_frames", {})
+        required = {name: len(clip.get("frames", [])) for name, clip in doc.get("clips", {}).items() if not clip_layer(clip)}
+        if any(checked.get(name) != count for name, count in required.items()):
+            print("binding audit: scoped measurements do not clear all full-body clips and frames")
+            return 1
+        from audit_skin_binding import audit_current
+        if audit_current(path):
+            return 1
+        manifest = (Path(path).parent / report["manifest"]).resolve()
+        with manifest.open(encoding="utf-8") as source:
+            registered = json.load(source)
+        for clip, count in required.items():
+            frames = registered.get("clips", {}).get(clip, {}).get("frames", [])
+            if len(frames) != count:
+                print("binding audit: actual registered frames do not match the review scope")
+                return 1
+            for number, frame in enumerate(frames):
+                audited = (manifest.parent / frame["image"]).resolve()
+                reviewed = Path(root) / "frames" / clip / f"{clip}_{number:03d}.png"
+                if pixel_hash(audited) != pixel_hash(reviewed):
+                    print(f"binding audit: {clip} frame {number} measures different RGBA pixels from the reviewed frame")
+                    return 1
+        return 0
+    except (ImportError, OSError, ValueError, KeyError, TypeError) as error:
+        print(f"binding audit: missing or invalid gate: {error}")
+        return 1
 
 
 def occlusion_gate(root):
@@ -368,6 +667,56 @@ def occlusion_gate(root):
         return 1
 
 
+def validate_resolution(root, issue, assets):
+    resolution = issue.get("resolution", {})
+    prior_id = resolution.get("previous_review_id", "")
+    if len(prior_id) != 64 or any(c not in "0123456789abcdef" for c in prior_id):
+        raise ValueError("resolution needs a previous_review_id")
+    prior_path = os.path.join(root, "review", "history", prior_id + ".json")
+    if not os.path.isfile(prior_path):
+        raise ValueError("previous unresolved review not found")
+    with open(prior_path, encoding="utf-8") as source:
+        prior = json.load(source)
+    matches = [i for row in prior.get("sheets", {}).values() for i in row.get("issues", [])
+               if i.get("id") == issue["id"] and i.get("resolved") is False
+               and i.get("clip") == issue["clip"] and i.get("category") == issue["category"]]
+    if not matches or not isinstance(resolution.get("change"), str) or not resolution["change"].strip() or not resolution.get("frames"):
+        raise ValueError("resolution needs a recorded open issue, change and changed frames")
+    for frame in resolution["frames"]:
+        clip, number = frame.get("clip"), frame.get("frame")
+        if clip != issue["clip"] or type(number) is not int or number < 0:
+            raise ValueError("invalid resolution frame")
+        key = f"frames/{clip}/{clip}_{number:03d}.png"
+        before, after = prior.get("assets", {}).get(key), assets.get(key)
+        if not before or not after or before == after:
+            raise ValueError("resolved issue has no changed frame evidence")
+
+
+def validate_issue_history(root, report, assets):
+    """A hand-edited current status cannot erase a recorded unresolved defect."""
+    registry_path = os.path.join(root, "review", "issue_registry.json")
+    with open(registry_path, encoding="utf-8") as source:
+        registry = json.load(source)
+    if not isinstance(registry, dict) or any(not isinstance(row, dict) or type(row.get("resolved")) is not bool for row in registry.values()):
+        raise ValueError("invalid issue registry")
+    open_ids = {ident for ident, row in registry.items() if row["resolved"] is False}
+    if open_ids:
+        raise ValueError(f"issue registry still contains unresolved issues: {sorted(open_ids)}")
+    history_path = os.path.join(root, "review", "history", report["review_id"] + ".json")
+    with open(history_path, encoding="utf-8") as source:
+        archived = json.load(source)
+    if archived != report:
+        raise ValueError("current report differs from its recorded review history")
+    seen = set()
+    for row in report["sheets"].values():
+        for issue in row.get("issues", []):
+            ident = issue.get("id")
+            if not ident or ident in seen or ident not in registry or registry[ident]["resolved"] is not True:
+                raise ValueError("current issue does not match the recorded issue registry")
+            seen.add(ident)
+            validate_resolution(root, issue, assets)
+
+
 def record(root, path):
     """Accept only explicit, current reviews; resolution requires changed-frame evidence."""
     current_report = os.path.join(root, "visual_report.json")
@@ -377,6 +726,10 @@ def record(root, path):
         index = json.load(fh)
     with open(path, encoding="utf-8") as fh:
         v = json.load(fh)
+    try:
+        entries = validate_index(root, index)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        sys.exit(str(error))
     want = {e["sheet"] for e in index["sheets"]}
     if want != set(v.get("sheets", {})):
         sys.exit(f"not reviewed yet or unexpected sheets: {sorted(want ^ set(v.get('sheets', {})))}")
@@ -393,17 +746,10 @@ def record(root, path):
             registry = json.load(source)
     open_issues, failed_sheets, ids = [], [], set()
     for sheet, r in v["sheets"].items():
-        if r.get("verdict") not in ("pass", "fail"):
-            sys.exit(f"{sheet}: verdict must be pass or fail")
-        checklist = r.get("checks", {})
-        for name in CHECKS:
-            check = checklist.get(name, {})
-            if check.get("status") not in ("pass", "fail", "not_applicable") or not isinstance(check.get("evidence"), str) or not check["evidence"].strip():
-                sys.exit(f"{sheet}: {name} needs status and visual evidence")
-            if check["status"] == "not_applicable" and name not in ("continuous_garments", "expected_weapons"):
-                sys.exit(f"{sheet}: {name} cannot be skipped")
-            if check["status"] == "fail" and r["verdict"] != "fail":
-                sys.exit(f"{sheet}: failed {name} cannot have a pass verdict")
+        try:
+            validate_checklist(sheet, r, entries[sheet])
+        except (ValueError, KeyError, TypeError) as error:
+            sys.exit(str(error))
         if r["verdict"] == "fail":
             failed_sheets.append(sheet)
             if not r.get("issues"):
@@ -422,28 +768,10 @@ def record(root, path):
             if not issue.get("clip") or not issue.get("what"):
                 sys.exit(f"{sheet}: an issue needs clip and what")
             if issue["resolved"]:
-                resolution = issue.get("resolution", {})
-                prior_id = resolution.get("previous_review_id", "")
-                if len(prior_id) != 64 or any(c not in "0123456789abcdef" for c in prior_id):
-                    sys.exit(f"{sheet}: resolution needs a previous_review_id")
-                prior_path = os.path.join(root, "review", "history", prior_id + ".json")
-                if not os.path.isfile(prior_path):
-                    sys.exit(f"{sheet}: previous unresolved review not found")
-                with open(prior_path, encoding="utf-8") as source:
-                    prior = json.load(source)
-                matches = [i for row in prior.get("sheets", {}).values() for i in row.get("issues", [])
-                           if i.get("id") == ident and i.get("resolved") is False
-                           and i.get("clip") == issue["clip"] and i.get("category") == issue["category"]]
-                if not matches or not isinstance(resolution.get("change"), str) or not resolution["change"].strip() or not resolution.get("frames"):
-                    sys.exit(f"{sheet}: resolution needs a recorded open issue, change and changed frames")
-                for frame in resolution["frames"]:
-                    clip, number = frame.get("clip"), frame.get("frame")
-                    if clip != issue["clip"] or type(number) is not int or number < 0:
-                        sys.exit(f"{sheet}: invalid resolution frame")
-                    key = f"frames/{clip}/{clip}_{number:03d}.png"
-                    before, after = prior.get("assets", {}).get(key), assets.get(key)
-                    if not before or not after or before == after:
-                        sys.exit(f"{sheet}: resolved issue has no changed frame evidence")
+                try:
+                    validate_resolution(root, issue, assets)
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    sys.exit(f"{sheet}: {error}")
             else:
                 open_issues.append(issue)
                 if r["verdict"] == "pass":
@@ -457,9 +785,11 @@ def record(root, path):
     with open(registry_path, "w", encoding="utf-8") as target:
         json.dump(registry, target, indent=1)
     occlusion_pending = bool(occlusion_gate(root))
-    report = dict(v, assets=assets, open_blockers=sum(i["severity"] == "blocker" for i in open_issues),
+    binding_pending = bool(binding_gate(root))
+    report = dict(v, schema_version=REVIEW_SCHEMA, assets=assets, open_blockers=sum(i["severity"] == "blocker" for i in open_issues),
                   open_issues=len(open_issues), occlusion_review_required=occlusion_pending,
-                  status="fail" if failed_sheets or open_issues else "review_required" if occlusion_pending else "pass")
+                  binding_review_required=binding_pending,
+                  status="fail" if failed_sheets or open_issues else "review_required" if occlusion_pending or binding_pending else "pass")
     history = os.path.join(root, "review", "history")
     os.makedirs(history, exist_ok=True)
     for output in (os.path.join(root, "visual_report.json"), os.path.join(history, current + ".json")):
@@ -475,14 +805,27 @@ def check_current(root):
     if not os.path.isfile(path):
         print("visual review: no current report")
         return 1
-    with open(path, encoding="utf-8") as source:
-        report = json.load(source)
     try:
-        current = review_id(review_assets(root))
-    except (OSError, ValueError, TypeError) as error:
-        print(f"visual review: missing or invalid delivery assets: {error}")
-        return 1
-    ok = report.get("status") == "pass" and report.get("review_id") == current and occlusion_gate(root) == 0
+        with open(path, encoding="utf-8") as source:
+            report = json.load(source)
+        if not isinstance(report.get("reviewer"), str) or not report["reviewer"].strip():
+            raise ValueError("current review has no reviewer")
+        with open(os.path.join(root, "review", "index.json"), encoding="utf-8") as source:
+            index = json.load(source)
+        entries = validate_index(root, index)
+        if set(report.get("sheets", {})) != set(entries):
+            raise ValueError("current report does not cover required sheets")
+        for name, row in report["sheets"].items():
+            validate_checklist(name, row, entries[name])
+            if row["verdict"] != "pass" or any(issue.get("resolved") is not True for issue in row.get("issues", [])):
+                raise ValueError("current report contains a failed sheet or unresolved issue")
+        assets = review_assets(root)
+        validate_issue_history(root, report, assets)
+        current = review_id(assets)
+        ok = report.get("schema_version") == REVIEW_SCHEMA and report.get("status") == "pass" and report.get("assets") == assets and report.get("review_id") == current == index.get("review_id") and occlusion_gate(root) == 0 and binding_gate(root) == 0
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"visual review: invalid or incomplete review: {error}")
+        ok = False
     print("visual review: current pass" if ok else "visual review: failed or stale report; rebuild and review")
     return 0 if ok else 1
 
@@ -498,7 +841,10 @@ def main():
         sys.exit(check_current(a.path))
     if a.record:
         sys.exit(record(a.path, a.record))
-    build(a.path)
+    try:
+        build(a.path)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        sys.exit(f"visual review: cannot build current review: {error}")
 
 
 if __name__ == "__main__":

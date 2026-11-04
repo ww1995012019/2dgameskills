@@ -7,6 +7,14 @@ description: Generate and inspect 2D game character sprite animations for side-v
 
 For complete aligned layers with known joints, prefer the [zero-generation binding entry](modes/game-sprite-animator/references/known-joint-binding.md). Reuse existing pixels and joint metadata; hand-hint generation is unnecessary for this entry. Visual review remains required.
 
+For humanoid binding, read the selected mode's
+[skin and garment audit](modes/game-sprite-animator/references/skin-binding-audit.md).
+Source-preserving pixels and valid bone lengths do not prove a connected waist/crotch or correct
+painted joint placement. Do not split trousers into independent half-images without a pelvis
+bridge or shared boundary constraint. Full-body clips need current hip close-ups and explicit
+alignment/continuity findings. Custom game renderers must supply their actual weights, matrices,
+rendered frames and review evidence; the skill cannot inherit a pass from game unit tests.
+
 
 Choose a mode using the character, camera and movement. Read only that mode's `SKILL.md`, and run
 its scripts from that mode's directory. Each mode is bundled here and requires Python with Pillow
