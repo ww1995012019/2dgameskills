@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict');
+const Review=require('./segmentation_ownership.js');
+const report={source_sha256:'source',canvas:[5,1],layers:[{name:'mixed sleeve/arm',mask_sha256:'a'},{name:'sleeve',mask_sha256:'b'},{name:'hand',mask_sha256:'c'}]};
+const masks=[[1,1,0,0,0],[0,1,1,0,0],[0,1,0,1,0]];
+const r=new Review(masks,report);
+assert.deepEqual(r.resolve().counts,{resolved_pixels:0,unassigned_pixels:3,unresolved_overlap_pixels:1,explicit_claim_pixels:0});
+assert.throws(()=>r.claim(0));assert.throws(()=>r.assign(0,'anatomy',' '));assert.throws(()=>r.assign(0,'complete','arm'));assert.throws(()=>r.assign(-1,'anatomy','arm'));
+r.assign(0,'anatomy','arm');r.assign(1,'garment','sleeve');r.assign(2,'anatomy','hand');assert.equal(r.resolve().counts.unresolved_overlap_pixels,1);
+r.claim(1);assert.equal(r.resolve().owner[1],1);r.claim(2);assert.equal(r.resolve().owner[1],2);r.undo();assert.equal(r.resolve().owner[1],1);
+r.release(1);assert.equal(r.resolve().owner[1],-2);r.undo();assert.equal(r.resolve().owner[1],1);
+r.assign(1,'garment','renamed');assert.equal(r.resolve().owner[1],-2);r.undo();assert.equal(r.resolve().owner[1],1);
+const saved=r.export();assert.equal(saved.binding_gate.allowed,false);assert.equal(saved.completeness,'visible_fragment_only');assert.equal(saved.hidden_surface_pixels,0);assert.equal(saved.assignments[0].mask_sha256,'a');assert.equal(saved.source_sha256,'source');assert.equal(saved.counts.resolved_pixels,4);assert(saved.history.length>0);
+r.reset();assert.equal(r.resolve().counts.resolved_pixels,0);r.undo();assert.equal(r.resolve().counts.resolved_pixels,4);
+for(let i=0;i<3;i++)r.assign(i,'garment','same visible panel');assert.equal(r.resolve().counts.unresolved_overlap_pixels,0);assert.equal(r.resolve().counts.resolved_pixels,4);
+assert.deepEqual(masks,[[1,1,0,0,0],[0,1,1,0,0],[0,1,0,1,0]]);assert.equal(r.resolve().owner[4],-1);
+console.log('PASS: reversible assignment, explicit last-claim precedence, unresolved conflicts, same-target union, source provenance, no mask mutation or hidden pixels.');

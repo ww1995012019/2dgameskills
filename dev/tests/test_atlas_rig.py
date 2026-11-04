@@ -37,7 +37,8 @@ class AtlasRig(unittest.TestCase):
             d.rectangle((60,0,100,55),fill=skin)
             d.line((60,3,100,3),fill=(180,180,180,255),width=2)
             d.line((58,1,102,1),fill=(100,100,100,70),width=1)
-            before=np.array(im);garment,removed=ar.remove_neck_stub(im);after=np.array(garment)
+            mask=np.zeros((im.height,im.width),np.uint8);mask[:56,58:103]=255
+            before=np.array(im);garment,removed=ar.remove_neck_stub(im, ownership='head_skin', neck_mask=mask);after=np.array(garment)
             self.assertGreater(removed,0)
             self.assertEqual(after[1,80,3],0)
             self.assertEqual(after[3,80,3],0) # implanted cut-edge highlight must not survive
@@ -45,8 +46,32 @@ class AtlasRig(unittest.TestCase):
             np.testing.assert_array_equal(before,np.array(im))
 
     def test_complete_garment_is_unchanged(self):
-        im=Image.new('RGBA',(100,200),(25,55,80,255));out,count=ar.remove_neck_stub(im)
+        im=Image.new('RGBA',(100,200),(25,55,80,255));out,count=ar.remove_neck_stub(im, ownership='garment')
         self.assertEqual(count,0);np.testing.assert_array_equal(np.array(im),np.array(out))
+
+    def test_brown_and_gold_collar_is_not_misclassified_as_neck_skin(self):
+        for scale in (1, 2):
+            im=Image.new('RGBA',(100*scale,160*scale),(25,65,80,255))
+            d=ImageDraw.Draw(im)
+            d.rectangle((30*scale,0,90*scale,25*scale),fill=(180,135,70,255))
+            d.line((30*scale,2*scale,90*scale,2*scale),fill=(230,185,120,255),width=2*scale)
+            before=np.array(im)
+            with self.assertRaisesRegex(ValueError,'ownership'):
+                ar.remove_neck_stub(im)
+            with self.assertRaisesRegex(ValueError,'mask'):
+                ar.remove_neck_stub(im,ownership='head_skin')
+            out,count=ar.remove_neck_stub(im,ownership='garment')
+            self.assertEqual(count,0)
+            np.testing.assert_array_equal(np.array(out),before)
+
+    def test_registered_neck_mask_rejects_ambiguous_inputs_without_source_changes(self):
+        im=Image.new('RGBA',(20,30),(160,110,60,255));before=np.array(im)
+        for mask in (np.ones((29,20),np.uint8),np.full((30,20),.5),np.zeros((30,20),np.uint8),np.ones((30,20,3),np.uint8)):
+            with self.subTest(shape=mask.shape),self.assertRaises(ValueError):
+                ar.remove_neck_stub(im,ownership='head_skin',neck_mask=mask)
+            np.testing.assert_array_equal(np.array(im),before)
+        with self.assertRaises(ValueError):
+            ar.remove_neck_stub(im,ownership='garment',neck_mask=np.ones((30,20),np.uint8))
 
     def test_two_humanoid_drawings_have_supported_measured_limbs(self):
         import test_puppet as fixtures

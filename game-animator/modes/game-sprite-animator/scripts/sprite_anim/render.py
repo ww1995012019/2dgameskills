@@ -4,7 +4,7 @@ import numpy as np
 from .art import Canvas, CharacterArt, chain_defs
 from .cloth import bake_all
 from .constraints import bake_weapon_contacts
-from .mathx import catmull_open
+from .mathx import catmull_open, rot
 from .rig import full_pose, solve
 
 PRESETS = {
@@ -40,6 +40,15 @@ class Renderer:
         self.size, self.pixel = size, pixel
         self.motion_blur = motion_blur
         self.defs = chain_defs(self.art.spec)
+        # Finite banks retain source cloth, even when rendered on their own.
+        # Do not mutate the caller's clip registry or silently replace a source.
+        sources = [c.cloth_source[0] for c in clips.values() if hasattr(c, 'cloth_source')]
+        if sources:
+            clips = dict(clips)
+            for source in sources:
+                if source.name in clips and clips[source.name] is not source:
+                    raise ValueError('conflicting cloth source clip: ' + source.name)
+                clips[source.name] = source
         self.clips = clips
         bake_weapon_contacts(clips, self.art.body, solve, full_pose)
         contact_chains = ({layer.chain for layer in self.art.puppet.layers if layer.kind == 'cloth'}
@@ -102,7 +111,25 @@ class Renderer:
         return fit if self.art.puppet else min(1.0, fit)
 
     def cloth_at(self, clip, t):
-        return {d.name: self.bakes[clip.name][d.name].at(t) for d in self.defs}
+        source = getattr(clip, 'cloth_source', None)
+        if source is None:
+            return {d.name: self.bakes[clip.name][d.name].at(t) for d in self.defs}
+        # A reversible settle bank must inherit the displayed walk's secondary
+        # pose, not initialize a fresh cloth simulation. Carry that sampled shape
+        # with its attachment frame as the pelvis lowers. This is deliberately
+        # kinematic cloth during settling, not a simulated cloth relaxation.
+        source_clip, source_time = source
+        before = solve(full_pose(source_clip.sample(source_time)), self.art.body)
+        after = solve(full_pose(clip.sample(t)), self.art.body)
+        result = {}
+        for d in self.defs:
+            joint, angle, offset = d.attach
+            a = np.add(before[joint], rot(offset, before[angle]))
+            b = np.add(after[joint], rot(offset, after[angle]))
+            points = self.bakes[source_clip.name][d.name].at(source_time)
+            delta = after[angle] - before[angle]
+            result[d.name] = np.array([b + rot(tuple(p - a), delta) for p in points])
+        return result
 
     def smear_history(self, clip, t, pose, dt):
         if pose["smear"] <= 0.02 or self.art.spec["weapon"] == "none":

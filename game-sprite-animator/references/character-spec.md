@@ -51,6 +51,21 @@ The layered-art binder writes the complete profile from both reference arms and 
 Adapting only one arm can compress the two arm paths together. Omitting the profile retains the
 existing default poses. Locomotion profiles such as `gait.walk` remain separate.
 
+## Optional upright walk profile
+
+`"gait": {"walk": {"profile": "natural_walk_v1"}}` opts into a body-derived
+walking loop with sole-centered stride, later toe-off, bounded stance-leg reach,
+and balanced arm swing based on the idle carry. Existing characters keep their
+legacy walk unless they opt in. Replace a legacy walk override object when testing
+this profile: explicit arm, stride and bob overrides still take precedence and can
+undo its fit. Unknown profile names are rejected.
+
+At default speed its period is 5/6 second (20 frames at 24 fps or 25 at 30 fps).
+Review the actual silhouette and motion, not just contact/seam scores. This profile
+only fixes the walking loop: direct player switches between idle and walking are
+not phase-aware and can jump. It does not provide accepted start/stop transitions
+or validate unrelated actions.
+
 ## Custom clips
 
 For a character whose proportions make a built-in keyed action awkward, an optional
@@ -83,6 +98,13 @@ idle pose, and the first and last keys should stay close to idle so the clip joi
 ```
 
 Optional keys: `prev` and `next` (cloth hand-over, default `idle`), `period` (loop length), `tags`.
+Keys must start at zero with strictly increasing finite times and recognized finite pose channels.
+Duration must be positive. A loop's last pose must match its first when the last key is at its period;
+setting a longer period reserves an automatic return to the starting pose. `prev` and `next` must
+name an available built-in/custom clip or be null. Non-looping clips with a `next` can use `next_at`
+between 0 and 1 to enter at a normalized time in that target (1 selects its last frame).
+Invalid keys, timing and references fail before rendering rather than silently disappearing or
+breaking the skeleton. Valid data still needs motion QA and visual review for pose continuity.
 Add `ground` to `tags` for a clip on the floor, so clipping checks run on it. The rig's joint limits
 apply automatically, so an extreme key may render less extreme than written: QA's `limits` reports it.
 
@@ -174,3 +196,9 @@ Rules for the layers:
   far hand. `cut_parts.py` writes it from the joints file's `_behind` / `_front`.
 - Paths are relative to the spec file.
 - Limit: rotated bitmaps keep the source's baked shading and resolution. Supply art at or above output size.
+
+For a `gait.walk.profile` of `natural_walk_v1`, the optional boolean
+`settle_relax_free_arm` relaxes only the far/empty arm toward its neutral carriage
+during grounded settling. It defaults to false and rejects non-boolean values or
+other gait profiles. See `walk-transitions.md`; this does not authorize a visual
+pass or alter foot contacts, the weapon hand, or the walk cycle itself.

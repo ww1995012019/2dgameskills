@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grounded walk start and stop</title>
+<style>body{font:16px system-ui;background:#e8e6df;color:#25282a;margin:24px}main{max-width:900px;margin:auto}canvas{width:100%;background:#e2e7ec;border-radius:12px}button{font:inherit;padding:10px 20px;margin:10px 8px 0 0}p{line-height:1.5}#status{font-variant-numeric:tabular-nums}</style>
+<main><h1>Grounded walk start and stop</h1><canvas width="900" height="600"></canvas>
+<button id="go">Walk</button><button id="stop">Stop</button><p id="status">Loading…</p>
+<p>Stand → reverse settle → accelerate → walk → decelerate → settle. Settle banks are used when present in this export. Stop is phase-aware and can take up to about one stride longer than the minimum braking time. Commands during a ramp are queued; the latest command wins. This uses a contact-locked standing stance rather than switching to the separate idle animation.</p>
+<p>Use the buttons or hold the right arrow. The camera follows the character; ground marks show world travel. Baked images retain frame-sampling error. This is a canvas runtime demonstration, not validation of other engine controllers.</p></main>
+<script src="sprite-player.js"></script><script>
+(async()=>{
+ const status=document.querySelector('#status'),canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
+ try {
+  const response=await fetch('../../animations.json');if(!response.ok)throw Error('Could not load animations.json');const doc=await response.json();
+  const images=await Promise.all(doc.pages.map(page=>new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(Error('Could not load atlas '+page.file));im.src='../../'+page.file;})));
+  const control=new GroundedWalkController(doc,images),scale=Math.min(1,470/doc.frame_size),ground=525;
+  document.querySelector('#go').onclick=()=>control.setMoving(true);document.querySelector('#stop').onclick=()=>control.setMoving(false);
+  addEventListener('keydown',e=>{if(e.key==='ArrowRight'){e.preventDefault();control.setMoving(true);}});addEventListener('keyup',e=>{if(e.key==='ArrowRight'){e.preventDefault();control.setMoving(false);}});
+  let last=null;
+  // Pause while hidden. Do not simulate an accidental multi-minute input hold.
+  document.addEventListener('visibilitychange',()=>{last=null;control.setMoving(false);});
+  function paint(now){const state=control.update(last===null?0:now-last);last=now;ctx.clearRect(0,0,900,600);ctx.strokeStyle='#859099';ctx.beginPath();ctx.moveTo(0,ground);ctx.lineTo(900,ground);
+   const spacing=45,shift=control.distance*scale%spacing;for(let x=-shift;x<900;x+=spacing){ctx.moveTo(x,ground);ctx.lineTo(x-12,ground+14);}ctx.stroke();
+   control.draw(ctx,450,ground,{scale});status.textContent=`${state.state} · speed ${state.speed.toFixed(1)} px/s · travel ${control.distance.toFixed(1)} px`;requestAnimationFrame(paint);}
+  requestAnimationFrame(paint);
+ }catch(error){status.textContent=error.message+' Open this exported folder through a local HTTP server.';}
+})();
+</script></html>

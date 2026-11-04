@@ -39,13 +39,33 @@ def head_length(mask, neck):
     return float(((np.column_stack([xs, ys]) - neck) @ axis).max())
 
 
-def build_spec(images,joints,order):
+def free_arm_carriage(upper_length, lower_length, elbow_angle, chest_lean):
+    """A free walking arm hangs below its shoulder, with its measured elbow bend.
+
+    Cancelling the two-bone chain's horizontal offset gives a neutral swing
+    centre without inventing a new elbow or stretching the source. Otherwise a
+    forward-bent source pose may keep the empty fist beside the sword while its
+    forearm is hidden behind the chest throughout the forward half of a walk.
+    """
+    bend = math.radians(elbow_angle)
+    offset = math.atan2(lower_length * math.sin(bend),
+                        upper_length + lower_length * math.cos(bend))
+    return chest_lean - math.degrees(offset)
+
+
+def build_spec(images,joints,order,head_attachment='cap_cover', weapon_hand_binding=False):
+    if head_attachment not in ('cap_cover', 'socket'):
+        raise ValueError('head_attachment: expected cap_cover or socket')
     masks={s:np.asarray(a)[:,:,3]>128 for s,a in images.items()}
     j={s:{n:np.asarray(p,float) for n,p in row.items()} for s,row in joints.items()}
     chains={s:np.array([j[s][n] for n in (('shoulder','elbow','wrist') if s.startswith('arm') else ('hip','knee','ankle'))]) for s in ('arm_near','arm_far','leg_near','leg_far')}
     lengths={s:lp.check_limb(s,masks[s],p) for s,p in chains.items()}
     for name in ('arm','leg'):lp.check_pair(name,lengths[name+'_near'],lengths[name+'_far'])
-    lp.check_neck_contact(masks)
+    if head_attachment == 'socket':
+        from socket_mount import validate_socket
+        validate_socket(masks['head'], masks['torso'], j['head']['head_base'])
+    else:
+        lp.check_neck_contact(masks)
     ppu=float((sum(lengths['leg_near'])+sum(lengths['leg_far']))/2/lp.LEG_LEN)
     hip=j['hips']['hip'];waist=j['hips']['waist'];neck=j['head']['head_base'];u=(neck-waist)/np.linalg.norm(neck-waist);forward=np.array([-u[1],u[0]])
     def along(p):
@@ -91,7 +111,7 @@ def build_spec(images,joints,order):
     data={}
     def tube(slot,bones,rest,**extra):
         length=sum(np.linalg.norm(np.diff(rest,axis=0),axis=1));radius=float(masks[slot].sum()/(2*length))
-        data[slot]=dict(kind='tube',bones=bones,rest=np.asarray(rest).tolist(),radius=radius,**extra)
+        data[slot]=dict(kind='tube',bones=bones,rest=np.asarray(rest).tolist(),radius=radius,source_frame=True,**extra)
     for side,word in (('n','near'),('f','far')):
         s='arm_'+word;tube(s,['sh_'+side,'el_'+side,'wr_'+side],chains[s], tip_lock=True, root_lock=True)
         s='leg_'+word;rest=chains[s];shin=(rest[2]-rest[1])/np.linalg.norm(rest[2]-rest[1]);radius=masks[s].sum()/(2*sum(lengths[s]))
@@ -103,16 +123,26 @@ def build_spec(images,joints,order):
     data['hips']=dict(kind='rigid',follow=['hip','body_rot'],anchor=hip.tolist())
     if 'weapon' in images: data['weapon']=dict(kind='rigid',follow=['wr_n','wep_a'],anchor=grip.tolist())
     body_rot=lp.angle_up(hip,waist);chest_rot=lp.angle_up(waist,neck);weapon_angle=lp.angle_down(grip,tip)
+    if not isinstance(weapon_hand_binding, bool):
+        raise ValueError('weapon_hand_binding must be a boolean')
+    if weapon_hand_binding:
+        if 'weapon' not in images:
+            raise ValueError('weapon_hand_binding requires weapon artwork')
+        body['weapon_hand_angle'] = weapon_angle - lp.angle_down(el, wr)
     canonical={s:canonical_arm(chains[s]) for s in ('arm_near','arm_far')}
     gait={}
     for clip,lean in (('idle',9.),('walk',8.)):
         an,ae,_=canonical['arm_near'];af,fe,_=canonical['arm_far']
         gait[clip]=dict(arm_n=[an+lean,2.5,ae,1.5],arm_f=[af+lean,1.8 if clip=='idle' else 15.,fe,2.6 if clip=='idle' else 5.],wep=weapon_angle-(an+ae),wep_sway=1.5)
+    # Only the near hand can carry a weapon in this input contract. Keep idle's
+    # source pose, but centre the free arm's walk swing beneath its own shoulder.
+    gait['walk']['arm_f'][0] = free_arm_carriage(*lengths['arm_far'], canonical['arm_far'][1], 8.)
     gait['walk'].update(stride=lp.STRIDE*legs,bob=(mid-low)/2)
     puppet=dict(px_per_unit=ppu,joints={n:p.tolist() for n,p in dict(hip=hip,waist=waist,neck=neck,head_base=neck,wr_n=wr,el_n=el).items()},
       rest_angles=dict(head_rot=0.,wep_a=weapon_angle,chest_rot=chest_rot,body_rot=body_rot),
       skirt_len=skirt_len/ppu,core_radius=core_px/ppu,rest_arm={s:[j['arm_'+w]['wrist'].tolist(),j['arm_'+w]['elbow'].tolist()] for s,w in (('n','near'),('f','far'))},
-      layers={s:data[s] for s in order},chains={},source='source.png',weapon_length=reach,weapon_back=back)
+      layers={s:data[s] for s in order},chains={},source='source.png',weapon_length=reach,weapon_back=back,
+      head_attachment=head_attachment,attachment_checks=True)
     spec=dict(puppet=puppet,body=body,gait=gait)
     # Validate legal runtime gait parameters now, before writing any accepted rig.
     build_clips(gait=gait,body=Body.from_spec(body))

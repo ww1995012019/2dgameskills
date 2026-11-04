@@ -222,6 +222,16 @@ These run in `qa_motion.py` under "broken parts", and any one fails the set:
 | `crouch` | walk on folded legs | mean knee bend in `walk` while the planted foot is ahead of or under the hip | 30 degrees |
 | `garment_ground` | loose painted fabric penetrates the floor in a ground clip | lowest occupied cloth/robe mesh vertex below the canvas ground line | 0.5 px |
 
+`smear` is a conservative local-gradient heuristic, not semantic proof of blur.
+Deliberate smooth skin or leather shading can produce the same statistics as a
+blurred patch. `smear_tile_report` exposes the exact source-layer tile coordinates,
+colour span and maximum adjacent-pixel step used by the existing gate. Inspect
+these regions at original resolution alongside the layer's contours and detail
+before attributing a failure to damaged artwork. Evidence does not waive a FAIL
+or grant visual approval; all thresholds and the fully opaque tile denominator
+remain unchanged. A known-limit expected-failure test records the smooth-shading
+ambiguity rather than pretending the detector can distinguish intent.
+
 `crouch` skips the part of stance with the foot behind the hip, because a knee bends 40 to 50 degrees
 to push off in any human walk. Counting it reported a false crouch on a correct leg. It judges `walk`
 only: `crouch_walk` bends the knee on purpose, and a running stance flexes about 35 degrees.

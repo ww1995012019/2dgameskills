@@ -3,7 +3,8 @@
 Each layer is complete art on the reference picture's canvas (see layer_slots.py) and is bound to a
 curve through that picture's joints. A pixel keeps its place along the curve and its distance from
 it, so when the skeleton moves a sleeve bends with the arm, a knee rounds instead of hinging, and a
-cloth follows its simulated chain as one sheet. Nothing is cut, so there is no seam and no patch.
+cloth follows its simulated chain as one sheet. Joints do not intentionally cut the source layer;
+independent layer attachments, mesh folds and visual occlusion still require explicit checks.
 """
 import math
 import os
@@ -88,6 +89,7 @@ class Layer:
         self.name = name
         self.root_lock = bool(data.get("root_lock", False))
         self.tip_lock = bool(data.get("tip_lock", False))
+        self.source_frame = bool(data.get("source_frame", False))
         self.kind = data["kind"]        # tube | rigid | cloth
         self.bones = data.get("bones", [])
         self.rest = [np.array(p, dtype=np.float64) for p in data.get("rest", [])]
@@ -124,6 +126,12 @@ class Layer:
     def bind_curve(self):
         if self.kind == "rigid":
             return
+        if self.source_frame:
+            rest_points = np.asarray(self.rest)
+            if (rest_points.ndim != 2 or rest_points.shape[1] != 2 or len(rest_points) < 2
+                    or not np.isfinite(rest_points).all()
+                    or np.any(np.linalg.norm(np.diff(rest_points, axis=0), axis=1) < 1e-8)):
+                raise ValueError(f'{self.name}: source-frame joints must be finite and consecutive joints distinct')
         rest = rounded(self.rest, self.radius)
         reach = float(max(self.image.size)) * 1.5
         self.rest_curve = extended(rest, reach)
@@ -143,6 +151,15 @@ class Layer:
         dy = self.vy + self.offset[1] - cur[at, 1]
         self.along = dx * tan[at, 0] + dy * tan[at, 1]
         self.across = -dx * tan[at, 1] + dy * tan[at, 0]
+        if self.source_frame:
+            # Bind and animate with the SAME fractional curve frames. Rounding
+            # only during binding shifts even an unchanged source pose. Nor
+            # should an elbow already painted bent be compressed a second time.
+            c, t, self.source_curvature = self.curve_frames(cur, self.place)
+            dx = self.vx + self.offset[0] - c[..., 0]
+            dy = self.vy + self.offset[1] - c[..., 1]
+            self.along = dx * t[..., 0] + dy * t[..., 1]
+            self.across = -dx * t[..., 1] + dy * t[..., 0]
         if self.foot:
             ankle, along = np.array(self.foot["ankle"]), np.array(self.foot["shin_dir"])
             rx, ry = self.vx + self.offset[0] - ankle[0], self.vy + self.offset[1] - ankle[1]
@@ -152,28 +169,53 @@ class Layer:
             s = np.clip((depth + self.foot["blend"]) / (2 * self.foot["blend"]), 0, 1)
             self.foot_w = s * s * (3 - 2 * s)
 
+    @staticmethod
+    def curve_frames(cur, place):
+        """Fractional positions, unit tangents and curvature for source-preserving rigs."""
+        tan = frames_of(cur)
+        i0 = np.floor(place).astype(int).clip(0, len(cur) - 2)
+        f = place - i0
+        c = cur[i0] * (1 - f[..., None]) + cur[i0 + 1] * f[..., None]
+        t = tan[i0] * (1 - f[..., None]) + tan[i0 + 1] * f[..., None]
+        length = np.linalg.norm(t, axis=-1)[..., None]
+        if np.any(length <= 1e-12):
+            raise ValueError('source-frame curve has an undefined tangent; inspect folded or coincident joints')
+        t = np.divide(t, length, out=np.zeros_like(t), where=length > 1e-12)
+        angle = np.unwrap(np.arctan2(tan[:, 1], tan[:, 0]))
+        step = np.hypot(*np.gradient(cur, axis=0).T) + 1e-9
+        bend = np.gradient(angle) / step
+        return c, t, bend[i0] * (1 - f) + bend[i0 + 1] * f
+
     def mapped(self, points, scale, sel=None):
         """Mesh vertices for a curve through this frame's joints, in output pixels.
 
         sel (a mask over the vertex grid) maps only those vertices; each vertex is independent
         until relaxation, so the selected values equal the same entries of the full grid."""
         cur = extended(rounded(points, self.radius * scale), self.reach * scale)
-        tan = frames_of(cur)
         place = self.place if sel is None else self.place[sel]
         along = self.along if sel is None else self.along[sel]
         across = self.across if sel is None else self.across[sel]
-        i0 = np.floor(place).astype(int).clip(0, len(cur) - 2)
-        f = (place - i0)[..., None]
-        c = cur[i0] * (1 - f) + cur[i0 + 1] * f
-        t = tan[i0] * (1 - f) + tan[i0 + 1] * f
-        t /= np.hypot(t[..., 0], t[..., 1])[..., None] + 1e-9
+        if self.source_frame:
+            c, t, k = self.curve_frames(cur, place)
+            rest_k = self.source_curvature if sel is None else self.source_curvature[sel]
+            # Only newly added inward bending compresses the artwork. Existing
+            # source curvature and a rigid rotation/scale preserve its shape.
+            added = np.maximum(np.abs(k) - np.maximum(np.sign(k) * rest_k / scale, 0), 0)
+            k = np.sign(k) * added
+        else:
+            # Preserve the original arithmetic for already-exported bindings.
+            tan = frames_of(cur)
+            i0 = np.floor(place).astype(int).clip(0, len(cur) - 2)
+            f = (place - i0)[..., None]
+            c = cur[i0] * (1 - f) + cur[i0 + 1] * f
+            t = tan[i0] * (1 - f) + tan[i0 + 1] * f
+            t /= np.hypot(t[..., 0], t[..., 1])[..., None] + 1e-9
+            ang = np.unwrap(np.arctan2(tan[:, 1], tan[:, 0]))
+            step = np.hypot(*np.gradient(cur, axis=0).T) + 1e-9
+            bend = np.gradient(ang) / step
+            k = bend[i0] * (1 - f[..., 0]) + bend[i0 + 1] * f[..., 0]
         n = np.stack([-t[..., 1], t[..., 0]], -1)
-        # Inside a bend, art wider than the curve's radius would cross itself. It compresses instead,
-        # easing into the radius, as cloth bunches on the inner side of a knee.
-        ang = np.unwrap(np.arctan2(tan[:, 1], tan[:, 0]))
-        step = np.hypot(*np.gradient(cur, axis=0).T) + 1e-9
-        bend = np.gradient(ang) / step
-        k = (bend[i0] * (1 - f[..., 0]) + bend[i0 + 1] * f[..., 0])
+        # Art wider than a tight bend compresses rather than crossing itself.
         across = across * scale
         inner = across * k > 0
         limit = INNER_LIMIT / (np.abs(k) + 1e-6)
@@ -182,7 +224,7 @@ class Layer:
         return c + t * along[..., None] * scale + n * eased[..., None]
 
 
-def lock_tip(layer, verts, points, scale, root=False, sel=None):
+def lock_tip(layer, verts, points, scale, root=False, sel=None, turn=0.0):
     """Keep distal hand art rigid; blend only on the proximal side of the wrist.
 
     Source joints and pixels remain unchanged. Existing rigs opt out by default.
@@ -195,7 +237,7 @@ def lock_tip(layer, verts, points, scale, root=False, sel=None):
     target_angle = math.atan2(target[1], target[0])
     vx, vy = (layer.vx, layer.vy) if sel is None else (layer.vx[sel], layer.vy[sel])
     held = rigid(vx + layer.offset[0], vy + layer.offset[1],
-                 layer.rest[end], points[end], target_angle - source_angle, scale)
+                 layer.rest[end], points[end], target_angle - source_angle + turn, scale)
     axis = source / max(float(np.linalg.norm(source)), 1e-9)
     depth = ((vx + layer.offset[0] - layer.rest[end][0]) * axis[0]
              + (vy + layer.offset[1] - layer.rest[end][1]) * axis[1])
@@ -422,7 +464,8 @@ class Puppet:
             if getattr(layer, 'root_lock', False) and layer.kind == "tube":
                 verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale, root=True, sel=sel)
             if getattr(layer, 'tip_lock', False) and layer.kind == "tube":
-                verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale, sel=sel)
+                verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale, sel=sel,
+                                 turn=-math.radians(sk.get("hand_n_turn", 0.)) if layer.bones[-1] == "wr_n" else 0.)
             if ground_contact and (layer.kind == "cloth" or layer.name == "robe"):
                 # The chain supports its centreline. The painted sheet has
                 # width too: compress the contacting fabric continuously onto

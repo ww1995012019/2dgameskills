@@ -15,7 +15,7 @@ import math
 
 from .constraints import LIMITS, face_circle, low_points
 from .mathx import Curve, hermite, lerp, rot
-from .rig import LAG, REST, Body, full_pose, solve, ankle_with_roll
+from .rig import LAG, REST, Body, full_pose, solve, ankle_with_roll, FOOT_HEEL, FOOT_BALL
 
 CH = list(REST)
 STANCE_REACH = 0.968   # a standing leg stops short of the soft end of its reach (Body.leg_soft)
@@ -81,6 +81,177 @@ class Proc(Clip):
 
     def sample(self, t):
         return self.fn(t)
+
+
+class GroundedGaitHold(Clip):
+    """Locomotion idle at a double-support phase; not the legacy idle pose."""
+
+    def __init__(self, walk, phase_time):
+        if (isinstance(phase_time, bool) or not isinstance(phase_time, (int, float))
+                or not math.isfinite(phase_time)):
+            raise ValueError('locomotion idle phase_time must be finite')
+        if not isinstance(walk, NaturalWalk) or not all(walk.contacts(phase_time).values()):
+            raise ValueError("locomotion idle requires natural walk double support")
+        super().__init__('locomotion_idle', 1., True, tags=('ground',))
+        self.walk, self.phase_time, self.body = walk, phase_time, walk.body
+        self.cloth_source = (walk, phase_time)
+
+    def sample(self, t):
+        return self.walk.sample(self.phase_time)
+
+    def contacts(self, t):
+        return self.walk.contacts(self.phase_time)
+
+    def settle(self, duration=.25):
+        return GroundedGaitSettle(self.walk, self.phase_time, duration)
+
+    def resume(self, duration=.3):
+        return GroundedGaitRamp(self.walk, self.phase_time, duration, stopping=False)
+
+
+class SettledGaitHold(GroundedGaitHold):
+    """Both feet flat, retaining the original world support anchors."""
+
+    def __init__(self, walk, phase_time):
+        super().__init__(walk, phase_time)
+        self.name = 'locomotion_idle_settled'
+
+    def sample(self, t):
+        return _settled_gait_pose(self.walk, self.phase_time, 1.)
+
+    def settle(self, duration=.25):
+        raise ValueError("gait hold is already settled")
+
+    def resume(self, duration=.25):
+        """First restore the supported gait pose; then resume its phase clock."""
+        return GroundedGaitSettle(self.walk, self.phase_time, duration, reverse=True)
+
+
+def _settled_gait_pose(walk, phase_time, weight):
+    p = walk.sample(phase_time)
+    if weight <= 0.:
+        return p
+    for side in 'nf':
+        # ankle_with_roll uses the same heel/toe pivot until pitch reaches zero.
+        # The target's flat ankle coordinates stay fixed, so no support slides.
+        p['foot_'+side+'_p'] *= 1.-weight
+    if getattr(walk, 'settle_relax_free_arm', False):
+        # Relax the empty arm, not the weapon hand, while planted soles stay fixed.
+        # Carry the neutral angle into this phase's chest frame. The same weight
+        # is reversed on resume, preserving both endpoint poses exactly.
+        target_up = walk.arm_f[0] + p['pelvis'] + p['spine'] - walk.pelvis - walk.lean
+        p['arm_f_up'] += weight * (target_up - p['arm_f_up'])
+        p['arm_f_lo'] += weight * (walk.arm_f[2] - p['arm_f_lo'])
+    p['root_y'] = measured_walk_height(
+        p, walk.body, reach_fraction=.991,
+        softness=.008*min(sum(walk.body.leg_bones(s)) for s in 'nf')) - walk.body.hip_h
+    return p
+
+
+class GroundedGaitSettle(Clip):
+    """Finite heel flattening (or its reverse), with zero world displacement."""
+
+    def __init__(self, walk, phase_time, duration=.25, reverse=False):
+        # Validate support before authoring a roll around a planted sole.
+        GroundedGaitHold(walk, phase_time)
+        if (isinstance(duration, bool) or not isinstance(duration, (int, float))
+                or not math.isfinite(duration) or duration <= 0):
+            raise ValueError("settle duration must be finite and greater than zero")
+        if not isinstance(reverse, bool):
+            raise ValueError("settle reverse must be boolean")
+        super().__init__('walk_unsettle' if reverse else 'walk_settle', duration,
+                         False, tags=('ground',))
+        self.walk, self.phase_time, self.body = walk, phase_time, walk.body
+        self.cloth_source = (walk, phase_time)
+        self.reverse = reverse
+
+    def sample(self, t):
+        u = min(1., max(0., t/self.duration))
+        weight = u*u*u*(10. + u*(-15. + 6.*u))
+        return _settled_gait_pose(self.walk, self.phase_time, 1.-weight if self.reverse else weight)
+
+    def contacts(self, t):
+        return self.walk.contacts(self.phase_time)
+
+    def displacement(self, t):
+        return 0.
+
+    def hold(self):
+        cls = GroundedGaitHold if self.reverse else SettledGaitHold
+        return cls(self.walk, self.phase_time)
+
+    def resume(self, duration=.3):
+        if not self.reverse:
+            raise ValueError("settled gait must reverse settle before resuming")
+        return GroundedGaitRamp(self.walk, self.phase_time, duration, stopping=False)
+
+
+class GroundedGaitRamp(Clip):
+    """Slow a natural gait into double support, or resume its held stance.
+
+    One analytic clock drives the pose AND world displacement. Consumers must
+    use displacement(t), not constant clip.speed. Stopping holds a gait stance,
+    not the authored idle animation. No contact targets are blended or snapped.
+    """
+
+    def __init__(self, walk, source_time, duration=.3, stopping=True):
+        if not isinstance(walk, NaturalWalk):
+            raise ValueError("grounded ramp requires natural_walk_v1")
+        for key, v in (("source_time", source_time), ("duration", duration)):
+            if (isinstance(v, bool) or not isinstance(v, (int, float))
+                    or not math.isfinite(v) or key == 'duration' and v <= 0):
+                raise ValueError(f"grounded ramp {key} must be finite" +
+                                 (" and greater than zero" if key == 'duration' else ""))
+        self.walk, self.source_time, self.stopping = walk, source_time, stopping
+        if stopping:
+            # Integral of the symmetric unit-speed easing curve is duration/2.
+            # Choose the first double-support centre beyond the requested minimum
+            # braking distance. Thus the swing foot always lands before the hold.
+            half = walk.duration / 2
+            centre = (walk.duty - .5) * walk.duration / 2
+            end = centre + math.ceil((source_time + duration/2 - centre)/half)*half
+            duration = 2*(end-source_time)
+        super().__init__('walk_stop' if stopping else 'walk_resume', duration,
+                         False, tags=('ground',))
+        self.body = walk.body
+
+    def phase_time(self, t):
+        if t <= 0:
+            return self.source_time + (t if self.stopping else 0.)
+        if t >= self.duration:
+            return self.source_time + self.duration/2 + (0. if self.stopping else t-self.duration)
+        u = t/self.duration
+        integrated = u**4 * (2.5 + u*(-3. + u))
+        return self.source_time + self.duration * (u-integrated if self.stopping else integrated)
+
+    def phase_rate(self, t):
+        u = min(1., max(0., t/self.duration))
+        eased = u*u*u*(10. + u*(-15. + 6.*u))
+        return 1.-eased if self.stopping else eased
+
+    def sample(self, t):
+        return self.walk.sample(self.phase_time(t))
+
+    def contacts(self, t):
+        return self.walk.contacts(self.phase_time(t))
+
+    def displacement(self, t):
+        """Exact horizontal world travel relative to t=0, in rig units."""
+        return self.walk.speed * (self.phase_time(t)-self.source_time)
+
+    def vel(self, t):
+        return self.walk.speed*self.phase_rate(t), 0.
+
+    def hold(self):
+        if not self.stopping:
+            raise ValueError("hold requires a stopped gait")
+        return GroundedGaitHold(self.walk, self.phase_time(self.duration))
+
+    def resume(self, duration=.3):
+        """Resume from this stop's held stance; add its displacement externally."""
+        if not self.stopping:
+            raise ValueError("resume requires a stopped gait")
+        return GroundedGaitRamp(self.walk, self.phase_time(self.duration), duration, stopping=False)
 
 
 class Gait(Clip):
@@ -158,7 +329,93 @@ class Gait(Clip):
         return p
 
 
-def measured_walk_height(p,body):
+class NaturalWalk(Gait):
+    """Opt-in, proportion-derived upright walk with explicit sole support.
+
+    The old gait assumes short cartoon feet. Long painted boots otherwise roll
+    the ankle forward and upward so early that the trailing knee stays folded.
+    Center the *sole*, leave it flat through most of stance, and fit the stride
+    to both leg and foot length. No source-image coordinates are needed.
+    """
+
+    def __init__(self, body, T, bounce=1.0, carry=None):
+        carry = carry or {}
+        self.body = body
+        self.soles = {s: (getattr(body, 'foot_'+s+'_heel') or FOOT_HEEL,
+                          getattr(body, 'foot_'+s+'_ball') or FOOT_BALL) for s in 'nf'}
+        leg = min(sum(body.leg_bones(s)) for s in 'nf')
+        sole = max(ball[0] - heel[0] for heel, ball in self.soles.values())
+        # Keep visible separation even for long boots, without demanding a split.
+        stride = min(.9 * leg, max(.74 * leg, 1.85 * sole))
+        super().__init__('walk', T, stride, .12 * leg * (.6 + .4 * min(bounce, 1.2)), .6,
+                         front=.5, lean=1.6, pelvis=.4, bob=0., surge=0., sh=.012*leg,
+                         hp=.006*leg, peak=.65, wep=carry.get('wep', 56.), tags=('ground',),
+                         events=[(0., 'footstep'), (T / 2, 'footstep')])
+        self.contact_body = body
+        self.wep_sway = 2.0
+        d = self.duty
+        # A long toe needs a smaller rotation for the same ankle rise.
+        toe = math.degrees(math.asin(min(.40, .10 * leg /
+                          max(leg*1e-9, *(abs(ball[0]) for _, ball in self.soles.values())))))
+        self.pitch = Curve([0., .18*d, .70*d, d, d+.34*(1-d), d+.78*(1-d)],
+                           [[10.], [0.], [0.], [-toe], [-10.], [8.]],
+                           loop=True, period=1.)
+        # Preserve the carrying elbow, but derive its upper-arm angle from the
+        # actual chain. The free arm stays relaxed under its own shoulder.
+        self.arm_n = self._carriage('n', carry.get('arm_n', (-4, 0, 30, 0))[2], 9., 3., .12)
+        self.arm_f = self._carriage('f', min(20., carry.get('arm_f', (0, 0, 20, 0))[2]), 13., 4., 0.)
+
+    def low_weapon_carry(self):
+        """Quiet one-handed carry, wrist centred under its own shoulder.
+
+        Requires a measured hand/weapon frame. Reduced swing avoids treating the
+        loaded arm like a free arm; it does not approve the source grasp artwork.
+        """
+        if self.body.weapon_hand_angle is None:
+            raise ValueError('held_weapon_carry requires measured weapon_hand_angle')
+        self.arm_n = self._carriage('n', self.arm_n[2], 3., 1., 0.)
+        self.wep_sway = .5
+
+    def standing(self):
+        """Initial locomotion idle, with both soles supported before starting."""
+        return GroundedGaitHold(self, (self.duty-.5)*self.duration/2)
+
+    def stop(self, source_time, min_duration=.3):
+        """Brake from any gait phase into a held, grounded double-support stance."""
+        return GroundedGaitRamp(self, source_time, min_duration)
+
+    def _carriage(self, side, elbow, swing, elbow_sway, forward):
+        upper, lower = self.body.arm_bones(side)
+        bend = math.radians(elbow)
+        axis = math.atan2(lower * math.sin(bend), upper + lower * math.cos(bend))
+        reach = math.hypot(lower * math.sin(bend), upper + lower * math.cos(bend))
+        upper_angle = self.pelvis + self.lean - math.degrees(axis) + math.degrees(math.asin(
+            min(.8, forward * (upper + lower) / reach)))
+        return upper_angle, swing, elbow, min(elbow_sway, .5 * elbow)
+
+    def sample(self, t):
+        p = super().sample(t)
+        ph = (t / self.T) % 1
+        # Pelvic/chest counter-motion is subtle; it must not pull the shoulders
+        # permanently forward of the supporting hips.
+        p['pelvis'] = self.pelvis + .8 * math.sin(TAU * ph)
+        p['spine'] = self.lean - .6 * math.sin(TAU * ph) + .35 * math.cos(2 * TAU * ph)
+        p['head'] = -p['pelvis'] - p['spine']
+        for side in 'nf':
+            heel, ball = self.soles[side]
+            p['foot_'+side+'_x'] -= .5 * (heel[0] + ball[0])
+            # Each sole has its own measured ground height, not their average.
+            p['foot_'+side+'_y'] += -min(heel[1], ball[1]) - self.body.ankle_h
+        # The support-height envelope already keeps both legs below extension.
+        # Use a tighter numerical soft zone only for this bounded gait, instead
+        # of retracting a planted ankle as the legacy soft solver would do.
+        p['_leg_soft'] = .997
+        p['root_y'] = measured_walk_height(p, self.body, reach_fraction=.991,
+                                          softness=.008*min(sum(self.body.leg_bones(s)) for s in 'nf')) - self.body.hip_h
+        return p
+
+
+def measured_walk_height(p,body,reach_fraction=.985,softness=.25):
     """Vault over measured rolling soles without locking or crouching the legs.
 
     Both continuous foot paths bound hip height; a raised swing foot normally
@@ -168,16 +425,17 @@ def measured_walk_height(p,body):
     """
     rotation=p['root_rot']+p['pelvis'];axis=rot((1.,0.),rotation);heights=[]
     for side in 'nf':
-        reach=sum(body.leg_bones(side))*.985
+        reach=sum(body.leg_bones(side))*reach_fraction
         seat=getattr(body,'hip_'+side+'_at')
         if seat is None:seat=(body.hip_w*.3,0.) if side=='n' else (-body.hip_w,0.)
         offset=rot(tuple(seat),rotation);sign=1 if side=='n' else -1
         offset=(offset[0]+axis[0]*p['hp']*sign,offset[1]+axis[1]*p['hp']*sign)
         ankle=ankle_with_roll((p['foot_'+side+'_x'],body.ankle_h+p['foot_'+side+'_y']),
-            p['foot_'+side+'_p'],getattr(body,'foot_'+side+'_heel'),getattr(body,'foot_'+side+'_ball'))
+            p['foot_'+side+'_p'],getattr(body,'foot_'+side+'_heel') or FOOT_HEEL,
+            getattr(body,'foot_'+side+'_ball') or FOOT_BALL)
         dx=ankle[0]-p['root_x']-offset[0]
         heights.append(ankle[1]+math.sqrt(max(reach*reach-dx*dx,0.))-offset[1])
-    low=min(heights);softness=.25
+    low=min(heights)
     return low-softness*math.log(sum(math.exp(-(h-low)/softness) for h in heights))
 
 
@@ -218,11 +476,87 @@ def clear_face(clip, body):
     clip.curve = Curve(clip.curve.t, values)
 
 
+def _validate_custom(custom, available, idle):
+    """Reject malformed action data before it can poison curves or rig coordinates."""
+    if custom is None:
+        return
+    if not isinstance(custom, dict):
+        raise ValueError("custom_clips: expected an object")
+    names = set(available) | set(custom)
+
+    def number(value):
+        return (not isinstance(value, bool) and isinstance(value, (int, float))
+                and math.isfinite(value))
+
+    for name, spec in custom.items():
+        path = f"custom_clips.{name}"
+        if not isinstance(name, str) or not name.strip() or not isinstance(spec, dict):
+            raise ValueError(f"{path}: expected a named clip object")
+        loop = spec.get("loop", False)
+        if not isinstance(loop, bool):
+            raise ValueError(f"{path}.loop: expected a boolean")
+        keys = spec.get("keys")
+        if not isinstance(keys, (list, tuple)) or not keys:
+            raise ValueError(f"{path}.keys: expected nonempty [time, pose] keys")
+        previous = -1.0
+        poses = []
+        for i, key in enumerate(keys):
+            key_path = f"{path}.keys[{i}]"
+            if not isinstance(key, (list, tuple)) or len(key) != 2:
+                raise ValueError(f"{key_path}: expected [time, pose]")
+            time, pose = key
+            if not number(time) or time < 0 or time <= previous or (i == 0 and time != 0):
+                raise ValueError(f"{key_path}: times must start at 0 and strictly increase")
+            previous = time
+            if not isinstance(pose, dict):
+                raise ValueError(f"{key_path}: expected a pose object")
+            for channel, value in pose.items():
+                if channel not in IDX or not number(value):
+                    raise ValueError(f"{key_path}.{channel}: expected a known channel and finite number")
+                if channel == "squash" and value <= 0:
+                    raise ValueError(f"{key_path}.squash: must be positive")
+                if channel == "ik_body" and not 0 <= value <= 1:
+                    raise ValueError(f"{key_path}.ik_body: must be between 0 and 1")
+            poses.append(P(idle, **pose))
+        duration = spec.get("period", previous) if loop else previous
+        if not number(duration) or duration <= 0:
+            raise ValueError(f"{path}: duration must be finite and positive")
+        if "period" in spec and not loop:
+            raise ValueError(f"{path}.period: only valid for looping clips")
+        if loop:
+            if duration < previous:
+                raise ValueError(f"{path}.period: must not precede the final key")
+            if duration == previous and any(poses[0][c] != poses[-1][c] for c in CH):
+                raise ValueError(f"{path}.keys: a key at the period must match the first pose")
+        for field in ("prev", "next"):
+            target = spec.get(field, "idle")
+            if target is not None and (not isinstance(target, str) or target not in names):
+                raise ValueError(f"{path}.{field}: unknown clip {target!r}")
+        entry = spec.get("next_at", 0.0)
+        if not number(entry) or not 0 <= entry <= 1:
+            raise ValueError(f"{path}.next_at: expected a normalized entry between 0 and 1")
+        if entry and (loop or spec.get("next", "idle") is None):
+            raise ValueError(f"{path}.next_at: requires a non-looping clip with a next clip")
+        events = spec.get("events", [])
+        if not isinstance(events, (list, tuple)):
+            raise ValueError(f"{path}.events: expected [time, name] events")
+        for i, event in enumerate(events):
+            if (not isinstance(event, (list, tuple)) or len(event) != 2
+                    or not number(event[0]) or not 0 <= event[0] <= duration
+                    or not isinstance(event[1], str) or not event[1]):
+                raise ValueError(f"{path}.events[{i}]: expected a finite in-range time and event name")
+        tags = spec.get("tags", ())
+        if not isinstance(tags, (list, tuple)) or any(not isinstance(t, str) or not t for t in tags):
+            raise ValueError(f"{path}.tags: expected a list of nonempty strings")
+
+
 def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=None):
     """style: {'speed': time multiplier > 1 = snappier, 'bounce': amplitude multiplier}.
     gait: {clip: {arm_n, arm_f, wep, wep_sway, bob, stride}} replaces a gait's carried pose, hip bob and stride.
     gait.idle accepts arm_n/arm_f = [upper rest, upper sway, elbow rest, elbow sway], wep and wep_sway;
     its rest angles also set shared stance poses and clip handovers.
+    gait.walk.profile='natural_walk_v1' opts into sole-centered, body-derived upright walking;
+    explicit walk arm/stride overrides still take precedence over that profile's defaults.
     body: the character's own proportions, for rules that fit a clip to them. Without it every clip is
     written for the default body."""
     fitted = body is not None
@@ -362,6 +696,14 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
                 events=[(0.0, "footstep"), (0.42 * tm, "footstep")])
     if all(getattr(body,'foot_'+s+'_'+end) is not None for s in 'nf' for end in ('heel','ball')):
         walk.contact_body=body
+    walk_profile = (gait or {}).get('walk', {}).get('profile')
+    if walk_profile is not None:
+        if walk_profile != 'natural_walk_v1':
+            raise ValueError(f'gait.walk.profile: unknown profile {walk_profile!r}')
+        # Exactly 20 frames at 24 fps and 25 at 30 fps. The legacy .84-second
+        # period is retained above; rounding it to 20 frames would otherwise
+        # make runtime ground travel disagree with the authored contact speed.
+        walk = NaturalWalk(body, (5. / 6.) * tm, bn, idle_carry)
     run = Gait("run", 0.56 * tm, 48, 19, 0.36, front=0.46, hip=-5.0, bob=2.0 * bn, bob_at=0.42,
                lean=13, pelvis=9, head=-15, arm_n=(-26, 14, 40, 8), arm_f=(8, 44, 84, 14),
                wep=-75, heel=12, toe=46, swing_pitch=-62, peak=0.62, tan=0.62, sh=2.2, hp=1.6,
@@ -599,20 +941,34 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
     for name, pose in (gait or {}).items():
         if name == "idle":  # already applied before the shared seam poses were built
             continue
+        if 'held_weapon_carry' in pose and any(k in pose for k in ('arm_n', 'wep_sway')):
+            raise ValueError('held_weapon_carry cannot be combined with arm_n or wep_sway overrides')
         for key, value in pose.items():
-            if key == "stride":     # the feet must keep the ground speed, so the speed changes with it
+            if key == 'profile'  and name == 'walk':
+                continue  # selected before constructing the clip
+            if key == 'settle_relax_free_arm':
+                if name != 'walk' or not isinstance(out[name], NaturalWalk) or type(value) is not bool:
+                    raise ValueError('settle_relax_free_arm requires a natural walk and an explicit boolean')
+                out[name].settle_relax_free_arm = value
+            elif key == 'held_weapon_carry':
+                if name != 'walk' or not isinstance(out[name], NaturalWalk) or value != 'low':
+                    raise ValueError('held_weapon_carry requires natural walk and the low profile')
+                out[name].low_weapon_carry()
+            elif key == "stride":     # the feet must keep the ground speed, so the speed changes with it
                 out[name].stride(value)
             elif key in ("arm_n", "arm_f", "wep", "wep_sway", "bob"):
                 setattr(out[name], key, tuple(value) if isinstance(value, list) else value)
             else:
                 raise ValueError(f"gait.{name}: unknown field {key!r}")
 
+    _validate_custom(custom, out, idle0)
     for name, spec in (custom or {}).items():
         ks = [(t * tm, P(idle0, **pose)) for t, pose in spec["keys"]]
         loop = bool(spec.get("loop"))
         period = spec["period"] * tm if loop and "period" in spec else ks[-1][0]
         out[name] = Keyed(name, ks, loop=loop, period=period if loop else None,
                           prev=spec.get("prev", "idle"), next=spec.get("next", "idle"),
+                          next_at=spec.get("next_at", 0.0),
                           events=[(t * tm, n) for t, n in spec.get("events", [])],
                           tags=tuple(spec.get("tags", ())))
 

@@ -4,9 +4,10 @@ Space: x = forward (character faces +x), y = up, ground at y=0. Units: standing 
 Rotations are clockwise degrees for the body (lean forward > 0). Limb swing > 0 = toward +x.
 """
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from numbers import Real
 
-from .constraints import ANKLE_SOFT, ankle_angle, ground_clamp, limited
+from .constraints import ANKLE_SOFT, ankle_angle, ground_clamp, limited, soft_limit
 from .mathx import add, rot, scale
 
 # Every channel a pose can set. Poses are sparse dicts layered over these defaults.
@@ -50,6 +51,7 @@ class Body:
     weapon_margin: float = 2.8  # weapon half-thickness plus clearance
     weapon_grip_along: float = 0.14  # measured wrist-to-grip offset / forearm length
     weapon_grip_across: float = 0.0  # perpendicular offset in the rig's y-up frame
+    weapon_hand_angle: float = None  # opt-in: measured blade angle relative to source forearm
     foot_n_heel: tuple = None  # optional measured sole contacts relative to ankle
     foot_n_ball: tuple = None
     foot_f_heel: tuple = None
@@ -84,9 +86,37 @@ class Body:
     @classmethod
     def from_spec(cls, spec):
         b = cls()
+        known = {field.name for field in fields(cls)}
+        vectors = {'sh_n_at', 'sh_f_at', 'hip_n_at', 'hip_f_at',
+                   'foot_n_heel', 'foot_n_ball', 'foot_f_heel', 'foot_f_ball'}
+        optional = vectors | {'thigh_f', 'shin_f', 'up_arm_f', 'lo_arm_f', 'weapon_hand_angle'}
+        positive = {'thigh', 'shin', 'up_arm', 'lo_arm', 'thigh_f', 'shin_f',
+                    'up_arm_f', 'lo_arm_f', 'pelvis_len', 'chest_len', 'head_size', 'bulk'}
+        nonnegative = {'neck_len', 'hip_w', 'sh_w', 'weapon_front', 'weapon_back', 'weapon_margin'}
+        if spec is not None and not isinstance(spec, dict):
+            raise ValueError('body: expected an object')
         for k, v in (spec or {}).items():
-            if hasattr(b, k):
-                setattr(b, k, v)
+            if k not in known:
+                raise ValueError(f'body.{k}: unknown body parameter')
+            if v is None and k in optional:
+                continue
+            if k == 'foot_wrap':
+                if not isinstance(v, bool):
+                    raise ValueError('body.foot_wrap: expected a boolean')
+            elif k in vectors:
+                if (not isinstance(v, (list, tuple)) or len(v) != 2 or
+                        any(isinstance(x, bool) or not isinstance(x, Real) or not math.isfinite(x) for x in v)):
+                    raise ValueError(f'body.{k}: expected two finite coordinates')
+            else:
+                if isinstance(v, bool) or not isinstance(v, Real) or not math.isfinite(v):
+                    raise ValueError(f'body.{k}: expected a finite number')
+                if k in positive and v <= 0:
+                    raise ValueError(f'body.{k}: must be positive')
+                if k in nonnegative and v < 0:
+                    raise ValueError(f'body.{k}: cannot be negative')
+                if k == 'leg_soft' and not 0 < v < 1:
+                    raise ValueError('body.leg_soft: must be strictly between 0 and 1')
+            setattr(b, k, v)
         return b
 
 
@@ -191,7 +221,10 @@ def solve(pose, b: Body):
                 local = (ground[0], ground[1] - b.hip_h)
                 carried = add(hip, rot(local, g("root_rot")))
                 ground = (ground[0] * (1 - k) + carried[0] * k, ground[1] * (1 - k) + carried[1] * k)
-            knee, ank = two_bone(hj, ground, thigh, shin, 1.0, b.leg_soft)
+            # Bounded gait profiles can supply a tighter soft zone after fitting
+            # their support envelope below extension. Other actions retain the
+            # body's authored soft IK and its existing output.
+            knee, ank = two_bone(hj, ground, thigh, shin, 1.0, pose.get('_leg_soft', b.leg_soft))
             spin = (g("root_rot") + 180.0) % 360.0 - 180.0 if b.foot_wrap else g("root_rot")
             return knee, ank, -pitch + spin * k
 
@@ -218,12 +251,41 @@ def solve(pose, b: Body):
     forearm = (wr_n[0] - el_n[0], wr_n[1] - el_n[1])
     weapon_grip = (wr_n[0] + forearm[0] * b.weapon_grip_along - forearm[1] * b.weapon_grip_across,
                    wr_n[1] + forearm[1] * b.weapon_grip_along + forearm[0] * b.weapon_grip_across)
-    pivot_y = weapon_grip[1]
+    hand_n_turn = 0.0
     weapon_input = fa_n + g("wep")
     contact_angle = pose.get("_weapon_angle")
-    wep_a = ground_clamp(weapon_input if contact_angle is None else contact_angle,
-                         pivot_y, b.weapon_front, b.weapon_back, b.weapon_margin,
-                         reference=contact_angle)
+    pivot_y = weapon_grip[1]
+    if b.weapon_hand_angle is None:
+        wep_a = ground_clamp(weapon_input if contact_angle is None else contact_angle,
+                             pivot_y, b.weapon_front, b.weapon_back, b.weapon_margin,
+                             reference=contact_angle)
+    else:
+        # A grasp is a frame, not just a point. The hand art, palm offset and
+        # blade must turn together. Old procedural/puppet rigs keep their path.
+        requested = (g("wep") - b.weapon_hand_angle + 180.) % 360. - 180.
+        wrist = soft_limit(requested, -35., 35.)
+        weapon_input = fa_n + b.weapon_hand_angle + wrist
+        desired = weapon_input if contact_angle is None else contact_angle
+        offset = (weapon_grip[0] - wr_n[0], weapon_grip[1] - wr_n[1])
+        wep_a = desired
+        # Ground clearance changes the wrist angle and hence the palm height.
+        # Solve that small coupled contact rather than pivoting just the blade.
+        for _ in range(24):
+            hand_n_turn = (wep_a - fa_n - b.weapon_hand_angle + 180.) % 360. - 180.
+            moved = rot(offset, -hand_n_turn)
+            weapon_grip = add(wr_n, moved)
+            pivot_y = weapon_grip[1]
+            corrected = ground_clamp(desired, pivot_y, b.weapon_front, b.weapon_back,
+                                     b.weapon_margin, reference=contact_angle)
+            if abs(corrected - wep_a) < 1e-9:
+                break
+            wep_a = corrected
+        # Recompute the final palm from the final weapon angle, even if the
+        # contact iteration exhausted its budget. Numeric QA still checks floor.
+        hand_n_turn = (wep_a - fa_n - b.weapon_hand_angle + 180.) % 360. - 180.
+        weapon_grip = add(wr_n, rot(offset, -hand_n_turn))
+        pivot_y = weapon_grip[1]
+        excess.append(max(0., abs(requested) - 35., abs(hand_n_turn) - 35.))
     return dict(
         hip=hip, waist=waist, neck=neck, head_base=head_base,
         body_rot=body_rot, chest_rot=chest_rot, head_rot=head_rot,
@@ -232,7 +294,7 @@ def solve(pose, b: Body):
         hip_n=hip_n, kn_n=kn_n, an_n=an_n, fr_n=fr_n,
         hip_f=hip_f, kn_f=kn_f, an_f=an_f, fr_f=fr_f,
         wep_a=wep_a, excess=excess, weapon_input=weapon_input, weapon_pivot_y=pivot_y,
-        weapon_grip=weapon_grip,
+        weapon_grip=weapon_grip, hand_n_turn=hand_n_turn,
         foot_n_heel=b.foot_n_heel or FOOT_HEEL, foot_n_ball=b.foot_n_ball or FOOT_BALL,
         foot_f_heel=b.foot_f_heel or FOOT_HEEL, foot_f_ball=b.foot_f_ball or FOOT_BALL,
         wep_dir=(math.sin(math.radians(wep_a)), -math.cos(math.radians(wep_a))),

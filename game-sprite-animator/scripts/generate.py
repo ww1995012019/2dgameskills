@@ -7,6 +7,7 @@
 """
 import argparse
 import json
+import math
 import os
 import shutil
 import sys
@@ -19,11 +20,12 @@ from sprite_anim.art import Canvas  # noqa: E402
 from sprite_anim.rig_data import JointRecorder  # noqa: E402
 from sprite_anim.constraints import frame_metrics  # noqa: E402
 from sprite_anim.fx import build_fx  # noqa: E402
-from sprite_anim.motions import SEAMS, build_clips  # noqa: E402
+from sprite_anim.motions import SEAMS, NaturalWalk, GroundedGaitHold, build_clips  # noqa: E402
 from sprite_anim.integrity import HUMANOID_BONES  # noqa: E402
 from sprite_anim.part_check import check_parts  # noqa: E402
-from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion  # noqa: E402
-from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_time, to_u8  # noqa: E402
+from sprite_anim.occlusion_review import clip_candidates, write_report as write_occlusion_report  # noqa: E402
+from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion, check_attachments  # noqa: E402
+from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_count, frame_time, to_u8  # noqa: E402
 from sprite_anim.rig import Body  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
 
@@ -81,6 +83,7 @@ def main():
     ap.add_argument("--pixel", action="store_true", help="force pixel-art output")
     ap.add_argument("--clips", default="all", help="comma list; default all")
     ap.add_argument("--motion-blur", type=int, default=1, help="temporal samples per frame (HD only)")
+    ap.add_argument("--grounded-settle", action="store_true", help="bake contact-locked flat-foot standing banks for natural walk")
     ap.add_argument("--no-fx", action="store_true")
     ap.add_argument("--no-frames", action="store_true", help="skip loose per-frame PNGs")
     ap.add_argument("--out", required=True)
@@ -105,8 +108,33 @@ def main():
     if unknown:
         sys.exit(f"unknown clips: {unknown}\navailable: {list(clips)}")
 
+    settle_banks = []
+    if a.grounded_settle:
+        walk = clips.get('walk')
+        if 'walk' not in names or not isinstance(walk, NaturalWalk):
+            sys.exit('--grounded-settle requires selected natural_walk_v1 walk')
+        count = frame_count(walk, over.get('walk', fps))
+        centre = (walk.duty - .5) * walk.duration / 2
+        for side in range(2):
+            clock_phase = centre + side * walk.duration / 2
+            source_frame = int(math.floor(clock_phase / walk.duration * count + 1e-10))
+            sample_time = source_frame * walk.duration / count
+            bank_name = 'walk_settle_' + str(side)
+            if bank_name in clips:
+                sys.exit('reserved grounded settle clip already exists: ' + bank_name)
+            bank = GroundedGaitHold(walk, sample_time).settle(.25)
+            bank.name = bank_name
+            clips[bank_name] = bank
+            names.append(bank_name)
+            settle_banks.append(dict(clip=bank_name, source_frame=source_frame,
+                sample_time_s=sample_time, clock_phase_s=clock_phase, duration_s=bank.duration))
+
     root = a.out
     if os.path.isdir(root):
+        for stale in ('occlusion_review.json', 'occlusion_decisions.json', 'occlusion_decisions_template.json'):
+            stale_path = os.path.join(root, stale)
+            if os.path.isfile(stale_path):
+                os.remove(stale_path)
         for sub in ("frames", "sheets", "engine", "fx"):
             shutil.rmtree(os.path.join(root, sub), ignore_errors=True)
     for sub in ("engine/godot", "engine/cocos", "engine/web", "sheets"):
@@ -137,6 +165,15 @@ def main():
             next=c.next if not c.loop else None, prev=c.prev,
             chain_frame=int(round(c.chain_at / step)) if c.chain_at else None,
             tags=sorted(c.tags))
+        if isinstance(c, NaturalWalk):
+            # Exact sample clock for opt-in grounded stop/resume. The ordinary
+            # fps/duration fields and other engine exports remain unchanged.
+            meta[nm]['locomotion'] = dict(profile='natural_walk_v1',
+                period_s=c.duration, duty=c.duty, speed_px_s=c.speed * unit_px,
+                idle_mode='held_double_support', contact_sampling='baked_frames')
+            if settle_banks:
+                meta[nm]['locomotion']['settle_banks'] = settle_banks
+                meta[nm]['locomotion']['idle_mode'] = 'settled_double_support'
         traces[nm] = rig_trace(c, n, cfps, r.art, unit_px, size)
         print(f"[clip] {nm:<14} {n:>3}f @ {cfps}fps {'loop' if c.loop else 'once'}")
 
@@ -154,6 +191,9 @@ def main():
     export.cocos_plist(root, doc)
     export.css_keyframes(root, doc, sheets)
     shutil.copy(os.path.join(SKILL_ROOT, "assets", "engine", "web", "sprite-player.js"), os.path.join(root, "engine", "web"))
+    if any('locomotion' in m for m in meta.values()):
+        shutil.copy(os.path.join(SKILL_ROOT, 'assets', 'engine', 'web', 'grounded-walk.html'),
+                    os.path.join(root, 'engine', 'web', 'grounded-walk.html'))
     os.makedirs(os.path.join(root, "engine", "unity"), exist_ok=True)
     shutil.copy(os.path.join(SKILL_ROOT, "assets", "engine", "unity", "SpriteSetImporter.cs"), os.path.join(root, "engine", "unity"))
 
@@ -187,18 +227,34 @@ def main():
         with open(bind_path, encoding="utf-8") as fh:
             bind = json.load(fh)
     problems = check_parts(spec, r.art.body) if spec.get("parts") else []
+    occlusion_candidates = []
+    occlusion_summary = None
     if r.art.puppet:
         problems = check_layers(r.art.puppet)
         for nm in names:
             problems += check_motion(r, clips[nm], len(rendered[nm]["frames"]), over.get(nm, fps))
             problems += check_hands(r, spec, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
             problems += check_core(r, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
+            if spec.get('puppet', {}).get('attachment_checks', False):
+                problems += check_attachments(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
+                occlusion_candidates += clip_candidates(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
+        if spec.get('puppet', {}).get('attachment_checks', False):
+            occlusion_summary = write_occlusion_report(root, occlusion_candidates,
+                                                       {n:len(rendered[n]['frames']) for n in names})
+            print(f"[review] {occlusion_summary['candidates']} occlusion candidates; {occlusion_summary['status']}")
+            print(f"[review] {occlusion_summary['check_command']}")
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
-                       part_problems=problems,
+                       part_problems=problems, **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
                        head_size=r.art.body.head_size,
                        unit_px=unit_px, speeds={n: clips[n].speed * unit_px for n in names}), fh)
+    if r.art.puppet and spec.get('puppet', {}).get('attachment_checks', False):
+        with open(os.path.join(root, 'attachment_scope.json'), 'w', encoding='utf-8') as fh:
+            json.dump(dict(method='isolated_layer_alpha',
+                           parts=['arm_near','arm_far','leg_near','leg_far'],
+                           frames={n:len(rendered[n]['frames']) for n in names},
+                           scope='root/proximal continuity and parent contact; not semantic appearance'), fh, indent=2)
 
     export.preview_html(root, os.path.join(SKILL_ROOT, "assets", "preview_template.html"),
                         os.path.join(SKILL_ROOT, "assets", "engine", "web", "sprite-player.js"), doc, fx_doc, name)

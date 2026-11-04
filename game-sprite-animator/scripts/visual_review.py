@@ -316,13 +316,35 @@ def file_hash(path):
 def review_assets(root):
     """Bind a verdict to the exact frames, sheets and QA it actually reviewed."""
     paths = []
-    for pattern in ("frames/*/*.png", "review/*.png", "animations.json", "rig_trace.json", "qa_report.json"):
+    for pattern in ("frames/*/*.png", "review/*.png", "animations.json", "rig_trace.json", "qa_report.json",
+                    "occlusion_review.json", "occlusion_decisions.json"):
         paths.extend(glob.glob(os.path.join(root, pattern)))
     return {os.path.relpath(p, root).replace(os.sep, "/"): file_hash(p) for p in sorted(paths)}
 
 
 def review_id(assets):
     return hashlib.sha256(json.dumps(assets, sort_keys=True).encode()).hexdigest()
+
+
+def occlusion_gate(root):
+    """Optional humanoid visibility review cannot be cleared by a generic sheet pass.
+
+    Other modes have no such report and keep their existing review contract.
+    Missing machinery for an explicitly requested review fails closed.
+    """
+    required = os.path.isfile(os.path.join(root, "occlusion_review.json"))
+    trace_path = os.path.join(root, "rig_trace.json")
+    try:
+        if os.path.isfile(trace_path):
+            with open(trace_path, encoding="utf-8") as source:
+                required = required or "occlusion_review" in json.load(source)
+        if not required:
+            return 0
+        from sprite_anim.occlusion_review import check_current as check_occlusion
+        return check_occlusion(root)
+    except (ImportError, OSError, ValueError, KeyError, TypeError) as error:
+        print(f"occlusion review: missing or invalid gate: {error}")
+        return 1
 
 
 def record(root, path):
@@ -413,15 +435,17 @@ def record(root, path):
             registry[issue["id"]] = dict(resolved=issue["resolved"])
     with open(registry_path, "w", encoding="utf-8") as target:
         json.dump(registry, target, indent=1)
+    occlusion_pending = bool(occlusion_gate(root))
     report = dict(v, assets=assets, open_blockers=sum(i["severity"] == "blocker" for i in open_issues),
-                  open_issues=len(open_issues), status="fail" if failed_sheets or open_issues else "pass")
+                  open_issues=len(open_issues), occlusion_review_required=occlusion_pending,
+                  status="fail" if failed_sheets or open_issues else "review_required" if occlusion_pending else "pass")
     history = os.path.join(root, "review", "history")
     os.makedirs(history, exist_ok=True)
     for output in (os.path.join(root, "visual_report.json"), os.path.join(history, current + ".json")):
         with open(output, "w", encoding="utf-8") as fh:
             json.dump(report, fh, ensure_ascii=False, indent=1)
     print(f"visual review: {len(want)} sheets, {report['status']}, {len(open_issues)} open issue(s)")
-    return 1 if report["status"] == "fail" else 0
+    return 0 if report["status"] == "pass" else 1
 
 
 def check_current(root):
@@ -433,7 +457,7 @@ def check_current(root):
     with open(path, encoding="utf-8") as source:
         report = json.load(source)
     current = review_id(review_assets(root))
-    ok = report.get("status") == "pass" and report.get("review_id") == current
+    ok = report.get("status") == "pass" and report.get("review_id") == current and occlusion_gate(root) == 0
     print("visual review: current pass" if ok else "visual review: failed or stale report; rebuild and review")
     return 0 if ok else 1
 

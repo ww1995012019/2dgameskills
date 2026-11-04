@@ -48,6 +48,27 @@ class VisualGate(unittest.TestCase):
         self.assertEqual(vr.check_current(str(self.root)), 0)
         self.assertEqual(json.loads((self.root/'visual_report.json').read_text())['status'], 'pass')
 
+    def test_generic_pass_cannot_clear_pending_occlusion(self):
+        with patch.object(vr, 'occlusion_gate', return_value=1):
+            self.assertEqual(self.record(), 1)
+            self.assertEqual(vr.check_current(str(self.root)), 1)
+        report = json.loads((self.root/'visual_report.json').read_text())
+        self.assertEqual(report['status'], 'review_required')
+        self.assertTrue(report['occlusion_review_required'])
+
+    def test_occlusion_decision_change_invalidates_visual_pass(self):
+        path = self.root/'occlusion_decisions.json'
+        path.write_text('{"reviewer": "first"}')
+        self.refresh()
+        self.verdict['review_id'] = self.ident
+        self.assertEqual(self.record(), 0)
+        path.write_text('{"reviewer": "changed"}')
+        self.assertEqual(vr.check_current(str(self.root)), 1)
+
+    def test_missing_opted_occlusion_report_fails_closed(self):
+        (self.root/'rig_trace.json').write_text('{"occlusion_review": {"status": "review_required"}}')
+        self.assertEqual(vr.occlusion_gate(str(self.root)), 1)
+
     def test_structural_issue_cannot_be_polish(self):
         self.verdict['sheets']['arms_00.png']['issues'] = [self.issue('polish', True)]
         with self.assertRaisesRegex(SystemExit, 'must be blocker'):

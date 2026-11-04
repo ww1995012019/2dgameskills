@@ -113,7 +113,8 @@ def bind(manifest, destination):
             ys, xs = np.nonzero(np.asarray(images[name])[..., 3] > 128)
             if np.min((xs-grip[0])**2 + (ys-grip[1])**2) > tolerance ** 2:
                 raise ValueError(f'{name}: measured grip misses the artwork; correct the joint/contact')
-    spec, metrics = build_spec(images, job['joints'], order)
+    spec, metrics = build_spec(images, job['joints'], order, job.get('head_attachment', 'cap_cover'),
+                               job.get('weapon_hand_binding', False))
     arrays = {n: np.asarray(images[n]) for n in order}
     reference = Image.new('RGBA', (width, height))
     for name in order:

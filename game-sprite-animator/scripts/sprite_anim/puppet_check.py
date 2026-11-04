@@ -36,12 +36,17 @@ CROUCH_DEG = 30.0     # mean knee bend in the walk while the planted foot carrie
                       # the hip. Behind the hip the knee has to bend to push off, 40-50 degrees in any human walk
 
 
-def smear_tiles(rgba):
-    """Tiles of a layer that have colour content but no sharp step anywhere: returns (bad, filled)."""
+def smear_tile_report(rgba):
+    """Locate the existing soft-gradient heuristic; this is not semantic blur detection.
+
+    Coordinates are half-open source-layer pixel bounds, before any animation.
+    Keep all thresholds and the opaque-tile denominator identical to smear_tiles.
+    """
     a = np.asarray(rgba, dtype=np.float32)
     solid = a[..., 3] > 250
     h, w = solid.shape
-    bad = filled = 0
+    candidates = []
+    filled = 0
     for y in range(0, h - TILE + 1, TILE):
         for x in range(0, w - TILE + 1, TILE):
             if not solid[y:y + TILE, x:x + TILE].all():
@@ -53,8 +58,15 @@ def smear_tiles(rgba):
                 continue
             step = max(float(np.abs(np.diff(t, axis=0)).max()), float(np.abs(np.diff(t, axis=1)).max()))
             if step < SMEAR_STEEP * span:
-                bad += 1
-    return bad, filled
+                candidates.append(dict(bounds=[x, y, x + TILE, y + TILE],
+                                       span=span, max_step=step, step_share=step / span))
+    return dict(bad=len(candidates), filled=filled, candidates=candidates)
+
+
+def smear_tiles(rgba):
+    """Legacy count interface; the evidence report must not change gate decisions."""
+    report = smear_tile_report(rgba)
+    return report["bad"], report["filled"]
 
 
 def check_layers(puppet):
@@ -152,6 +164,127 @@ def check_core(renderer, clip, frames, fps):
     if worst > HOLE_SHARE:
         return [f"hole: {clip.name} frame {at}: {worst:.0%} of the body below the belt is see-through; make the hips layer again"]
     return []
+
+
+def attachment_faults(alpha, parent_alpha, root, next_joint, radius):
+    """Isolated layer continuity and local parent contact, never composite coverage.
+
+    Both alpha arrays are normalized 0..1 raster outputs. A partial curved root
+    cap is sufficient; no filled disc or coincident near/far seats is assumed.
+    Antialiasing permits one pixel of contact adjacency, not a geometric gap.
+    """
+    from .integrity import components
+    root, end = np.asarray(root, float), np.asarray(next_joint, float)
+    length = float(np.linalg.norm(end - root))
+    if length <= 1e-6:
+        return ['degenerate proximal bone']
+    yy, xx = np.indices(alpha.shape)
+    reach = max(1.5, min(float(radius), length * .15))
+
+    def disc(point, r):
+        return (xx - point[0]) ** 2 + (yy - point[1]) ** 2 <= r * r
+
+    labels = components(alpha > .5)
+    seats = set(np.unique(labels[disc(root, reach)])) - {0}
+    if not seats:
+        return ['no limb pixels at root seat']
+    connected = seats.copy()
+    for fraction in (.25, .45, .65):
+        at = root + (end - root) * fraction
+        connected &= set(np.unique(labels[disc(at, reach)])) - {0}
+    if not connected:
+        return ['limb root and proximal bone lack connected same-layer pixels']
+    parent = parent_alpha > .5
+    padded = np.pad(parent, 1)
+    touch = np.zeros_like(parent)
+    for dy in range(3):
+        for dx in range(3):
+            touch |= padded[dy:dy + parent.shape[0], dx:dx + parent.shape[1]]
+    near_root = disc(root, max(reach, float(radius) * 1.5))
+    supported = np.isin(labels, list(connected))
+    if not np.any(supported & near_root & touch):
+        return ['connected limb root has no local parent contact']
+    return []
+
+
+def check_attachments(renderer, clip, n, fps):
+    """Check every requested frame in isolated alpha buffers, locating first faults.
+
+    Kept separate from composite QA so an opaque torso cannot hide missing arm
+    pixels. Callers opt into this additional measured scope explicitly.
+    """
+    from .art import Canvas
+    from .puppet import raster
+    from .render import GROUND_FRAC, frame_time
+    puppet = renderer.art.puppet
+    definitions = {
+        'arm_near': ('sh_n', 'el_n', ('torso',)),
+        'arm_far': ('sh_f', 'el_f', ('torso',)),
+        'leg_near': ('hip_n', 'kn_n', ('hips', 'torso')),
+        'leg_far': ('hip_f', 'kn_f', ('hips', 'torso')),
+    }
+    layers = {layer.name: layer for layer in puppet.layers}
+    active = {name: data for name, data in definitions.items() if name in layers}
+    cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
+    scale = cv.s / puppet.px_per_unit
+    found = {}
+    for i in range(n):
+        t = frame_time(clip, i, n, fps)
+        pose = full_pose(clip.sample(t))
+        sk = solve(pose, renderer.art.body)
+        cv.set_squash(pose['squash'], 0.)
+        needed = set(active) | {p for _, _, parents in active.values() for p in parents}
+        meshes = {layer.name: (layer, verts) for layer, verts in
+                  puppet.meshes(cv, sk, renderer.cloth_at(clip, t), 'ground' in clip.tags)
+                  if layer.name in needed}
+        full_masks = {}
+
+        def inspect(name, parents, root, end, radius, box):
+            x0, y0, x1, y1 = box
+            offset = np.array([x0, y0])
+            w, h = x1 - x0, y1 - y0
+            masks = {}
+            for part in (name, *parents):
+                if part not in meshes:
+                    continue
+                layer, verts = meshes[part]
+                if box == (0, 0, cv.w, cv.h) and part in full_masks:
+                    masks[part] = full_masks[part]
+                    continue
+                # Integer translation keeps the original supersampling and
+                # subpixel grid. Only the output allocation/triangle ROI shrinks.
+                masks[part] = raster(layer, verts - offset, puppet.mip(layer, scale), w, h)[..., 3]
+                if box == (0, 0, cv.w, cv.h):
+                    full_masks[part] = masks[part]
+            parent = np.zeros((h, w), dtype=float)
+            for part in parents:
+                if part in masks:
+                    parent = np.maximum(parent, masks[part])
+            return attachment_faults(masks[name], parent, root - offset, end - offset, radius)
+
+        for name, (root, end, parents) in active.items():
+            if name in found:
+                continue
+            start, finish = np.array(cv.T(sk[root])), np.array(cv.T(sk[end]))
+            radius = layers[name].radius * scale
+            reach = max(1.5, min(radius, float(np.linalg.norm(finish - start)) * .15))
+            contact = max(reach, radius * 1.5)
+            distal = start + (finish - start) * .65
+            lo = np.floor(np.minimum(start - contact, distal - reach)).astype(int) - 2
+            hi = np.ceil(np.maximum(start + contact, distal + reach)).astype(int) + 3
+            x0, y0 = max(0, int(lo[0])), max(0, int(lo[1]))
+            x1, y1 = min(cv.w, int(hi[0])), min(cv.h, int(hi[1]))
+            box = (x0, y0, x1, y1)
+            problems = (inspect(name, parents, start, finish, radius, box)
+                        if x1 > x0 and y1 > y0 else ['outside local ROI'])
+            if problems:
+                # A valid connected sleeve can leave this ROI and return. Local
+                # success proves global success, but local failure does not prove
+                # global failure. Consult the full-canvas oracle before reporting.
+                problems = inspect(name, parents, start, finish, radius, (0, 0, cv.w, cv.h))
+            if problems:
+                found[name] = f"attachment: {name}: {clip.name} frame {i}: root {root}: {'; '.join(problems)}"
+    return list(found.values())
 
 
 def inverted(verts, cells):

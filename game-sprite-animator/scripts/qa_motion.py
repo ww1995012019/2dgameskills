@@ -163,6 +163,33 @@ def skeleton_flags(r, seq, tr, unit_px, bones, flags):
             flags.setdefault(i, []).extend(messages)
 
 
+def occlusion_status(root, trace, clips):
+    """Surface semantic-review candidates without calling them broken geometry."""
+    path = os.path.join(root, 'occlusion_review.json')
+    if not os.path.isfile(path) and not (trace and 'occlusion_review' in trace):
+        return None
+    from sprite_anim.occlusion_review import check_current
+    pending = bool(check_current(root))
+    candidates, error = [], None
+    try:
+        with open(path, encoding='utf-8') as source:
+            candidates = json.load(source)['candidates']
+        if not isinstance(candidates, list):
+            raise ValueError('candidate list missing')
+        if pending:
+            for row in candidates:
+                name, frame = row['clip'], row['frame']
+                if name in clips and type(frame) is int and 0 <= frame < clips[name]['frames']:
+                    clips[name].setdefault('flags', {}).setdefault(str(frame), []).append(
+                        f"occlusion review needed: {row['arm']} hand/forearm readability; not a physical tear verdict")
+    except (OSError, ValueError, KeyError, TypeError) as issue:
+        error, pending = str(issue), True
+        if not isinstance(candidates, list):
+            candidates = []
+    return dict(status=WARN if pending else PASS, review_required=pending, candidates=len(candidates),
+                report='occlusion_review.json', error=error)
+
+
 def run_set(root):
     with open(os.path.join(root, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -244,11 +271,17 @@ def run_set(root):
             print("  warning: " + w)
         for clip, joints in bind_gaps.items():
             print(f"  gap: {clip}: {joints}")
+    visibility = occlusion_status(root, trace, report)
     out = dict(clips=report, transitions=trans, parts=dict(status=FAIL if problems else PASS, problems=problems),
                bind=dict(status=FAIL if bind_gaps else WARN if bind_warnings else PASS, warnings=bind_warnings, gaps=bind_gaps))
     failed += len(problems) + len(bind_gaps)
     warns = sum(1 for r in report.values() for c in cols if r.get(c) == WARN) + sum(t["status"] == WARN for t in trans)
     warns += len(bind_warnings)
+    if visibility is not None:
+        out['occlusion'] = visibility
+        warns += int(visibility['review_required'])
+        print(f"occlusion: {visibility['status']}, {visibility['candidates']} visual-review candidates; "
+              f"review_required={visibility['review_required']}")
     total = trace.get("clips_total", len(report)) if trace else len(report)
     out["scope"] = dict(clips_checked=len(report), clips_total=total)
     with open(os.path.join(root, "qa_report.json"), "w", encoding="utf-8") as fh:

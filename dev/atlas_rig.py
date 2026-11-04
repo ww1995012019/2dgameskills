@@ -39,19 +39,96 @@ def extract(path, folder):
     return result
 
 
+def distal_hand(image, slot='arm'):
+    """Find a terminal hand by its silhouette neck, not the colour of its forearm.
+
+    Conservative side-view input contract: an isolated hanging arm, a visible wrist
+    narrowing, then a wider compact palm. Ambiguous sleeves need an explicit hand
+    hint/known joints. A compact exposed-hand component preserves the older atlas
+    workflow when silhouette evidence alone is insufficient; never truncate a long
+    exposed forearm into a supposed hand.
+    """
+    a = np.asarray(image)
+    mask = a[..., 3] > 128
+    if not mask.any():
+        raise ValueError(slot + ': empty arm')
+    root, tip = lp.root_and_tip(mask)
+    length = float(np.linalg.norm(tip - root))
+    if length < 20:
+        raise ValueError(slot + ': arm too small for reliable hand segmentation')
+    axis = (tip - root) / length
+    yy, xx = np.indices(mask.shape)
+    along = (xx - root[0]) * axis[0] + (yy - root[1]) * axis[1]
+    across = -(xx - root[0]) * axis[1] + (yy - root[1]) * axis[0]
+    fractions = np.linspace(.45, .96, 52)
+    widths = []
+    for fraction in fractions:
+        band = mask & (np.abs(along - fraction * length) <= max(1., length * .0125))
+        widths.append(float(np.ptp(across[band])) if band.any() else 0.)
+    widths = ndi.gaussian_filter1d(np.asarray(widths), 1.)
+    search = np.flatnonzero((fractions >= .55) & (fractions <= .85))
+    minimum = float(widths[search].min())
+    low = search[widths[search] <= minimum * 1.03]
+    # Separate equally plausible necks are not a reliable landmark.
+    unique = len(low) and not np.any(np.diff(low) > 2)
+    # A second pronounced bottleneck can be a cuff rather than a wrist. Do not
+    # silently select the deeper one when both are plausible terminal joints.
+    valleys = []
+    for i in np.flatnonzero((fractions >= .48) & (fractions <= .85)):
+        if (i >= 3 and i + 3 < len(widths)
+                and widths[i] <= minimum * 1.25
+                and widths[i] <= widths[i - 3:i + 4].min()
+                and widths[max(0, i - 7):i].max() >= widths[i] * 1.10
+                and widths[i + 1:min(len(widths), i + 8)].max() >= widths[i] * 1.10):
+            if not valleys or i - valleys[-1] > 3:
+                valleys.append(i)
+    unique = unique and len(valleys) <= 1
+    index = int(round(float(low.mean()))) if len(low) else 0
+    neck = fractions[index]
+    palm = float(widths[index + 3:].max()) if index + 3 < len(widths) else 0.
+    proximal = float(widths[max(0, index - 10):index].max()) if index else 0.
+    ratio = palm / max(float(widths[index]), 1e-9)
+    if (unique and .58 <= neck <= .83 and minimum > 1
+            and ratio >= 1.25 and proximal >= widths[index] * 1.05
+            and fractions[low[-1]] - fractions[low[0]] <= .16):
+        hand = mask & (along >= neck * length)
+        labels, _ = ndi.label(hand)
+        sizes = np.bincount(labels.ravel()); sizes[0] = 0
+        if sizes.max() and sizes.max() / max(int(hand.sum()), 1) >= .98:
+            hand = labels == sizes.argmax()
+            return hand, dict(method='silhouette_neck', neck_fraction=float(neck),
+                              palm_neck_ratio=ratio)
+
+    # Legacy compatibility for a separately coloured, compact exposed hand.
+    # Inspect the WHOLE connected component: a forearm must not become a hand
+    # merely because it was clipped by an arbitrary distal-distance threshold.
+    r, g, b = [a[..., i].astype(float) for i in range(3)]
+    skin = mask & (r > 120) & (r > g * 1.12) & (g > b * 1.05) & (r - b > 30)
+    labels, count = ndi.label(skin)
+    candidates = []
+    for label in range(1, count + 1):
+        region = labels == label
+        if region.sum() < 12:
+            continue
+        lo, hi = np.quantile(along[region], (.01, .99)) / length
+        if lo >= .70 and hi >= .90 and hi - lo <= .25:
+            candidates.append(region)
+    candidates.sort(key=lambda region: int(region.sum()), reverse=True)
+    # Finger outlines can split off small islands. Require one dominant hand,
+    # rather than treating equally sized terminal regions as an unambiguous cue.
+    if candidates and candidates[0].sum() >= .75 * sum(region.sum() for region in candidates):
+        return candidates[0], dict(method='compact_exposed_hand',
+                                   neck_fraction=float(along[candidates[0]].min() / length),
+                                   palm_neck_ratio=ratio)
+    raise ValueError(slot + ': ambiguous wrist/hand silhouette; supply an explicit hand hint or known joints')
+
+
 def landmarks(image,slot):
     a=np.array(image);mask=a[...,3]>128
     if slot.startswith('arm'):
-        root,tip=lp.root_and_tip(mask)
-        yy,xx=np.indices(mask.shape);dist=(xx-root[0])**2+(yy-root[1])**2
-        r,g,b=[a[...,i].astype(float) for i in range(3)]
-        skin=mask&(r>120)&(r>g*1.12)&(g>b*1.05)&(r-b>30)&(dist>np.sum((tip-root)**2)*.4)
-        labs,n=ndi.label(skin)
-        if n:
-            sizes=np.bincount(labs.ravel());sizes[0]=0;skin=labs==sizes.argmax()
-        if skin.sum()<12:raise ValueError(slot+': cannot locate an exposed hand reliably')
-        row=lp.read_arm(mask,skin)
-        ys,xs=np.nonzero(skin);row['grip']=np.array([xs.mean(),ys.mean()])
+        hand, _ = distal_hand(image, slot)
+        row=lp.read_arm(mask,hand)
+        ys,xs=np.nonzero(hand);row['grip']=np.array([xs.mean(),ys.mean()])
         return row
     if slot.startswith('leg'):return lp.read_leg(mask)
     return {}
@@ -71,39 +148,50 @@ if __name__=='__main__':
     (Path(args.out)/'measurements.json').write_text(json.dumps(result,indent=2))
 
 
-def remove_neck_stub(image):
-    """Head owns bare neck; remove the torso atlas's redundant skin stub.
+def remove_neck_stub(image, *, ownership=None, neck_mask=None):
+    """Apply explicit neck ownership; color alone cannot distinguish skin/trim.
 
-    Detect only skin connected to the upper attachment, not fabric or a fixed
-    silhouette. A small outline allowance removes its painted cut-edge rim.
-    Return a new alpha matte and retain the source unchanged.
+    ``garment`` preserves the entire supplied torso, including brown/gold collar
+    pixels. ``head_skin`` requires a registered binary mask reviewed by the
+    caller. This operation validates registration, not semantic correctness.
     """
-    a=np.array(image);r,g,b=[a[...,i].astype(float) for i in range(3)]
-    solid=a[...,3]>128;yy=np.indices(solid.shape)[0]
-    skin=solid&(r>25)&(b<r*.85)&(g<r*.94)&(yy<image.height*.18)
-    labels,n=ndi.label(skin)
-    seeds=np.unique(labels[(yy<image.height*.04)&skin]);seeds=seeds[seeds>0]
-    if not len(seeds):return image.copy(),0
-    selected=np.isin(labels,seeds)
-    selected=ndi.binary_fill_holes(ndi.binary_closing(selected,iterations=1))
-    # Close upward to the attachment boundary so neutral-coloured cut-edge
-    # highlights are removed with the skin, rather than left as a dotted rim.
-    boundary=np.full(image.width,-1,dtype=int)
-    sy,sx=np.nonzero(selected)
-    np.maximum.at(boundary,sx,sy)
-    boundary=ndi.maximum_filter1d(boundary,size=9)
-    selected=(yy<=boundary[None,:]+3)&(boundary[None,:]>=0)
-    removed=int((selected&(a[...,3]>0)).sum());a[selected]=0
-    return Image.fromarray(a),removed
+    if ownership not in ('garment', 'head_skin'):
+        raise ValueError('neck ownership must explicitly be garment or head_skin')
+    if image.mode != 'RGBA':
+        raise ValueError('neck source must be RGBA')
+    if ownership == 'garment':
+        if neck_mask is not None:
+            raise ValueError('garment ownership does not accept a skin-removal mask')
+        return image.copy(), 0
+    if neck_mask is None:
+        raise ValueError('head_skin ownership requires an explicit registered binary neck mask')
+    if isinstance(neck_mask, (str, Path)):
+        with Image.open(neck_mask) as supplied:
+            mask = np.array(supplied)
+    else:
+        mask = np.asarray(neck_mask)
+    a = np.array(image)
+    if mask.shape != a.shape[:2] or not (np.isin(mask, (0, 1)).all() or np.isin(mask, (0, 255)).all()):
+        raise ValueError('neck mask must be registered binary grayscale at source dimensions')
+    selected = mask > 0
+    if not selected.any():
+        raise ValueError('neck mask must not be empty')
+    removed = int((selected & (a[..., 3] > 0)).sum())
+    a[selected] = 0
+    return Image.fromarray(a), removed
 
 
-def assemble(parts, out, canvas=(1280,1536), character_name="character"):
+def assemble(parts, out, canvas=(1280,1536), character_name="character", head_attachment='cap_cover', pelvis_cover='behind'):
     """Assemble one standard adult proportion profile from measured isolated parts.
 
     Shared anatomical ratios, never per-character coordinate overrides. Whole-part
     similarity transforms preserve drawing proportions; no painted patches/stencils.
     """
     parts=Path(parts);out=Path(out);out.mkdir(parents=True,exist_ok=True)
+    if head_attachment not in ('cap_cover', 'socket'):
+        raise ValueError('head_attachment: expected cap_cover or socket')
+    if pelvis_cover not in ('behind', 'front'):
+        raise ValueError('pelvis_cover: expected behind or front; explicit artwork ownership required')
     (out/'layers').mkdir(exist_ok=True)
     images={n:Image.open(parts/(n+'.png')).convert('RGBA') for n in (*TOP,*BOTTOM)}
     local={n:landmarks(images[n],n) for n in (*TOP,*BOTTOM)}
@@ -153,10 +241,19 @@ def assemble(parts, out, canvas=(1280,1536), character_name="character"):
         valid=(sample[:,0]>=0)&(sample[:,0]<head.width)&(sample[:,1]>=0)&(sample[:,1]<head.height)
         covered=np.zeros(len(sample),bool);covered[valid]=solid[sample[valid,1],sample[valid,0]]
         if covered.mean()>=.995:candidates.append((abs(y-head.height*.85),y,x))
-    if not candidates:raise ValueError('head: cannot cover the exposed neck cap')
-    _,seat_y,seat_x=min(candidates)
-    local['head']={'head_base':np.array([seat_x,float(seat_y)])}
-    transforms['head']=(head_scale,0.,neck-local['head']['head_base']*head_scale)
+    socket_report = None
+    if head_attachment == 'socket':
+        from socket_mount import place_socket
+        anchor, offset, socket_report = place_socket(mask, tm, head_scale, scale,
+                                                     transforms['torso'][2], canvas)
+        local['head'] = {'head_base': anchor}
+        transforms['head'] = (head_scale, 0., offset)
+        neck = anchor * head_scale + offset
+    else:
+        if not candidates:raise ValueError('head: cannot cover the exposed neck cap')
+        _,seat_y,seat_x=min(candidates)
+        local['head']={'head_base':np.array([seat_x,float(seat_y)])}
+        transforms['head']=(head_scale,0.,neck-local['head']['head_base']*head_scale)
     local['hips']={'hip':hip_local,'waist':hip_top}
     def point(n,p):
         s,angle,o=transforms[n];a=np.radians(angle);rot=np.array([[np.cos(a),-np.sin(a)],[np.sin(a),np.cos(a)]])
@@ -169,6 +266,10 @@ def assemble(parts, out, canvas=(1280,1536), character_name="character"):
     angle=45.;a=np.radians(angle);rot=np.array([[np.cos(a),-np.sin(a)],[np.sin(a),np.cos(a)]])
     transforms['weapon']=(sword_scale,angle,point('arm_near',local['arm_near']['grip'])-sword_scale*(rot@local['weapon']['grip']))
     order=['arm_far','hips','leg_far','leg_near','head','torso','weapon','arm_near']
+    if pelvis_cover == 'front':
+        # Some supplied pelvic layers own visible belts/tunic panels, not merely
+        # a hidden anatomical bridge. Preserve that artwork above torso/legs.
+        order.remove('hips');order.insert(order.index('weapon'),'hips')
     joints={};report={};composite=Image.new('RGBA',canvas)
     for name in order:
         s,angle,o=transforms[name]
@@ -192,13 +293,15 @@ def assemble(parts, out, canvas=(1280,1536), character_name="character"):
             if key in ('tip','heel','toe','grip'):continue
             x,y=p;draw.ellipse((x-4,y-4,x+4,y+4),fill='cyan');draw.text((x+5,y),name+':'+key,fill='black')
     overlay.convert('RGB').save(out/'joints.jpg')
-    (out/'input.json').write_text(json.dumps(dict(name=character_name,canvas=list(canvas),order=order,layers={n:'layers/'+n+'.png' for n in order},joints=joints),ensure_ascii=False,indent=2))
+    (out/'input.json').write_text(json.dumps(dict(name=character_name,canvas=list(canvas),order=order,layers={n:'layers/'+n+'.png' for n in order},joints=joints,head_attachment=head_attachment),ensure_ascii=False,indent=2))
+    if socket_report is not None:report['socket_attachment'] = socket_report
     report['preprocessing']={'torso_neck_stub_pixels_removed':neck_removed,'rule':'head owns skin neck; torso owns garment','new_pixels_painted':0}
+    report['pelvis_cover']=pelvis_cover
     (out/'assembly_transforms.json').write_text(json.dumps(report,indent=2))
     return out/'input.json'
 
 
-def install_collar_overlay(rig):
+def install_collar_overlay(rig, *, ownership=None, neck_mask=None):
     """Place original neck behind the head and original garment in front.
 
     Both torso copies have identical geometry/UVs. Only the front copy's alpha
@@ -209,15 +312,16 @@ def install_collar_overlay(rig):
     layers=spec['puppet']['layers']
     if 'torso_front' in layers:raise ValueError('collar overlay already installed')
     source=rig/layers['torso']['image']
-    with Image.open(source) as im:garment,removed=remove_neck_stub(im.convert('RGBA'))
-    if not removed:return 0
+    with Image.open(source) as im:
+        garment,removed=remove_neck_stub(im, ownership=ownership, neck_mask=neck_mask)
+    order=collar_layer_order(list(layers))
     garment.save(rig/'layers/torso_front.png')
     front=copy.deepcopy(layers['torso']);front['image']='layers/torso_front.png'
-    order=['arm_far','hips','leg_far','leg_near','torso','head','torso_front','weapon','arm_near']
     layers['torso_front']=front
     spec['puppet']['layers']={n:layers[n] for n in order if n in layers}
     (rig/'character.json').write_text(json.dumps(spec,ensure_ascii=False,indent=2))
-    report=dict(method='shared_geometry_collar_overlay',neck_pixels_removed_from_front_copy=removed,
+    report=dict(method='explicit_shared_geometry_collar_overlay', ownership=ownership,
+                automatic_skin_detection=False, neck_pixels_removed_from_front_copy=removed,
                 source_rgb_painted=0,source_image_unchanged=True,visual_approval='pending')
     (rig/'collar_overlay.json').write_text(json.dumps(report,indent=2))
     provenance=json.loads((rig/'provenance.json').read_text())
@@ -226,3 +330,13 @@ def install_collar_overlay(rig):
                                   for p in rig.rglob('*') if p.is_file() and p.name!='provenance.json'}
     (rig/'provenance.json').write_text(json.dumps(provenance,indent=2))
     return removed
+
+
+def collar_layer_order(order):
+    """Change only adjacent head/torso ownership, retaining all other depths."""
+    order=list(order)
+    head,torso=order.index('head'),order.index('torso')
+    if abs(head-torso)!=1:
+        raise ValueError('collar overlay requires adjacent head/torso layers; review custom depth order')
+    at=min(head,torso)
+    return order[:at]+['torso','head','torso_front']+order[at+2:]

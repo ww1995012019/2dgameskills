@@ -14,7 +14,7 @@ Verification status, so you can tell the user what is proven:
 | `atlas.png`, `animations.json`, `sprite-player.js` | Frames rebuilt from the atlas match the source; player run in a browser and at 30-240 Hz |
 | `atlas.json` (JSON-hash) | Loaded in Phaser 3.80 and PixiJS 8.6 in Chromium as shown below: every frame matches its source frame, playback order and timing checked at 60 and 144 Hz |
 | `sprites.css` | Played in Chromium: every frame matches its source frame; not checked in Safari or on phones |
-| Godot `.tres` + `.import` | Imported into Godot 4.3: every frame matches its source frame, `AnimatedSprite2D` playback order, timing and loop checked at 60 and 144 Hz |
+| Godot `.tres` + `.import` | Imported into Godot 4.3: every frame matches its source frame, `AnimatedSprite2D` playback order, timing and loop checked at 60 and 144 Hz. Additional real-art layered male trial in Godot 4.6.3: 7 clips / 207 frames, maximum pixel error 0 at both tick rates; automated playback, not human aesthetic approval. |
 | Cocos `.plist` | Parsed and cross-referenced; not imported into the editor |
 | Unity `SpriteSetImporter.cs` | Never compiled or run |
 
