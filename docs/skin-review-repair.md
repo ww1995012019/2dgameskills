@@ -73,16 +73,23 @@ Canvas16格网格的最大差为0.729/0.380px。独立按实际网格重算的�
 
 ## 验证记录
 
-- 最终门禁、真实负例、源包同步/打包与解包运行测试共59项，通过；新增绑定工具16项、真实裂缝3项
-  都包含在内。三项反向绕过使用原攻击输入复核后均拒绝，合法修复后重审正例仍能通过。
+- 已整合主分支 `09e02c9`，保留其中的采样、播放时钟、QA、预览、关节识别与自定义图集页门禁。
+  最终代码提交 `5a8900d` 的核心门禁58项通过；新增绑定工具16项、真实裂缝3项都包含在内。
+  三项反向绕过使用原攻击输入复核后均拒绝，合法修复后重审正例仍能通过。
+- 完整集合采用独立进程逐模块、三并发运行：77模块，最终632项，0失败、0错误、0跳过、
+  6项既有expectedFailure、0意外成功，运行期间被测源文件哈希未变。验证脚本初次遗漏工程根目录
+  的sys.path，造成两个模块3个导入错误；补根路径后这两组22/9项单独重跑通过，初次日志与重跑
+  结果均保留。旧基底未完成的单进程运行不计作完整通过。
 - 26套传统生成/QA命令整体退出0；普通基线比较为0个状态回退。`cutout_demo`的pixel/HD原有
   7/8项WARN保留，没有删项或调阈值。
 - **严格像素基线未通过**：仍有116个changed clip、102项numeric drift，退出1。修改前的
-  `d7e4280:docs/rig-stability-validation.md`已记录同样的116/102差异。本轮未改生成器、rig、
-  motion、puppet渲染或旧QA算法，也未更新baseline掩盖差异；不将这个结果写成严格逐像素通过。
+  `d7e4280:docs/rig-stability-validation.md`已记录同样的116/102差异。相对新基底`09e02c9`，
+  本轮未改生成器、rig、motion、puppet渲染或旧QA算法，也未更新baseline掩盖差异；不将这个
+  结果写成严格逐像素通过。
 - 重新打包的独立人形包、统一包均解压实际运行，两个坏样例都退出1、保持fail。共享源/独立副本、
   统一快照、五个包新鲜度与diff检查通过；其余未改模式的包保持不变。
-- 完整 `dev/tests` 仍在运行，完成后补充实际结果。
+- 完整结果在工作区`/workspace/work/skill-validation/integrated-suite/final-summary.json`；
+  初次运行结果保留在同目录`summary.json`，两组环境修正重跑在`integrated-suite-reruns/`。
 
 核心复核命令：
 
@@ -95,4 +102,12 @@ python dev/baseline.py --strict
 python dev/sync_shared.py --check
 python dev/sync_modes.py --check
 python dev/package_skills.py --check
+```
+
+相同模块隔离集合可顺序复核（上面的discover是一进程标准入口）：
+
+```bash
+for file in dev/tests/test*.py; do
+  CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium PYTHONPATH=.:dev/tests python -m unittest "$(basename "$file" .py)" -v || exit $?
+done
 ```
