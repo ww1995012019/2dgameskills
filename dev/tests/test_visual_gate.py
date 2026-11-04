@@ -24,15 +24,26 @@ class VisualGate(unittest.TestCase):
         (self.root/'review').mkdir()
         (self.root/'frames/walk').mkdir(parents=True)
         Image.new('RGBA', (16, 16), 'red').save(self.root/'frames/walk/walk_000.png')
-        Image.new('RGB', (16, 16), 'red').save(self.root/'review/arms_00.png')
+        (self.root/'animations.json').write_text(json.dumps({'frame_size': 16, 'pivot': [8, 15],
+            'clips': {'walk': {'frames': [0], 'fps': 30, 'loop': True}}}))
+        joints = {'waist': [8, 6], 'neck': [8, 3], 'hip_n': [6, 8], 'hip_f': [10, 8],
+                  'kn_n': [5, 11], 'kn_f': [11, 11], 'an_n': [5, 15], 'an_f': [11, 15],
+                  'sh_n': [6, 4], 'sh_f': [10, 4], 'el_n': [4, 7], 'el_f': [12, 7],
+                  'wr_n': [4, 10], 'wr_f': [12, 10]}
+        (self.root/'rig_trace.json').write_text(json.dumps({'unit_px': .3,
+            'traces': {'walk': {'skeleton': {k: [v] for k, v in joints.items()}}}}))
         self.refresh()
         self.verdict = {'reviewer': 'fault injection', 'review_id': self.ident,
-                        'sheets': {'arms_00.png': {'verdict': 'pass', 'checks': {
-                            k: {'status': 'pass', 'evidence': 'walk frame 0 fixture inspected'} for k in vr.CHECKS}, 'issues': []}}}
+                        'sheets': {entry['sheet']: {'verdict': 'pass', 'checks': {
+                            k: dict(status='pass', evidence='walk frame 0 synthetic fixture inspected', **(
+                                {'observations': [dict(clip=p['clip'], frame=p['frame'], evidence='Synthetic fixture waist and hip pixels inspected') for p in entry.get('poses', [])]}
+                                if k in vr.PELVIS_CHECKS else {})) for k in vr.checks_for_sheet(entry['sheet'])}, 'issues': []}
+                            for entry in self.index['sheets']}}
 
     def refresh(self):
-        self.ident = vr.review_id(vr.review_assets(str(self.root)))
-        (self.root/'review/index.json').write_text(json.dumps({'review_id': self.ident, 'sheets': [{'sheet': 'arms_00.png'}]}))
+        vr.build(str(self.root))
+        self.index = json.loads((self.root/'review/index.json').read_text())
+        self.ident = self.index['review_id']
 
     def record(self, v=None):
         path = self.root/'verdict.json'
@@ -115,8 +126,9 @@ class VisualGate(unittest.TestCase):
             with self.subTest(page=name):
                 page = self.root / name
                 page.parent.mkdir(parents=True, exist_ok=True)
-                (self.root/'animations.json').write_text(json.dumps({
-                    'pages': [{'file': name, 'w': 16, 'h': 16}]}))
+                metadata = json.loads((self.root/'animations.json').read_text())
+                metadata['pages'] = [{'file': name, 'w': 16, 'h': 16}]
+                (self.root/'animations.json').write_text(json.dumps(metadata))
                 Image.new('RGBA', (16, 16), 'red').save(page)
                 self.refresh()
                 self.verdict['review_id'] = self.ident
@@ -154,6 +166,7 @@ class VisualGate(unittest.TestCase):
         Image.new('RGB', (16, 16), 'blue').save(self.root/'review/arms_00.png')
         self.refresh(); self.verdict['review_id'] = self.ident
         self.assertEqual(self.record(), 0)
+        self.assertEqual(vr.check_current(str(self.root)), 0)
 
     def test_recompression_does_not_count_as_repaired_pixels(self):
         frame = self.root/'frames/walk/walk_000.png'

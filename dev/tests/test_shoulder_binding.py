@@ -118,7 +118,10 @@ class ShoulderReview(unittest.TestCase):
                 'sh_n': [[32, 20]] * 6, 'sh_f': [[32, 20]] * 6,
                 'el_n': [[42, 20], [32, 30], [42, 22], [32, 10], [42, 24], [42, 20]],
                 'el_f': [[22, 30]] * 6,
-                'wr_n': [[44, 34]] * 6, 'wr_f': [[18, 40]] * 6}
+                'wr_n': [[44, 34]] * 6, 'wr_f': [[18, 40]] * 6,
+                'hip_n': [[28, 38]] * 6, 'hip_f': [[36, 38]] * 6,
+                'kn_n': [[26, 48]] * 6, 'kn_f': [[38, 48]] * 6,
+                'an_n': [[24, 58]] * 6, 'an_f': [[40, 58]] * 6}
 
     def test_rest_recovery_and_upper_arm_extremes_are_selected(self):
         self.assertEqual(review.shoulder_frames(self.skeleton()), [0, 1, 3, 5])
@@ -150,13 +153,17 @@ class ShoulderReview(unittest.TestCase):
             self.assertIn('shoulders_00.png', names)
             self.assertIn('arms_00.png', names)
             self.assertTrue((root / 'review/shoulders_00.png').is_file())
-            row = lambda: {'verdict': 'pass', 'checks': {k: {'status': 'pass', 'evidence': 'fixture inspected'} for k in review.CHECKS}}
-            verdict = {'reviewer': 'test', 'review_id': index['review_id'], 'sheets': {n: row() for n in names if n != 'shoulders_00.png'}}
+            def row(name):
+                entry = next(e for e in index['sheets'] if e['sheet'] == name)
+                return {'verdict': 'pass', 'checks': {k: dict(status='pass', evidence='synthetic fixture inspected', **(
+                    {'observations': [dict(clip=p['clip'], frame=p['frame'], evidence='Synthetic fixture hip connection inspected') for p in entry.get('poses', [])]}
+                    if k in review.PELVIS_CHECKS else {})) for k in review.checks_for_sheet(name)}}
+            verdict = {'reviewer': 'test', 'review_id': index['review_id'], 'sheets': {n: row(n) for n in names if n != 'shoulders_00.png'}}
             path = root / 'verdict.json'
             path.write_text(json.dumps(verdict))
             with self.assertRaisesRegex(SystemExit, 'shoulders_00.png'):
                 review.record(tmp, str(path))
-            verdict['sheets']['shoulders_00.png'] = row()
+            verdict['sheets']['shoulders_00.png'] = row('shoulders_00.png')
             path.write_text(json.dumps(verdict))
             self.assertEqual(review.record(tmp, str(path)), 0)
             del verdict['sheets']['arms_00.png']
