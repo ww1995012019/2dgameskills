@@ -1,4 +1,25 @@
-# Opt-in grounded locomotion clock
+# Phase-preserving locomotion clock
+
+The normal `preview.html` playable demo uses `GroundedWalkController` whenever
+an idle and a supported walking loop are exported. Both the legacy Gait
+(`phase_walk_v1`) and optional NaturalWalk (`natural_walk_v1`) export this policy.
+Starting and stopping retain a single walking phase clock, and root movement uses
+the controller's exact displacement while accelerating/braking. The stopped pose
+is a two-foot walking hold, not the separate gallery idle animation; it has no
+breathing. Other actions interrupt locomotion and return to a new held stance.
+This does not smooth walk/run cuts or arbitrary action transitions.
+
+`qa_motion.py` verifies the export clock and the actual displayed two-foot support
+samples. This contract and the main-demo Node integration tests supplement the
+continuous Python tests below; legacy walking still has its existing measured
+soft-IK contact residuals and discrete sprites retain frame-sampling error.
+
+Sparse odd frame counts can round the ideal second support centre backward into
+a swing frame. Exported `locomotion.hold_phase` shifts both half-cycle-separated
+centres forward to valid displayed support samples (for example, seven walk
+frames at 8 FPS). The usual centre is retained when valid. QA, settle-bank
+registration and the Canvas controller use this same phase. A frame set with no
+two sampled support windows is rejected with an instruction to increase FPS.
 
 `natural_walk_v1` can stop at any gait phase without crossfading foot targets.
 The walk's phase clock slows smoothly until both soles support the body. That
@@ -89,8 +110,11 @@ these Python tests and rendered proof.
 
 ## Canvas controller and export
 
-Natural-walk generation now exports exact `locomotion.period_s`, duty fraction,
-and unrounded movement speed. `GroundedWalkController` in `sprite-player.js`
+Walking generation exports `locomotion.period_s = frames / fps`, duty fraction,
+and unrounded movement speed retimed to that same baked clock. At 24/30 FPS the
+default natural-walk period equals its authored 5/6 second; other rates or style
+speeds may round differently. Settle-bank clock registration and endpoint duration
+are retimed alongside the walk. `GroundedWalkController` in `sprite-player.js`
 uses this clock for both sprite advance and returned world displacement:
 
 ```javascript
@@ -110,9 +134,10 @@ used; held stance can retain a raised rear heel and has no idle breathing.
 
 The controller uses the exact export sampling period, not rounded `duration`.
 It rejects low-FPS exports whose held frame misses the two-foot support window.
-The default `SpritePlayer` is unchanged, and calling its direct `play('idle')`
-still has the documented pose jump. Other engine controllers do not automatically
-inherit this state machine.
+Low-level `SpritePlayer.play('idle')` still makes a direct clip cut. The normal
+playable preview now wires the phase controller described above; other engine
+controllers must integrate it explicitly and do not automatically inherit this
+state machine.
 
 `engine/web/grounded-walk.html` is included with natural-walk exports. Serve the
 export folder over HTTP to try repeated start/stop commands. Node tests compare

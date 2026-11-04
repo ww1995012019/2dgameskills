@@ -316,7 +316,11 @@ def raster(layer, verts, mip, w, h):
     if not len(cells):
         return out
     j, i = cells[:, 0], cells[:, 1]
-    u_grid, v_grid = layer.gx * k, layer.gy * k
+    # Rounded mip dimensions can have different x/y scale factors. A single
+    # factor compresses tall tight crops or stretches wide ones. Scalar mips
+    # remain supported for callers that supply an unresized source image.
+    kx, ky = (k, k) if np.isscalar(k) else k
+    u_grid, v_grid = layer.gx * kx, layer.gy * ky
     p00, p10, p01, p11 = verts[j, i], verts[j, i + 1], verts[j + 1, i], verts[j + 1, i + 1]
     t00 = np.stack([u_grid[i], v_grid[j]], -1)
     t10 = np.stack([u_grid[i + 1], v_grid[j]], -1)
@@ -416,7 +420,8 @@ class Puppet:
             a[..., :3] *= a[..., 3:]
             size = max(2, round(a.shape[1] * k)), max(2, round(a.shape[0] * k))
             bands = [Image.fromarray(a[..., c]).resize(size, Image.LANCZOS) for c in range(4)]
-            self.mips[key] = (np.clip(np.stack([np.asarray(b) for b in bands], -1), 0, 1), size[0] / a.shape[1])
+            uv_scale = (size[0] / a.shape[1], size[1] / a.shape[0])
+            self.mips[key] = (np.clip(np.stack([np.asarray(b) for b in bands], -1), 0, 1), uv_scale)
         return self.mips[key]
 
     def tube_points(self, layer, sk, cv):

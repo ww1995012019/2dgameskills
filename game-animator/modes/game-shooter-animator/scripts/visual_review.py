@@ -316,10 +316,31 @@ def file_hash(path):
 def review_assets(root):
     """Bind a verdict to the exact frames, sheets and QA it actually reviewed."""
     paths = []
-    for pattern in ("frames/*/*.png", "review/*.png", "animations.json", "rig_trace.json", "qa_report.json",
+    for pattern in ("frames/*/*.png", "review/*.png", "atlas*.png", "atlas*.json", "fx*.png", "fx*.json",
+                    "animations.json", "rig_trace.json", "qa_report.json",
                     "occlusion_review.json", "occlusion_decisions.json"):
         paths.extend(glob.glob(os.path.join(root, pattern)))
-    return {os.path.relpath(p, root).replace(os.sep, "/"): file_hash(p) for p in sorted(paths)}
+    # Follow declared page names too, including nested/custom atlas filenames.
+    # A missing required page must fail closed, even when it was absent before
+    # a reviewer tried recording a pass. Never hash paths outside this export.
+    base = os.path.realpath(root)
+    for manifest in ("animations.json", "fx.json"):
+        path = os.path.join(root, manifest)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as source:
+            pages = json.load(source).get("pages", [])
+        if not isinstance(pages, list):
+            raise ValueError(f"{manifest}: pages must be a list")
+        for page in pages:
+            name = page.get("file") if isinstance(page, dict) else None
+            if not isinstance(name, str) or not name or os.path.isabs(name):
+                raise ValueError(f"{manifest}: invalid atlas page")
+            image = os.path.realpath(os.path.join(base, name))
+            if os.path.commonpath((base, image)) != base:
+                raise ValueError(f"{manifest}: atlas page is outside the export")
+            paths.append(image)
+    return {os.path.relpath(p, root).replace(os.sep, "/"): file_hash(p) for p in sorted(set(paths))}
 
 
 def review_id(assets):
@@ -456,7 +477,11 @@ def check_current(root):
         return 1
     with open(path, encoding="utf-8") as source:
         report = json.load(source)
-    current = review_id(review_assets(root))
+    try:
+        current = review_id(review_assets(root))
+    except (OSError, ValueError, TypeError) as error:
+        print(f"visual review: missing or invalid delivery assets: {error}")
+        return 1
     ok = report.get("status") == "pass" and report.get("review_id") == current and occlusion_gate(root) == 0
     print("visual review: current pass" if ok else "visual review: failed or stale report; rebuild and review")
     return 0 if ok else 1

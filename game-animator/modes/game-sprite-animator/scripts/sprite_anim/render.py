@@ -1,4 +1,5 @@
 """Clip -> frames. Handles frame sampling, HD/pixel output and temporal smoothing."""
+import math
 import numpy as np
 
 from .art import Canvas, CharacterArt, chain_defs
@@ -32,6 +33,34 @@ def frame_time(clip, i, n, fps):
     if clip.loop:
         return i * clip.duration / n
     return i * clip.duration / (n - 1)
+
+
+def playback_speed(clip, fps, n=None):
+    """World speed of the baked samples played at the requested frame rate.
+
+    Rounding the frame count retimes the authored motion. Keep the pixels and
+    requested FPS, and apply the same retiming to the world's movement speed.
+    """
+    n = frame_count(clip, fps) if n is None else n
+    intervals = n if clip.loop else n - 1
+    return clip.speed * clip.duration * fps / intervals
+
+
+def walk_hold_phase(clip, n):
+    """A pair of half-cycle-separated holds whose displayed frames support both feet.
+
+    At sparse odd frame counts the ideal support centre can round down to a
+    swing frame. Move the shared phase forward to the first sampled second-half
+    support, retaining the normal centre whenever it already works.
+    """
+    phase = max((clip.duty - .5) / 2, math.ceil(n / 2) / n - .5)
+    if not 0 <= phase < clip.duty - .5:
+        raise ValueError('walk FPS misses double-support stop frames; increase export FPS')
+    for hold in (phase, phase + .5):
+        frame = math.floor(hold * n + 1e-10)
+        if not all(clip.contacts(frame_time(clip, frame, n, 1)).values()):
+            raise ValueError('walk FPS misses double-support stop frames; increase export FPS')
+    return phase
 
 
 class Renderer:

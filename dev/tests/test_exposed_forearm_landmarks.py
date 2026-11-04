@@ -42,4 +42,54 @@ class ExposedForearmLandmarks(unittest.TestCase):
         np.testing.assert_equal(n['elbow'],p['elbow']);np.testing.assert_equal(f['elbow'],q['elbow'])
         self.assertEqual(methods,{'near':'medial','far':'medial'})
 
+    def gloved_arm(self, scale=1, rear=False, covered=False, blue=False):
+        art,hand,joints,truth=self.arm(scale,rear,covered)
+        art=art.copy()
+        if blue:
+            skin=(art[...,:3] == (230,155,97)).all(axis=2)
+            art[skin,:3]=(91,161,231)
+        yy,xx=np.indices(hand.shape)
+        axis=joints['tip']-joints['wrist'];axis/=np.linalg.norm(axis)
+        along=(xx-joints['wrist'][0])*axis[0]+(yy-joints['wrist'][1])*axis[1]
+        # A predominantly covered hand whose distal fingertips expose the
+        # same material as the forearm. Hint geometry remains untouched.
+        glove=hand & (along < np.quantile(along[hand],.8))
+        art[glove,:3]=(40,45,58)
+        return art,hand,joints,truth
+
+    def test_minority_fingertips_find_forearm_on_two_materials_and_scales(self):
+        for scale in (1,2):
+            for blue in (False,True):
+                rows=[self.gloved_arm(scale,rear,blue=blue) for rear in (False,True)]
+                n,f,methods=lp.paired_arm_landmarks(*[rows[i][0] for i in (0,1)],
+                    *[rows[i][1] for i in (0,1)],*[rows[i][2] for i in (0,1)])
+                self.assertEqual(methods,{'near':'exposed_forearm','far':'exposed_forearm'})
+                for inferred,row in zip((n,f),rows):
+                    self.assertLess(np.linalg.norm(inferred['elbow']-row[3]),20*scale)
+                lp.check_pair('arm',*[lp.check_limb('arm',row[0][...,3]>128,
+                    [inferred[k] for k in ('shoulder','elbow','wrist')])
+                    for inferred,row in zip((n,f),rows)])
+
+    def test_gloved_covered_forearm_does_not_invent_exposed_landmark(self):
+        for rear in (False,True):
+            for blue in (False,True):
+                art,hand,joints,_=self.gloved_arm(rear=rear,covered=True,blue=blue)
+                self.assertEqual(lp.exposed_elbows(art,hand,joints),[])
+
+    def test_mixed_hand_median_cannot_invent_a_third_forearm_material(self):
+        art,hand,joints,_=self.arm()
+        art=art.copy()
+        skin=(art[...,:3] == (230,155,97)).all(axis=2)
+        art[skin,:3]=(127,127,127)
+        ys,xs=np.nonzero(hand)
+        # Equal black/white populations have a grey median, but neither
+        # actual hand material is the grey exposed forearm.
+        if len(xs)%2:
+            hand=hand.copy();hand[ys[-1],xs[-1]]=False
+            ys,xs=np.nonzero(hand)
+        split=len(xs)//2
+        art[ys[:split],xs[:split],:3]=0
+        art[ys[split:],xs[split:],:3]=254
+        self.assertEqual(lp.exposed_elbows(art,hand,joints),[])
+
 if __name__=='__main__':unittest.main()

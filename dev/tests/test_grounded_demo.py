@@ -1,6 +1,9 @@
 """Demo wiring in a mocked DOM; explicitly not browser playback validation."""
 import shutil
+import json
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,6 +11,29 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node required')
 class GroundedDemo(unittest.TestCase):
+    def test_main_preview_uses_phase_clock_for_both_walk_profiles_and_settle_banks(self):
+        skill = ROOT/'game-sprite-animator'
+        for character, natural, banks, fps in (('hero', False, False, 15), ('ninja', True, False, 15),
+                ('hero', True, True, 30), ('hero', False, False, 8), ('ninja', True, True, 8)):
+            with self.subTest(character=character, natural=natural, banks=banks, fps=fps), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                spec = json.loads((skill/f'assets/characters/{character}.json').read_text())
+                spec['cloth'] = []
+                if natural:
+                    spec['gait'] = {'walk': {'profile': 'natural_walk_v1'}}
+                source = root/'character.json'
+                source.write_text(json.dumps(spec))
+                command = [sys.executable, str(skill/'scripts/generate.py'), '--character', str(source),
+                    '--size', '64', '--fps', str(fps), '--clips', 'idle,walk,attack_1',
+                    '--no-fx', '--out', str(root/'out')]
+                if banks:
+                    command.append('--grounded-settle')
+                build = subprocess.run(command, capture_output=True, text=True)
+                self.assertEqual(build.returncode, 0, build.stdout+build.stderr)
+                run = subprocess.run(['node', str(ROOT/'dev/test_sprite_demo.js'),
+                    str(root/'out/preview.html'), '--locomotion'], capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, run.stdout+run.stderr)
+
     def test_export_page_schema_loading_buttons_and_draw_wiring(self):
         code = r'''
 const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('path');

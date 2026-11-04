@@ -166,7 +166,8 @@ function start(imgs, fxImgs) {
   const demoActions = ["idle", "walk", "run", "jump_start", "double_jump", "crouch_walk", "roll", "dash", "attack_1", "attack_2", "attack_3", "cast", "block", "block_hit", "hurt", "death"];
   const missing = demoActions.filter((name) => !doc.clips[name]);
   if (missing.length) $("missing-actions").textContent = "未导出的动作无法在试玩中使用：" + missing.map((name) => CN[name] || name).join("、");
-  const customNames = names.filter((name) => !Object.prototype.hasOwnProperty.call(CN, name));
+  const banks = new Set((doc.clips.walk?.locomotion?.settle_banks || []).map(bank => bank.clip));
+  const customNames = names.filter((name) => !banks.has(name) && !Object.prototype.hasOwnProperty.call(CN, name));
   if (customNames.length && doc.clips.idle) {
     const customSelect = $("custom-action");
     customNames.forEach((name) => { const option = document.createElement("option"); option.value = name; option.textContent = name; customSelect.append(option); });
@@ -181,13 +182,37 @@ function start(imgs, fxImgs) {
   const walkV = (doc.clips.walk ? doc.clips.walk.speed_px_s : 0) * Z;
   const runV = (doc.clips.run ? doc.clips.run.speed_px_s : 0) * Z;
   const has = (n) => !!doc.clips[n];
+  const phaseWalk = has('idle') && !!doc.clips.walk?.locomotion;
+  let locomotion = phaseWalk ? new GroundedWalkController(doc, imgs) : null;
+  let locomotionActive = phaseWalk;
+  const syncWalk = () => {
+    const p = locomotion.player;
+    hero.name = p.name; hero.clip = p.clip; hero.frame = p.frame;
+    hero.acc = p.acc; hero.done = p.done; hero._pending = [];
+  };
+  if (phaseWalk) $('missing-actions').textContent +=
+    ($('missing-actions').textContent ? '；' : '') + '走路会减速停稳；独立待机动作可在图库查看。';
   const fxList = [];
   function spawn(name, x, y, dir) {
     if (!fxDoc || !fxDoc.clips[name]) return;
     const p = new SpritePlayer(fxDoc, fxImgs); p.play(name);
     fxList.push({ p, x, y, dir });
   }
-  const set = (s, restart, frame = 0) => { if (!has(s)) { s = home; frame = 0; } P.state = s; hero.play(s, { restart: !!restart, frame }); };
+  const set = (s, restart, frame = 0) => {
+    if (!has(s)) { s = home; frame = 0; }
+    P.state = s;
+    if (phaseWalk && !P.air && (s === 'walk' || s === 'idle')) {
+      // Ordinary idle/walk controls retain one phase clock. Returning from a
+      // separate action starts a new locomotion stance, not a stale ramp.
+      if (!locomotionActive) locomotion = new GroundedWalkController(doc, imgs);
+      locomotionActive = true;
+      locomotion.setMoving(s === 'walk');
+      syncWalk();
+    } else {
+      locomotionActive = false;
+      hero.play(s, { restart: !!restart, frame });
+    }
+  };
   let shake = 0;
   function onEvent(e) {
     const m = { footstep: "dust_step", land_dust: "dust_land", skid_dust: "dust_skid", dash_burst: "dust_dash", air_puff: "puff_air", block_spark: "block_spark" }[e];
@@ -209,7 +234,9 @@ function start(imgs, fxImgs) {
     const cancelLand = s === "land" && hero.frame >= LAND_CANCEL;
     const customPlaying = !!doc.clips.idle && customNames.includes(s);
     const locked = (LOCK.has(s) || customPlaying) && !hero.done && !cancelLand;
-    const ev = hero.update(dt * 1000);
+    let walking = null;
+    const ev = locomotionActive ?
+      ((walking = locomotion.update(dt * 1000)), syncWalk(), walking.events) : hero.update(dt * 1000);
     ev.forEach(onEvent);
     if (s === "death") {
       if (take("KeyX")) { P.dead = false; set("idle", true); }
@@ -277,7 +304,14 @@ function start(imgs, fxImgs) {
       if (P.air && s !== "fall" && P.vy > 500 && !LOCK.has(s) && s !== "jump_apex") set("fall");
     }
     if (P.air) P.vy += GRAV * dt;
-    P.x += P.vx * dt; P.y += P.vy * dt;
+    if (locomotionActive) {
+      walking = walking || locomotion.update(0);
+      // Integrate exact phase displacement, including braking. A constant
+      // walk velocity would slide even if frame selection remained correct.
+      P.x += walking.dx * P.dir * Z;
+      P.vx = walking.speed * P.dir * Z;
+    } else P.x += P.vx * dt;
+    P.y += P.vy * dt;
     if (P.air && P.y >= groundY) {
       P.y = groundY; P.vy = 0; P.air = false; P.jumps = 0;
       if (P.state !== "death") { set("land", true); P.vx *= .25; }
@@ -322,7 +356,9 @@ function start(imgs, fxImgs) {
     g.fillText(`${CN[P.state] || P.state}  帧 ${hero.frame + 1}/${hero.clip.frames.length}`, 12, 22);
   }
   hero.play(home);
-  window.__demo = { P, hero, fxList };   // read-only hook for automated checks
+  if (locomotionActive) syncWalk();
+  window.__demo = { P, hero, fxList,
+    get locomotion() { return locomotionActive ? locomotion : null; } }; // read-only test hook
   const swallow = new Set(["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
   addEventListener("keydown", (e) => {
     if ($("paneB").classList.contains("hidden")) return;

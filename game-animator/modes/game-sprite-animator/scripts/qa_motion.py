@@ -23,6 +23,7 @@ Exit code 1 when anything FAILs.
 import argparse
 import glob
 import json
+import math
 import os
 import sys
 
@@ -190,6 +191,51 @@ def occlusion_status(root, trace, clips):
                 report='occlusion_review.json', error=error)
 
 
+def locomotion_status(doc, trace, clips):
+    """Check the baked clock and both displayed support frames used for stopping.
+
+    The separate authored idle is not an endpoint of this runtime policy.
+    These measurements do not certify start/stop appearance on new artwork.
+    """
+    required = set((trace or {}).get('locomotion_required', []))
+    required.update(n for n, c in doc['clips'].items() if 'locomotion' in c)
+    if not required:
+        return None
+    results = {}
+    for name in sorted(required):
+        problems, frames = [], []
+        c = doc['clips'].get(name, {})
+        m = c.get('locomotion', {})
+        try:
+            n, fps = len(c['frames']), c['fps']
+            period, duty, speed = m['period_s'], m['duty'], m['speed_px_s']
+            hold = m.get('hold_phase', (duty-.5)/2)
+            if (not c['loop'] or m['profile'] not in ('natural_walk_v1', 'phase_walk_v1') or
+                    any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                        for v in (fps, period, duty, speed, hold)) or fps <= 0 or period <= 0 or
+                    not .5 < duty < 1 or speed <= 0 or not 0 <= hold < duty-.5):
+                raise ValueError('invalid phase-walk contract')
+            if abs(period - n/fps) > 1e-9 or abs(speed - c['speed_px_s']) > .0051:
+                problems.append('movement and sprite playback clocks differ')
+            if clips[name]['frames'] != n:
+                problems.append('frame count differs from the exported clip')
+            contacts = trace['traces'][name]['contacts']
+            for side in range(2):
+                frame = math.floor((hold + side*.5) * n + 1e-10)
+                frames.append(frame)
+                if not all(contacts[s][frame] for s in 'nf'):
+                    problems.append(f'frame {frame} is not double support')
+        except (KeyError, TypeError, ValueError, IndexError) as error:
+            problems.append(str(error))
+        if problems and name in clips:
+            for frame in frames or [0]:
+                clips[name].setdefault('flags', {}).setdefault(str(frame), []).extend(
+                    'locomotion handover: ' + p for p in problems)
+        results[name] = dict(status=FAIL if problems else PASS, hold_frames=frames, problems=problems)
+    return dict(status=FAIL if any(r['problems'] for r in results.values()) else PASS,
+                policy='retain_walk_phase_and_brake_to_double_support', clips=results)
+
+
 def run_set(root):
     with open(os.path.join(root, "animations.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -206,8 +252,11 @@ def run_set(root):
         seqs[name] = load_seq(paths)
         r = analyse(seqs[name], c["loop"], "attack" in c["tags"])
         if trace:
-            r.update(analyse_rig(name, trace["traces"][name], trace["speeds"][name], c["tags"]))
-            geo, flags = summarize(trace["traces"][name]["metrics"], c["tags"], trace["traces"][name]["frame_dt"])
+            # Check the exported player's clock, including older exports whose
+            # sidecar stored the authored interval rather than 1 / output FPS.
+            runtime_trace = dict(trace["traces"][name], frame_dt=1.0 / c["fps"])
+            r.update(analyse_rig(name, runtime_trace, c["speed_px_s"], c["tags"]))
+            geo, flags = summarize(runtime_trace["metrics"], c["tags"], runtime_trace["frame_dt"])
             r.update(geo)
             tr = trace["traces"][name]
             if tr.get("joints") and c["loop"] and r["frames"] > 2:
@@ -272,9 +321,14 @@ def run_set(root):
         for clip, joints in bind_gaps.items():
             print(f"  gap: {clip}: {joints}")
     visibility = occlusion_status(root, trace, report)
+    locomotion = locomotion_status(doc, trace, report)
     out = dict(clips=report, transitions=trans, parts=dict(status=FAIL if problems else PASS, problems=problems),
                bind=dict(status=FAIL if bind_gaps else WARN if bind_warnings else PASS, warnings=bind_warnings, gaps=bind_gaps))
     failed += len(problems) + len(bind_gaps)
+    if locomotion is not None:
+        out['locomotion'] = locomotion
+        failed += sum(r['status'] == FAIL for r in locomotion['clips'].values())
+        print(f"locomotion: {locomotion['status']}; phase clock and displayed stop supports")
     warns = sum(1 for r in report.values() for c in cols if r.get(c) == WARN) + sum(t["status"] == WARN for t in trans)
     warns += len(bind_warnings)
     if visibility is not None:

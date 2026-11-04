@@ -142,6 +142,38 @@ class BatchedRaster(unittest.TestCase):
         with self.assertRaises(ValueError):
             P.raster(layer, verts, mip, w, h)
 
+    def test_nonsquare_mips_keep_both_source_extents(self):
+        # Cropped blades/limbs have very different dimensions. Rounding the
+        # mip size must not change their length or move their distal texture.
+        with tempfile.TemporaryDirectory() as tmp:
+            for width, height in ((11, 300), (300, 11), (37, 173), (1, 300)):
+                image = Image.new('RGBA', (width, height), (50, 160, 90, 255))
+                image.save(Path(tmp) / 'part.png')
+                puppet = P.Puppet(dict(_dir=tmp, puppet=dict(px_per_unit=1,
+                    joints={}, rest_angles={}, layers={'part': dict(kind='rigid',
+                    image='part.png', anchor=[0, 0], follow=['hip', 'body_rot'])})))
+                layer = puppet.layers[0]
+                for scale in (.13, .2, .61, 1.):
+                    with self.subTest(size=image.size, scale=scale):
+                        verts = np.stack([layer.vx*scale+5, layer.vy*scale+5], -1)
+                        shape = (math.ceil(width*scale)+20, math.ceil(height*scale)+20)
+                        # The bilinear oracle needs at least two texels per
+                        # dimension, including a valid one-pixel source strip.
+                        control_size = (max(2, width), max(2, height))
+                        control = np.asarray(image.resize(control_size, Image.NEAREST), dtype=np.float32)/255
+                        factors = (control_size[0]/width, control_size[1]/height)
+                        expected = P.raster(layer, verts, (control, factors), *shape)
+                        actual = P.raster(layer, verts, puppet.mip(layer, scale), *shape)
+                        np.testing.assert_array_equal(actual[..., 3] > .5, expected[..., 3] > .5)
+                if (width, height) == (11, 300):
+                    scale = .2
+                    verts = np.stack([layer.vx*scale+5, layer.vy*scale+5], -1)
+                    mip, factors = puppet.mip(layer, scale)
+                    faulty = P.raster(layer, verts, (mip, factors[0]), 30, 90)
+                    correct = P.raster(layer, verts, (mip, factors), 30, 90)
+                    self.assertGreater(np.count_nonzero(correct[..., 3] > .5),
+                                       np.count_nonzero(faulty[..., 3] > .5))
+
     def test_rounded_matches_reference(self):
         rng = np.random.default_rng(2)
         for k in range(2000):

@@ -109,6 +109,34 @@ class VisualGate(unittest.TestCase):
             self.record()
         self.assertFalse((self.root/'visual_report.json').exists())
 
+    def test_changed_deleted_and_unreadable_delivery_pages_invalidate_pass(self):
+        # Include a nested nonstandard filename, not just atlas*.png globs.
+        for name in ('atlas.png', 'textures/hero-page.png'):
+            with self.subTest(page=name):
+                page = self.root / name
+                page.parent.mkdir(parents=True, exist_ok=True)
+                (self.root/'animations.json').write_text(json.dumps({
+                    'pages': [{'file': name, 'w': 16, 'h': 16}]}))
+                Image.new('RGBA', (16, 16), 'red').save(page)
+                self.refresh()
+                self.verdict['review_id'] = self.ident
+                self.assertEqual(self.record(), 0)
+                self.assertEqual(vr.check_current(str(self.root)), 0)
+                Image.new('RGBA', (16, 16), (0, 0, 0, 0)).save(page)
+                self.assertEqual(vr.check_current(str(self.root)), 1)
+                page.unlink()
+                self.assertEqual(vr.check_current(str(self.root)), 1)
+                page.write_bytes(b'incomplete PNG download')
+                self.assertEqual(vr.check_current(str(self.root)), 1)
+                page.unlink()
+
+    def test_declared_pages_cannot_escape_the_export(self):
+        for name in ('../private.png', '/private.png'):
+            with self.subTest(page=name):
+                (self.root/'animations.json').write_text(json.dumps({'pages': [{'file': name}]}))
+                with self.assertRaisesRegex(ValueError, 'atlas page'):
+                    vr.review_assets(str(self.root))
+
     def test_issue_cannot_disappear_or_resolve_without_changed_pixels(self):
         row = self.verdict['sheets']['arms_00.png']
         row['verdict'] = 'fail'; row['issues'] = [self.issue()]

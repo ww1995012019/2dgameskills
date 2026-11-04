@@ -62,9 +62,12 @@ undo its fit. Unknown profile names are rejected.
 
 At default speed its period is 5/6 second (20 frames at 24 fps or 25 at 30 fps).
 Review the actual silhouette and motion, not just contact/seam scores. This profile
-only fixes the walking loop: direct player switches between idle and walking are
-not phase-aware and can jump. It does not provide accepted start/stop transitions
-or validate unrelated actions.
+only changes the walking loop and does not validate unrelated actions. The normal
+playable preview now uses the phase-preserving walking controller for both the
+legacy and natural profiles: releasing movement brakes into a two-foot support
+hold, and moving again resumes the same phase. This hold is distinct from the
+authored idle animation shown in the gallery. Direct low-level SpritePlayer
+switches still cut between clips; use GroundedWalkController for this policy.
 
 ## Custom clips
 
