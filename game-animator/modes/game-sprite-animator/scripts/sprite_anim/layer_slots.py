@@ -22,7 +22,26 @@ no pasted-on head, floating skull, flared triangular skin flap, shelf-shaped nec
 horizontal/diagonal cut line or duplicated neck. An internal overlap is unoutlined and hidden
 inside the matching torso neck, never laid over the outside/front of a collar or scarf.
 Do not repaint a removed collar as skin or scales. If the source neck/hand pose is defective,
-reject the source and repair that stage; do not change accepted registration to hide it."""
+reject the source and repair that stage; do not change accepted registration to hide it.
+When separating the head, COPY the VISIBLE neck contour from the registration plate. Its
+bottom follows the existing skin/scales-to-collar boundary, including the original diagonal
+or curved contour. Do not replace it with a straight rectangular stump or extend neck colour
+over any fabric visible in the final composite. The torso already supplies hidden neck overlap.
+Any hidden extension stays within the existing torso footprint and must be behind the original
+source-verified front collar; its cut edge must never become visible. Do not enlarge a collar
+or add a patch to conceal a detached or incorrectly skinned neck."""
+
+REFERENCE_HAND_REPAIR = """Repair the EMPTY HAND gestures in this full-body registration plate.
+Keep the same full canvas, side-view pose, scale, head, face, neck, torso, limbs, armour,
+clothing, feet, accessories, colours and background. Keep each wrist in its original position
+and keep both complete arm chains. Change only the finger curl of an empty hand into a
+comfortable relaxed semi-closed resting gesture. The fingers settle close together with small
+uneven bends; the thumb rests naturally beside the palm. Keep species-specific claws and
+their original length without a threatening spread or a grasp around an invisible object.
+Any hand actually holding a weapon keeps its original secure grip and weapon unchanged.
+Do not make a new character illustration or change the body pose. Keep all empty canvas.
+Output the complete corrected registration plate, not an enlarged hand or a contact sheet.
+""" + NATURAL_HANDS
 
 # Asks for a picture that passes the contract, from a description or from any earlier picture.
 REFERENCE = """Full-body 2D game character: {who}. {style}.

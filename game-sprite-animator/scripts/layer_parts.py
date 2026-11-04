@@ -708,6 +708,67 @@ def check_neck_contact(masks):
         raise Rejected("head/torso: no continuous neck overlap after registration; remake the complete neck down to the collar")
 
 
+def neck_front_material_mask(head, torso, ref, seat, waist):
+    """Which existing material owns the registered neck overlap in the source?
+
+    A reconstructed neck may sit behind an existing collar. Do not paint a
+    patch, enlarge a collar or use depth to waive a broken geometric seam.
+    """
+    seat, waist = np.asarray(seat, float), np.asarray(waist, float)
+    length = float(np.linalg.norm(seat-waist))
+    mask=np.zeros(head.shape[:2],bool)
+    if not length:
+        return mask, dict(status='insufficient_source_evidence')
+    axis = (seat-waist)/length
+    yy, xx = np.indices(head.shape[:2]);delta=np.stack((xx-seat[0], yy-seat[1]), -1)
+    along=delta@axis;cross=delta@np.array([-axis[1], axis[0]])
+    region=(along>-.35*length)&(along<.02*length)&(np.abs(cross)<.4*length)
+    shared = (head[...,3]>128)&(torso[...,3]>128)&(ref[...,3]>128)&region
+    if shared.sum()<16:
+        return mask, dict(status='insufficient_source_evidence')
+    reference=ref[shared,:3].astype(float)
+    child=head[shared,:3].astype(float);parent=torso[shared,:3].astype(float)
+    a=np.abs(child-reference).mean(1);b=np.abs(parent-reference).mean(1)
+    def hs(rgb):
+        mx=rgb.max(1);mn=rgb.min(1);span=mx-mn;s=span/np.maximum(mx,1.)
+        safe=np.maximum(span,1.);r,g,blue=rgb.T
+        h=np.choose(rgb.argmax(1),[(g-blue)/safe,(blue-r)/safe+2.,(r-g)/safe+4.])/6.
+        return h%1.,s
+    skin_pixels=head[shared&(along<=0),:3]
+    if not len(skin_pixels):
+        return mask,dict(status='insufficient_source_evidence')
+    skin=np.median(skin_pixels,axis=0)
+    sh,ss=hs(skin[None]);valid=(torso[...,3]>250)&(ref[...,3]>250)&region
+    rgb=torso[valid,:3].astype(float);original=ref[valid,:3].astype(float)
+    ph,ps=hs(rgb);rh,rs=hs(original)
+    def different(h,s):
+        hue=np.abs(h-sh[0]);hue=np.minimum(hue,1-hue)
+        return (np.abs(s-ss[0])>.10)|((np.minimum(s,ss[0])>.12)&(hue>.10))
+    # Confident source-matching material seeds locate a continuous collar edge.
+    # Filling below that edge retains dark folds/highlights without speckled
+    # holes, while the duplicate bare-neck cap remains behind the head skin.
+    seeds=np.zeros(mask.shape,bool)
+    seeds[valid]=different(ph,ps)&different(rh,rs)&(rgb.max(1)>45)&(np.abs(rgb-original).mean(1)<38.)&(head[valid,3]>8)
+    bins=np.floor(cross).astype(int);minimum=int(bins[region].min());bins-=minimum
+    top=np.full(int(bins.max())+1,-np.inf)
+    np.maximum.at(top,bins[seeds],along[seeds])
+    known=np.flatnonzero(np.isfinite(top))
+    if len(known)>=3:
+        curve=np.interp(np.arange(len(top)),known,top[known])
+        padded=np.pad(curve,2,mode='edge');curve=np.median(np.stack([padded[i:i+len(curve)] for i in range(5)]),axis=0)
+        lookup=np.clip(bins,0,len(curve)-1)
+        mask=((torso[...,3]>250)&region&(bins>=known[0])&(bins<=known[-1])&(along<=curve[lookup]))
+    return mask,dict(status='source_compared',front='source_selected_collar',
+                     head_error=round(float(a.mean()),3),torso_error=round(float(b.mean()),3),
+                     pixels=int(shared.sum()),front_pixels=int(mask.sum()),material_seeds=int(seeds.sum()),
+                     method='source_material_collar_edge')
+
+
+def neck_material_depth(head,torso,ref,seat,waist):
+    mask,report=neck_front_material_mask(head,torso,ref,seat,waist)
+    return bool(mask.any()),report
+
+
 def registration(name, layer, ref, cache_dir=None):
     """Reuse only an identical input and algorithm, including after a refused bind.
 
@@ -995,7 +1056,12 @@ def _bind(ref, layers, fit_cache, diagnostics):
         robe_len = max(float(robe_ys.max()) - hip[1], 0.25 * near_px) * 1.1
         robe_hem = hip + thighs / (np.hypot(*thighs) or 1) * robe_len
         tube("robe", ["robe_hem", "hip", "waist"], [robe_hem, hip, waist])
-    data["head"] = dict(kind="rigid", follow=["head_base", "head_rot"], anchor=[round(float(v), 2) for v in head_base])
+    data["head"] = dict(kind="rigid", follow=["head_base", "head_rot"],
+                        anchor=[round(float(v), 2) for v in head_base], neck_skin='torso')
+    front_mask, depth = neck_front_material_mask(out['head'], out['torso'], ref, head_base, waist)
+    diagnostics['neck_material_depth'] = depth
+    if front_mask.any():
+        diagnostics['neck_front_mask']=front_mask.astype(np.uint8)*255
     data["hips"] = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
     if "appendage_back" in out:
         data["appendage_back"], contact = rear_appendage_binding(
@@ -1072,6 +1138,8 @@ def _bind(ref, layers, fit_cache, diagnostics):
     if wep_rest is not None:
         gait["walk"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)     # a carried blade stays steady
         gait["idle"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)
+    for clip in ('idle', 'walk', 'run'):
+        gait.setdefault(clip, {})['head_response'] = 'neck_inertia_v1'
     puppet = dict(px_per_unit=round(float(ppu), 4), joints={k: [round(float(x), 2) for x in v] for k, v in joints.items()},
                   rest_angles={k: round(float(v), 3) for k, v in rest_angles.items()}, skirt_len=round(float(skirt_len / ppu), 3),
                   core_radius=round(core_px / ppu, 3),
@@ -1083,6 +1151,8 @@ def _bind(ref, layers, fit_cache, diagnostics):
     if weapon_len:
         puppet.update(weapon_length=round(weapon_len, 2), weapon_back=round(weapon_back, 2))
         body.update(weapon_front=round(weapon_len, 2), weapon_back=round(weapon_back, 2))
+    depth_order=list(out)
+    diagnostics['layer_depth_order']=depth_order
     return out, dict(puppet=puppet, body=body, gait=gait), dict(bone_pair_ratios=pair_ratios, fits=fits, cover=round(cover, 3), spill=round(spill, 3), px_per_unit=round(float(ppu), 3))
 
 
@@ -1090,8 +1160,13 @@ def save_diagnostics(folder, ref, state):
     """Always replace prior diagnostics; rejected runs never leave a stale success report."""
     os.makedirs(folder, exist_ok=True)
     canvas = Image.new("RGBA", (ref.shape[1], ref.shape[0]), (60, 62, 74, 255))
-    for arr in state.get("layers", {}).values():
+    layers=state.get('layers', {})
+    for name in state.get('layer_depth_order', list(layers)):
+        arr=layers[name]
         canvas.alpha_composite(Image.fromarray(arr, "RGBA"))
+        if name=='head' and 'neck_front_mask' in state:
+            front=layers['torso'].copy();front[...,3]=np.minimum(front[...,3],state['neck_front_mask'])
+            canvas.alpha_composite(Image.fromarray(front,'RGBA'))
     canvas.save(os.path.join(folder, "layers_check.png"))
     from PIL import ImageDraw
     draw = ImageDraw.Draw(canvas)
@@ -1102,7 +1177,9 @@ def save_diagnostics(folder, ref, state):
             draw.ellipse((x-5, y-5, x+5, y+5), fill=colour)
         draw.text(tuple(points[0]), name, fill=colour)
     canvas.save(os.path.join(folder, "bind_joints.png"))
-    report = {k: v for k, v in state.items() if k != "layers"}
+    report = {k: v for k, v in state.items() if k not in ("layers",'neck_front_mask')}
+    if 'neck_front_mask' in state:
+        Image.fromarray(state['neck_front_mask'],'L').save(os.path.join(folder,'neck_front_mask.png'))
     with open(os.path.join(folder, "bind_report.json"), "w", encoding="utf-8") as target:
         json.dump(report, target, ensure_ascii=False, indent=1)
 
@@ -1117,6 +1194,9 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
         box = Image.fromarray(arr[..., 3]).getbbox()
         Image.fromarray(arr, "RGBA").crop(box).save(os.path.join(folder, name + ".png"))
         spec["puppet"]["layers"][name].update(image=f"layers/{name}.png", offset=[box[0], box[1]])
+        if name=='torso' and 'neck_front_mask' in state:
+            Image.fromarray(state['neck_front_mask'],'L').crop(box).save(os.path.join(folder,'torso-neck-front.png'))
+            spec['puppet']['layers'][name]['front_mask']='layers/torso-neck-front.png'
     Image.fromarray(ref, "RGBA").save(os.path.join(out_dir, "source.png"))
     spec.update(name=character_name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
     with open(os.path.join(out_dir, "character.json"), "w", encoding="utf-8") as fh:

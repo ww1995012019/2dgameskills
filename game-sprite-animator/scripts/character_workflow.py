@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw
 import layer_parts as lp
 import visual_review as vr
 from sprite_anim.layer_slots import (BASIC_PROFILE, BASIC_SCOPE_CHECKS, BASIC_SLOTS, HAND_HINTS,
-                                    IDENTITY_PROMPT, REPAIR_RULES, basic_prompt, basic_reference_prompt)
+                                    IDENTITY_PROMPT, REPAIR_RULES, REFERENCE_HAND_REPAIR, basic_prompt, basic_reference_prompt)
 
 LAYER_CHECKS = ('complete_shape', 'exclusive_contents', 'sharp_art', 'unchanged_pose', 'valid_attachment')
 
@@ -345,6 +345,8 @@ def retry(folder, stage, fault, reason):
         for name in (*slots(job), *HAND_HINTS):
             (root/'prompts'/f'{name}.txt').unlink(missing_ok=True)
     baseline = (root/'prompts/01_reference.txt').read_text(encoding='utf-8') if stage == 'reference' else basic_prompt(stage)
+    if stage == 'reference' and fault == 'hand_pose':
+        baseline = REFERENCE_HAND_REPAIR
     (root/'prompts'/f'retry_{stage}.txt').write_text(repair_prompt(baseline, fault, reason), encoding='utf-8')
     job['attempts'][stage] = attempt+1
     job['retries'].append(dict(stage=stage, attempt=attempt+1, fault=fault, evidence=reason))

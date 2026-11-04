@@ -24,6 +24,70 @@ ANKLE_TURN = 62.0      # degrees a foot may turn from the shin's line as drawn. 
 SKIRT_SWING = 40.0     # degrees hanging panels may leave the body's line: past that the thighs lift clear of them
 
 
+def mesh_points(layer, verts, source):
+    """Map registered source points through the same two triangles as raster()."""
+    p = np.asarray(source, float) - layer.offset
+    i = np.clip(np.searchsorted(layer.gx, p[..., 0], side='right') - 1, 0, len(layer.gx) - 2)
+    j = np.clip(np.searchsorted(layer.gy, p[..., 1], side='right') - 1, 0, len(layer.gy) - 2)
+    u = (p[..., 0] - layer.gx[i]) / (layer.gx[i + 1] - layer.gx[i])
+    v = (p[..., 1] - layer.gy[j]) / (layer.gy[j + 1] - layer.gy[j])
+    a, b, c, d = verts[j, i], verts[j, i + 1], verts[j + 1, i], verts[j + 1, i + 1]
+    first = a + u[..., None] * (b - a) + v[..., None] * (c - a)
+    second = d + (1-u)[..., None] * (c-d) + (1-v)[..., None] * (b-d)
+    return np.where((u+v <= 1)[..., None], first, second)
+
+
+def neck_blend_weights(head, torso, seat, waist):
+    """Infer a basal neck band from registered opaque overlap, preserving the skull.
+
+    This changes mesh positions only. A painted cut/collar triangle is still bad
+    source art and must be repaired; alpha overlap cannot certify its appearance.
+    """
+    seat, waist = np.asarray(seat, float), np.asarray(waist, float)
+    length = float(np.linalg.norm(seat-waist))
+    if length < GRID:
+        raise ValueError('neck skin: degenerate source chest')
+    axis = (seat-waist)/length
+    across = np.array([-axis[1], axis[0]])
+    hy, hx = np.nonzero(np.asarray(head.image)[..., 3] > 128)
+    points = np.stack((hx, hy), -1) + head.offset
+    tx, ty = np.rint(points-torso.offset).astype(int).T
+    alpha = np.asarray(torso.image)[..., 3] > 128
+    inside = (tx >= 0) & (ty >= 0) & (tx < alpha.shape[1]) & (ty < alpha.shape[0])
+    overlap = np.zeros(len(points), bool)
+    overlap[inside] = alpha[ty[inside], tx[inside]]
+    longitudinal, lateral = (points-seat)@axis, (points-seat)@across
+    overlap &= ((longitudinal > -.35*length) & (longitudinal < .12*length)
+                & (np.abs(lateral) < .2*length))
+    if overlap.sum() < 16:
+        raise ValueError('neck skin: no registered opaque head/torso neck overlap')
+    longitudinal, lateral = longitudinal[overlap], lateral[overlap]
+    root = float(np.quantile(longitudinal, .05))
+    basal = lateral[longitudinal <= root + max(GRID, .04*length)]
+    lo, hi = np.quantile(basal, (.05, .95))
+    center, half = float((lo+hi)/2), max(GRID, float((hi-lo)/2))
+    # A source seam lies inside a triangle, not necessarily on a grid row.
+    # Lock one complete surrounding cell before tapering toward the skull.
+    attach = min(root+GRID, -GRID*.5)
+    band = max(GRID*.5, min(-attach, 2*half, .2*length))
+    grid = np.stack((head.vx, head.vy), -1) + head.offset
+    along = (grid-seat)@axis
+    cross = (grid-seat)@across
+    smooth = lambda x: np.clip(x, 0, 1)**2 * (3-2*np.clip(x, 0, 1))
+    weights = (1-smooth((along-attach)/band)) * (1-smooth((np.abs(cross-center)-half*1.25-GRID)/(half*.75)))
+    weights[along >= 0] = 0.  # the upper head remains exactly on its rigid skull transform
+    # Only source points represented by the parent mesh can be attached to it.
+    local = grid-torso.offset
+    weights *= ((local[..., 0] >= 0) & (local[..., 0] <= torso.gx[-1])
+                & (local[..., 1] >= 0) & (local[..., 1] <= torso.gy[-1]))
+    seam = points[overlap][longitudinal <= root]
+    seam = seam[np.argsort((seam-seat)@across)]
+    seam = seam[np.linspace(0, len(seam)-1, min(12, len(seam))).astype(int)]
+    return weights, dict(root=root, attachment_start=attach, half_width=half, band=band, lateral_center=center,
+                         source_points=seam.tolist(),
+                         overlap_pixels=int(overlap.sum()), method='registered_neck_overlap')
+
+
 def corner_run(a, b, c, radius, reach):
     """How far along each bone the arc at corner b starts. A sharper corner needs a longer run to
     keep the same radius; a limb half as wide as that radius would otherwise pinch to a point."""
@@ -97,9 +161,15 @@ class Layer:
         self.chain = data.get("chain")
         self.foot = data.get("foot")
         self.anchor, self.follow = data.get("anchor"), data.get("follow")
+        self.neck_skin = data.get('neck_skin')
         im = Image.open(os.path.join(base, data["image"])).convert("RGBA")
         self.offset = np.array(data.get("offset", (0, 0)), dtype=np.float64)
         self.image = im
+        self.front_mask = None
+        if data.get('front_mask'):
+            self.front_mask=Image.open(os.path.join(base,data['front_mask'])).convert('L')
+            if self.front_mask.size!=im.size:
+                raise ValueError('neck front material mask must match the parent image')
         a = np.asarray(im, dtype=np.float32) / 255
         ys, xs = np.nonzero(a[..., 3] > 0.02)
         self.box = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
@@ -402,6 +472,15 @@ class Puppet:
         self.rest_arm = {k: tuple(tuple(p) for p in v) for k, v in data.get("rest_arm", {}).items()}
         self.layers = [Layer(n, d, base) for n, d in data["layers"].items()]
         self.mips = {}
+        self.neck_bindings = {}
+        indexed = {layer.name: layer for layer in self.layers}
+        for layer in self.layers:
+            if layer.neck_skin:
+                parent = indexed.get(layer.neck_skin)
+                if layer.name != 'head' or layer.kind != 'rigid' or parent is None or parent.kind != 'tube':
+                    raise ValueError('neck skin requires a rigid head and its tube torso')
+                weights, report = neck_blend_weights(layer, parent, self.joints['head_base'], self.joints['waist'])
+                self.neck_bindings[layer.name] = (parent, weights, report)
 
     def palette(self):
         cols = set()
@@ -448,8 +527,11 @@ class Puppet:
         if used_only and relax:
             raise ValueError("used_only vertices cannot be relaxed: relaxation needs the full grid")
         scale = cv.s / self.px_per_unit
+        neck_bindings=getattr(self,'neck_bindings',{})
+        parents = {parent.name for parent, _, _ in neck_bindings.values()}
+        cached = {}
         for layer in self.layers:
-            sel = layer.used if used_only else None
+            sel = layer.used if used_only and layer.name not in parents else None
             if layer.kind == "rigid":
                 verts = self.rigid_verts(layer, sk, cv, scale, sel)
             elif layer.kind == "cloth":
@@ -478,7 +560,18 @@ class Puppet:
                 verts = floor_contact(verts, cv.oy, max(cv.s * 0.5, 1e-6))
                 if relax:
                     verts = untangle(verts, layer.cells)
-            yield layer, verts
+            if layer.name in neck_bindings:
+                parent, weights, _ = neck_bindings[layer.name]
+                if parent.name not in cached:
+                    raise ValueError('neck skin: torso must precede head in draw order')
+                source = np.stack((layer.vx, layer.vy), -1) + layer.offset
+                if sel is not None:
+                    source, weights = source[sel], weights[sel]
+                attached = mesh_points(parent, cached[parent.name], source)
+                verts = verts*(1-weights[..., None]) + attached*weights[..., None]
+            if layer.name in parents:
+                cached[layer.name] = verts
+            yield layer, verts[layer.used] if used_only and layer.name in parents else verts
 
     def foot_turn(self, layer, sk, cv):
         """Radians the boot turns from the picture, clockwise on screen, kept within the ankle's reach."""
@@ -490,8 +583,23 @@ class Puppet:
 
     def draw(self, cv, sk, cloth, ground_contact=False):
         scale = cv.s / self.px_per_unit
-        for layer, verts in self.meshes(cv, sk, cloth, ground_contact):
-            drawn = raster(layer, verts, self.mip(layer, scale), cv.w, cv.h)
+        meshes=list(self.meshes(cv, sk, cloth, ground_contact))
+        # The existing collar material is a separate source-derived depth
+        # surface; the torso's reconstructed bare neck stays behind the head.
+        surfaces=[];indexed={layer.name:(layer,verts) for layer,verts in meshes}
+        for layer,verts in meshes:
+            surfaces.append((layer,verts,self.mip(layer,scale)))
+            if layer.neck_skin:
+                parent,parent_verts=indexed[layer.neck_skin]
+                if parent.front_mask is not None:
+                    key=(parent.name+':neck_front',round(scale,3))
+                    if key not in self.mips:
+                        image,factor=self.mip(parent,scale)
+                        mask=np.asarray(parent.front_mask.resize((image.shape[1],image.shape[0]),Image.Resampling.LANCZOS),float)/255.
+                        self.mips[key]=(image*mask[...,None],factor)
+                    surfaces.append((parent,parent_verts,self.mips[key]))
+        for layer, verts, mip in surfaces:
+            drawn = raster(layer, verts, mip, cv.w, cv.h)
             ys, xs = np.nonzero(drawn[..., 3] > 1e-3)
             if not len(ys):
                 continue

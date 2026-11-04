@@ -157,6 +157,10 @@ stop and report the unresolved blocker and attempted repairs. Requesting a fourt
 a terminal `blocked` phase; other stage commands cannot silently reopen that job. Do not create a fresh job or rename a
 stage to reset the budget. Tools cannot observe image generations performed outside the workflow;
 the agent must log each attempt honestly. A reference retry requires inspecting all layers again.
+For `retry --stage reference --fault hand_pose`, the fixed `REFERENCE_HAND_REPAIR` prompt changes
+only empty-hand finger curl while preserving the full registration plate, wrist positions and
+any holding hand. Use the resulting reviewed reference to regenerate affected complete arms and
+then their hand hints within the SAME stage budgets. Do not relax fingers in a hint image.
 
 ## 5. Idle and walk, then user's quality gate
 

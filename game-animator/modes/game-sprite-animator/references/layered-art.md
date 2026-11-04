@@ -181,10 +181,34 @@ This static cross-section does NOT detect an exposed triangular neck base, a cut
 the front of a collar, or stiff motion. Compare the registered composite with the source and
 complete the mandatory head/neck motion review in `visual-review.md`. Preserve skull/face identity;
 the base of the neck must follow the chest while the upper neck permits bounded independent
-head motion. A whole bare neck rotating like a rigid cardboard tab is a failed result. The current
-rigid-head renderer has no soft neck skinning; if that mechanism exposes a cut, report a failed
-binding/motion stage, not a solved seam. Do not erase the source, inflate the collar or alter one
+head motion. A whole bare neck rotating like a rigid cardboard tab is a failed result.
+Legacy rigid-head binding has no soft neck skinning; report any exposed cut as a failed
+binding/motion stage. New layered binds set `head.neck_skin="torso"`: the registered opaque
+overlap defines a basal neck band whose vertices follow the actual final torso triangles.
+The transition ends before the rigid skull; shared source points retain a whole supporting
+mesh cell so a seam inside a cell cannot drift between locked vertices. No pixels are painted,
+removed or recoloured. Native `check_neck` checks final head/torso triangle correspondence on
+every exported frame at a 1-output-pixel limit, independently of optional limb checks.
+`rig_trace.json.neck_skinning` records the source probes and clip/frame measurements.
+The registered source also determines neck material depth: compare the existing head/torso
+pixels with the original within their shared neck overlap. When existing torso material matches
+the registered source and differs from inferred neck skin/scales, a source-derived torso `front_mask`
+places only those original collar texels above hidden neck art. The torso's duplicate bare neck
+stays behind the continuous head skin. Skinning uses the already-solved torso triangles for
+both passes; material depth is applied separately. The mask is exported with the registered
+torso, never supplied or painted per character. No collar
+is enlarged or repainted, and geometric seam checks remain mandatory. Insufficient/ambiguous
+source colour evidence keeps the default order and requires visual review. A hidden extension
+is acceptable only within the actual parent footprint with no exposed cut in source or motion.
+This does not recognize or repair a painted triangular cut over a collar. Do not erase the source,
+inflate the collar or alter one
 character's joints to hide it. A small harmonic head rotation is not evidence of natural motion.
+
+New binds also select `head_response="neck_inertia_v1"` for idle/walk/run. Breathing contributes
+a small chest counterresponse without changing the shared idle/recovery pose; gaits add delayed
+chest counterrotation and a bounded nod derived from vertical acceleration and measured head size.
+Only the head channel changes. Authored attack head keys, feet and root travel remain authoritative.
+This profile still requires full temporal review; it is not a guarantee of naturalness.
 The rear arm must reconstruct
 its own hidden shoulder rather than copying the visible front shoulder plate.
 Trailing fabric ends at the rear hip and excludes every front-facing skirt flap.
