@@ -15,6 +15,16 @@ description: >
 
 # Game Sprite Animator
 
+Head/neck continuity and natural hands are mandatory from reference generation through delivery.
+Use the fixed species-aware neck/hand constraints in `sprite_anim/layer_slots.py`; inspect the
+source, isolated head/torso and both arm layers at full size. A triangular neck flap over a collar,
+an exposed internal cut, rigid pasted-on head motion, exaggerated empty-hand clawing or a broken
+wrist is a blocker. Read [visual-review.md](references/visual-review.md): every applicable clip
+requires the new head/neck and near/far hand close-ups plus full motion playback and explicit
+observations. Do not equate alpha contact, preserved finger detail or a small head oscillation
+with natural motion. Fail the art/motion stage, preserve the issue and repair the general cause
+within the existing attempt budget; do not tune one character or add a collar/patch to hide it.
+
 For complete aligned layers with known joints, prefer the [zero-generation binding entry](references/known-joint-binding.md). Reuse existing pixels and joint metadata; hand-hint generation is unnecessary for this entry. Visual review remains required.
 
 

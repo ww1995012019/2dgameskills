@@ -177,6 +177,14 @@ height. Vertical movement is limited to 8% of torso height, horizontal movement
 to one quarter of that. Larger drift is refused. All colour, coverage and spill
 checks run on the seated result. Internal attachment edges have no dark cap
 outline, and the head's neck contains bare skin rather than a second collar.
+This static cross-section does NOT detect an exposed triangular neck base, a cut painted over
+the front of a collar, or stiff motion. Compare the registered composite with the source and
+complete the mandatory head/neck motion review in `visual-review.md`. Preserve skull/face identity;
+the base of the neck must follow the chest while the upper neck permits bounded independent
+head motion. A whole bare neck rotating like a rigid cardboard tab is a failed result. The current
+rigid-head renderer has no soft neck skinning; if that mechanism exposes a cut, report a failed
+binding/motion stage, not a solved seam. Do not erase the source, inflate the collar or alter one
+character's joints to hide it. A small harmonic head rotation is not evidence of natural motion.
 The rear arm must reconstruct
 its own hidden shoulder rather than copying the visible front shoulder plate.
 Trailing fabric ends at the rear hip and excludes every front-facing skirt flap.

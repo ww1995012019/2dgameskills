@@ -37,7 +37,9 @@ class VisualGate(unittest.TestCase):
                         'sheets': {entry['sheet']: {'verdict': 'pass', 'checks': {
                             k: dict(status='pass', evidence='walk frame 0 synthetic fixture inspected', **(
                                 {'observations': [dict(clip=p['clip'], frame=p['frame'], evidence='Synthetic fixture waist and hip pixels inspected') for p in entry.get('poses', [])]}
-                                if k in vr.PELVIS_CHECKS else {})) for k in vr.checks_for_sheet(entry['sheet'])}, 'issues': []}
+                                if k in vr.POSE_CHECKS else {}), **(
+                                {'playback': [dict(clip=p['clip'], file=p['file'], evidence='Synthetic complete playback inspected') for p in entry.get('playback', [])]}
+                                if k in vr.TEMPORAL_CHECKS else {})) for k in vr.checks_for_sheet(entry['sheet'])}, 'issues': []}
                             for entry in self.index['sheets']}}
 
     def refresh(self):

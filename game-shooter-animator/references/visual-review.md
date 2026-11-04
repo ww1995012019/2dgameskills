@@ -26,6 +26,51 @@ joint is a few pixels across and only appears at a sharp bend, so a full-body ce
 cell: the outside of a bend must be one smooth curve, with no step, nub, square end, stripe or hole.
 `--record` refuses a verdict that leaves this sheet out.
 
+### Head, neck and both hands: mandatory close-up and motion review
+
+`neck_*.png` shows clean enlarged head/neck/collar pixels and the driving neck/chest bones for
+EVERY applicable clip, including first/last poses and head-world/chest-world/relative-angle
+extremes when exported. `hands_*.png` shows the NEAR hand above the FAR hand, including wrist
+travel extremes. Pose lists are not truncated across the whole animation set. Native layered
+humanoids require complete neck and both wrist traces. Lower-body-only clips are outside this
+head/hand scope; upper-body clips are included when their trace supplies these joints.
+
+Open each sheet AND its indexed `neck_motion_*.gif` / `hands_motion_*.gif`. These contain the
+entire clip, with a fixed crop throughout, at the exported duration (GIF timing is quantized to
+10ms). Identical held frames may be coalesced by the format, retaining their combined duration.
+For unusually high rates above 100fps, use the actual runtime preview for accurate timing.
+Watch at least two cycles at normal speed and inspect slow/stepped playback in the preview.
+For a non-looping clip, inspect anticipation, action and recovery as well as the repeat boundary.
+If your tool cannot play GIFs, play the same clip in `preview.html`; cite that playback and the
+indexed evidence file. Static crops and angle measurements alone cannot clear naturalness.
+
+Inspect the original reference, registered isolated head/torso and both arms at full size too:
+
+- Neck: one continuous jaw-to-neck-to-shoulder structure. No floating head, shelf/triangle at
+  the neck base, visible internal cut, doubled skin/scales or neck tab painted over the collar.
+  The lower neck should join the chest while the upper neck allows bounded head movement.
+  Alpha contact can pass while a triangular cut is plainly visible; do not clear it on that basis.
+- Head motion: skull/face shape remains stable, gaze and nod respond to weight and chest
+  movement with appropriate counterrotation and lag. Neither a head welded to the torso nor
+  an independently sliding/hinging cardboard neck is acceptable. Small nonzero rotations do
+  not prove natural motion. Do not add arbitrary wobble, change facial expression or distort
+  horns to manufacture an angle range. An intentionally still gaze can be valid if the neck
+  response looks continuous and the review explains why it fits that action.
+- Hands: correct palm/thumb and species-specific digit count/scale; empty hands have gentle,
+  slightly varied finger curls and neutral wrists. Species-specific claws are retained without
+  automatic fan-splaying, spider-like extension or theatrical grasping. A holding hand stays
+  securely closed around its handle. Honor an explicitly requested expressive gesture while
+  still inspecting anatomy. No fused/extra fingers, hook-like overcurl, sudden finger popping,
+  stretched palm or wrist kink; both near AND far hands must be reviewed.
+
+These are dedicated semantic checks, not a new automatic vision classifier. The existing 95%
+static neck overlap measures contact; the hand edge-energy check measures retained detail.
+Neither judges a painted cut, natural fingers or stiffness. User-reported defects withdraw the
+old acceptance immediately; retain the report as history and record the failure before repairs.
+Repair source/reference art or the general binding/motion mechanism at the failed stage. Do not
+cover a seam, re-pose landmark-only hand hints, tune one character, weaken a threshold or reset
+the three-attempt generation budget. A generic fix is not proof that old artwork was repaired.
+
 `shoulders_*.png` shows the neck, torso and both upper arms at rest, recovery and each arm's
 forward/backward extremes. The upper row is the art; the lower row adds the shoulder seats and
 upper-arm bones (near cyan, far orange). Inspect both together: a sleeve cap is not an anatomical
@@ -137,6 +182,12 @@ Each sheet requires `verdict`, `checks` and `issues`. Every check requires `stat
 `continuous_garments`, `no_ghosting`, `expected_weapons`, `anatomy`, `readable_motion`.
 Use `pass` or `fail`; only garments and weapons may be `not_applicable`, with a reason.
 Hip sheets additionally require `rig_alignment` and `pelvis_continuity`: neither can be skipped.
+Neck sheets require `neck_continuity` and `head_motion_naturalness`; hand sheets require
+`hand_pose_naturalness` and `wrist_continuity`. None can be skipped. Each requires explicit
+`observations` for every indexed clip/frame. Naturalness checks additionally require a
+`playback` observation for EVERY indexed clip/file, naming what the complete moving sequence
+shows. Blank, missing, duplicate or substituted playback evidence is rejected. Motion evidence
+files, duration/frame-count/FPS metadata and pose coverage are bound into the current review.
 For each, fill the template's `observations` with a concrete finding for **every** indexed
 `{clip, frame}`. A generic sentence such as "looks fine" is not a substitute for those observations.
 For example, an unresolved crotch defect is recorded as:
@@ -179,7 +230,8 @@ are refused. A fail sheet always makes the report fail, including cosmetic defec
 }
 ```
 
-Categories are `missing_limb`, `broken_garment`, `pelvis_gap`, `rig_misalignment`, `ghosting`, `extra_weapon`, `anatomy`,
+Categories are `missing_limb`, `broken_garment`, `pelvis_gap`, `rig_misalignment`, `neck_seam`,
+`stiff_head`, `unnatural_hand`, `broken_wrist`, `ghosting`, `extra_weapon`, `anatomy`,
 `unreadable_motion`, `cosmetic`. All except cosmetic require `blocker`. `resolved` must be a JSON
 boolean. Any unresolved issue (including polish) or failed sheet returns exit 1; the report's
 `status` is authoritative, not merely its `open_blockers` count.
@@ -213,5 +265,7 @@ Legacy unversioned verdicts must be reviewed again; do not copy an old pass into
 
 Stop after three rounds and tell the user what's still open, rather than iterating on taste.
 
-Report honestly: name what you reviewed and what you left out. The verdict is one reviewer's judgment of
-still frames, so it can't assess how motion feels at speed. For that, the user should play `preview.html`.
+Report honestly: name what you reviewed and what you left out. This is a reviewer's judgment,
+not a mathematical guarantee of natural motion. The required full playback supplements the
+still-frame review; user acceptance of the actual preview remains separate. Schema 3 invalidates
+older passes rather than inheriting head/hand approval from unrelated anatomy checks.

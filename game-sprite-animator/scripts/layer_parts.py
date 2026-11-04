@@ -1128,7 +1128,8 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
 
 
 REFERENCE_CHECKS = ("right_side_view", "complete_separate_arms", "visible_separate_legs",
-                    "planted_feet", "unobscured_limbs", "separate_garments", "expected_weapons")
+                    "planted_feet", "unobscured_limbs", "separate_garments", "expected_weapons",
+                    "natural_neck_attachment", "natural_hand_pose")
 
 
 def reference_review_template(image):

@@ -48,6 +48,7 @@ def rig_trace(clip, n, fps, art, unit_px, size):
     recorder = JointRecorder(TRACE_JOINTS, unit_px)
     tr = recorder.joints
     metrics = []
+    head_motion = dict(head_world_deg=[], chest_world_deg=[], relative_deg=[])
     feet = {"n": dict(heel=[], ball=[]), "f": dict(heel=[], ball=[])}
     contacts = {"n": [], "f": []}
     # Where each joint lands in the frame, squash included, for the bone-coverage check.
@@ -58,6 +59,9 @@ def rig_trace(clip, n, fps, art, unit_px, size):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t))
         sk = solve(pose, body)
+        for key, value in (('head_world_deg', sk['head_rot']), ('chest_world_deg', sk['chest_rot']),
+                           ('relative_deg', sk['head_rot'] - sk['chest_rot'])):
+            head_motion[key].append(round(float(value), 6))
         recorder.append(sk)
         cv.set_squash(pose["squash"], 0.0)
         for j, track in skeleton.items():
@@ -70,6 +74,7 @@ def rig_trace(clip, n, fps, art, unit_px, size):
                 feet[s][key].append([round(pt[0] * unit_px, 3), round(pt[1] * unit_px, 3)])
             contacts[s].append(bool(c.get(s, False)))
     return dict(joints=tr, skeleton=skeleton, smear=smear, feet=feet, contacts=contacts, metrics=metrics,
+                head_motion=head_motion,
                 frame_dt=1.0 / fps)
 
 
@@ -267,6 +272,7 @@ def main():
             print(f"[review] {occlusion_summary['check_command']}")
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
+                       **({'portrait_review_required': True} if r.art.puppet else {}),
                        **({"framing_scope": names} if a.fit_selected_clips else {}),
                        part_problems=problems, **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),

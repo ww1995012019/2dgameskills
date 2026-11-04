@@ -1,5 +1,34 @@
 # 交接文档
 
+## 2026-11-04 用户否决头颈/手势；通用验收补漏（本次）
+
+- 用户明确指出长角怪物的颈部像分离件、人形和怪物头部僵硬、空手姿态不自然。
+  **撤回这些项目此前的视觉通过结论**；历史数值结果只说明其原有测量项，不能当成用户验收。
+  放大登记图确认怪物头层底部的外翻三角颈覆盖围巾；这是可见内部切边，alpha 相连仍会漏检。
+- 固定参考图/头颈/双臂提示词新增物种适用的连续颈部、放松空手、正常腕线和安全闭合握持要求，
+  禁止三角颈片、贴头、夸张张爪和蜘蛛状手指。移除 basic torso 中误带的 navy 专用颜色。
+  参考语义复核新增 natural_neck_attachment/natural_hand_pose；相关图层也必须单独审核，
+  手提示图保留完成臂层姿态，不用提示图重新摆手。neck/hand_pose 固定返修复用原三次额度。
+- shared visual review schema 3：所有适用动作新增 neck_*/hands_* 放大图、整段循环 GIF，
+  按实际头/胸相对角和双腕极值选帧。每个 indexed pose 及每个动作的播放都必须有明确观察；
+  缺证据、缺文件、改覆盖/时长/FPS、旧 schema 或替换文件会失效。新缺陷类别全部为 blocker。
+- 这次补的是通用生成约束、证据生成和阻断漏审；**没有新增自动语义视觉模型，也没有实现软颈蒙皮**。
+  头部/手势自然度需真实动态复核，旧角色不能因 Skill 更新自动改称已修好。项目原图与试验文件
+  留在 /workspace/work/skill-repair-neck-hands，未入公开仓库，生图额度没有重置、没有新增生图。
+- 验证：80 个测试模块独立进程运行，按完整 discover 的 659 个唯一 ID 核对，651 pass、
+  8 expectedFailure、0 failure/error/skip，0 漏项。原有 6 个已知缺口保留；本次新增 19 个
+  通过的验收测试，另用 2 个 expectedFailure 明示 alpha 接触不能识别画出的颈部切边、
+  手部边缘能量不能识别异常手势。初跑 5 项浏览器测试受沙箱 socket 限制失败，授予浏览器
+  启动所需网络权限后全部复跑通过，原始失败日志保留，未修改测试来回避问题。
+- 26 套全量回归退出 0、0 FAIL；cutout_demo 的 HD 8 / pixel 7 个原有 WARN 不变。
+  相比上次提交对应的完整产物，20,555 个 PNG 文件和全部 animations.json 逐字节一致，
+  QA 状态/数值也无漂移；历史 baseline 仍为 0 回退、116 changed、102 drifted，未更新基线。
+  shared/modes 同步及全部安装包 freshness 检查通过，三个受影响的 .skill 已重打包。
+- 两个真实案例的 6 个动作、270 帧生成了新版头颈/双手放大图和完整播放证据。
+  当前旧视觉 pass 已撤回并归档，build/quality_revocation.json 保留用户否决及具体问题；
+  新版观察仍待完成，**没有将旧图或新流程标成自然度验收通过**。验证汇总位于上述 work 目录的
+  validation/suite/verified-summary.json、validation/regression-verified.json 与 real-case-validation.json。
+
 ## 魔角战士：长尾试作、待机/跑步与独立预览
 
 用户换了一张紫灰鳞甲、熔岩纹、巨角、骨甲、长尾的恶魔人形参考，要求先看idle/run；随后明确选择
