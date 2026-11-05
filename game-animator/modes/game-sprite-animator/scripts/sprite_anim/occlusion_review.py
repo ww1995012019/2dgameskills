@@ -97,7 +97,7 @@ def frame_metrics(renderer, clip, index, count, fps):
     from sprite_anim.art import Canvas
     from sprite_anim.rig import full_pose, solve
     from sprite_anim.render import GROUND_FRAC, frame_time
-    from sprite_anim.puppet import raster
+    from sprite_anim.puppet import raster, measured_surface
     puppet = renderer.art.puppet
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0,0,0))
     t = frame_time(clip, index, count, fps)
@@ -105,13 +105,15 @@ def frame_metrics(renderer, clip, index, count, fps):
     cv.set_squash(pose['squash'], 0.)
     scale = cv.s / puppet.px_per_unit
     layers = list(puppet.meshes(cv, sk, renderer.cloth_at(clip,t), 'ground' in clip.tags))
+    indexed = {part.name:(part,verts) for part,verts in layers}
     result = []
     for position, (layer, vertices) in enumerate(layers):
         if layer.name not in ('arm_near','arm_far'):
             continue
         # Preserve the entire arm alpha support, not merely the wrist ROI: a
         # visible sleeve path may leave the local wrist region and return.
-        used = vertices[layer.used]
+        surface,vertices,mip = measured_surface(puppet,indexed,layer.name,scale)
+        used = vertices[surface.used]
         lo = np.floor(used.min(0)).astype(int) - 2
         hi = np.ceil(used.max(0)).astype(int) + 3
         x0,y0 = max(0,int(lo[0])),max(0,int(lo[1]))
@@ -119,8 +121,10 @@ def frame_metrics(renderer, clip, index, count, fps):
         if x1 <= x0 or y1 <= y0:
             continue
         offset = np.array([x0,y0]); width,height=x1-x0,y1-y0
-        alphas = [(part.name,raster(part,verts-offset,puppet.mip(part,scale),width,height)[...,3])
-                  for part,verts in layers[position:]]
+        alphas = [(layer.name,raster(surface,vertices-offset,mip,width,height)[...,3])]
+        alphas += [(part.name,raster(part,verts-offset,puppet.mip(part,scale),width,height)[...,3])
+                   for part,verts in layers[position+1:]
+                   if not getattr(part,'draw_owner',None) and part.name != getattr(layer,'draw_owner',None)]
         side = 'n' if layer.name == 'arm_near' else 'f'
         hand,forearm=arm_regions((height,width),np.array(cv.T(sk['wr_'+side]))-offset,
                                 np.array(cv.T(sk['el_'+side]))-offset,layer.radius*scale)
@@ -128,6 +132,9 @@ def frame_metrics(renderer, clip, index, count, fps):
         row.update(clip=clip.name,frame=index,supersampling=renderer.ss,
                    region_method='wrist_relative_humanoid_geometry',
                    interpretation='review candidate only; occlusion is not a physical tear')
+        if getattr(layer,'draw_owner',None):
+            row.update(source_owner=layer.draw_owner,
+                       internal_source_occlusion='baked illustration; mandatory source-carry visual review')
         result.append(row)
     return result
 

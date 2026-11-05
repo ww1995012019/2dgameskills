@@ -31,6 +31,7 @@ and NumPy; no separate skill installation is needed.
 | Request | Mode |
 |---|---|
 | Side-view humanoid, custom cut-out art, melee or spell | `modes/game-sprite-animator/` |
+| Custom side-view rifle carrier, idle/run only | Humanoid mode's guarded `side-rifle-carry-v1` profile |
 | Side-view shooter, gun aiming or layered firing | `modes/game-shooter-animator/` |
 | 3/4 top-down eight-direction humanoid | `modes/game-topdown-animator/` |
 | Side-view wolf with quadruped gait or combat | `modes/game-quadruped-animator/` |
@@ -42,6 +43,11 @@ export process. For supplied character pictures or AI-generated side-view art, f
 or one single-handed sword, mandatory hand hints, isolated-layer review, idle + walk only and bounded
 repairs. The agent handles the prompts and reviews; the user supplies the picture. Advanced layered
 features remain experimental, not a fallback around a rejected basic job. Numeric QA alone never clears delivery.
+For a fitted character carrying a rifle in idle/run only, read
+`modes/game-sprite-animator/references/rifle-carry.md` and explicitly select that separate guarded
+profile. It retains the original upper-body pixels, both gripping hands and rifle on one surface;
+every-frame source-carry review is mandatory. It provides no aiming, firing or reload actions and
+does not expand the basic profile's weapon scope or reset an existing task's attempt budget.
 For other side-view custom art and actions, use its `references/ai-art.md` and
 `references/character-spec.md`; test custom actions in the preview and inspect joints visually.
 

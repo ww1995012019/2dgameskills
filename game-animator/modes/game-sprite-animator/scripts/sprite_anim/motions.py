@@ -15,6 +15,7 @@ import math
 
 from .constraints import LIMITS, face_circle, low_points
 from .mathx import Curve, hermite, lerp, rot
+from .rifle_carry import apply_carry, validate_carry
 from .rig import LAG, REST, Body, full_pose, solve, ankle_with_roll, FOOT_HEEL, FOOT_BALL
 
 CH = list(REST)
@@ -337,7 +338,7 @@ class Gait(Clip):
         )
         if getattr(self,'contact_body',None) is not None:
             p['root_y']=measured_walk_height(p,self.contact_body)-self.contact_body.hip_h
-        return p
+        return apply_carry(p, getattr(self,'source_carry',None))
 
 
 class LegacyOrdinaryRun(Gait):
@@ -748,6 +749,8 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
     A3_FOLLOW = dict(A3_HIT, root_y=-14, root_x=2, pelvis=26, spine=30, head=-32, arm_n_up=62,
                      arm_n_lo=8, wep=28, mouth=0.4, squash=sq(0.93))
 
+    source_carry = validate_carry((gait or {}).get('carry'))
+
     # ---- idle --------------------------------------------------------------------------
     T_idle = 2.4 * tm
 
@@ -775,7 +778,7 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
         if all(getattr(body, 'foot_'+side+'_'+end) is not None
                for side in 'nf' for end in ('heel', 'ball')):
             p['root_y'] = measured_walk_height(p, body) - body.hip_h - .15 * (1 - s(.25))
-        return p
+        return apply_carry(p, source_carry)
 
     idle0 = idle_fn(0.0)
     idle = Proc("idle", T_idle, idle_fn, vel=None, tags=("ground", "hold_feet"))
@@ -1049,6 +1052,8 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
              death]
     out = {c.name: c for c in clips}
     for name, pose in (gait or {}).items():
+        if name == "carry":
+            continue
         if name == "idle":  # already applied before the shared seam poses were built
             continue
         if 'held_weapon_carry' in pose and any(k in pose for k in ('arm_n', 'wep_sway')):
@@ -1079,6 +1084,9 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
                 setattr(out[name], key, tuple(value) if isinstance(value, list) else value)
             else:
                 raise ValueError(f"gait.{name}: unknown field {key!r}")
+
+    if source_carry is not None:
+        out['run'].source_carry = source_carry
 
     _validate_custom(custom, out, idle0)
     for name, spec in (custom or {}).items():

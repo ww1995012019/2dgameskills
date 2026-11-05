@@ -125,6 +125,10 @@ Only short/fitted clothing, short hair and no weapon/one simple single-handed sw
 The first real trial failed isolated-leg generation after three attempts; the workflow remains a
 guarded trial, not a production-validated promise. Report a failed job honestly with no animation pass.
 Do not silently preserve unsupported long robes, wide sleeves, capes, spears or two-handed weapons.
+For a fitted, short-haired character carrying a rifle in **idle and run only**, use the separate
+guarded [source-preserved carry profile](references/rifle-carry.md). It keeps the registered
+upper-body illustration, both hands and rifle on one drawing surface. It does not add two-hand
+weapon support to the basic profile, and does not provide aiming, firing or reload animation.
 Record adaptations or stop if essential identity cannot be kept. Log each repair; at three attempts
 per stage stop and report the remaining blocker. Never reset the job to bypass that limit.
 Do not render or publish a failed basic job through the lower-level `layer_parts.py bind` or

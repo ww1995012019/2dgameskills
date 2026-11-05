@@ -74,6 +74,7 @@ def smear_tiles(rgba):
 def check_layers(puppet):
     out = []
     names = [layer.name for layer in puppet.layers]
+    indexed = {layer.name:layer for layer in puppet.layers}
     if "arm_far" in names and "torso" in names and names.index("arm_far") > names.index("torso"):
         out.append("shoulder: arm_far is in front of the torso; rebind with side-view depth order")
     for layer in puppet.layers:
@@ -81,6 +82,14 @@ def check_layers(puppet):
             side = "n" if layer.name == "arm_near" else "f"
             if tuple(getattr(layer, "bones", ()) or ()) != ("sh_" + side, "el_" + side, "wr_" + side):
                 out.append(f"arm_chain: {layer.name} does not follow its own shoulder, elbow and wrist")
+        # All rendered surfaces are inspected below. A source-owned landmark
+        # reconstruction is not the texture actually drawn by this renderer.
+        if getattr(layer, 'draw_owner', None):
+            owner = indexed.get(layer.draw_owner)
+            if (layer.name not in ('arm_near','arm_far') or owner is None
+                    or owner.name != 'torso' or not getattr(owner,'source_upper_carry',None)):
+                out.append(f'owner: {layer.name}: missing or unsupported actual drawing surface')
+            continue
         bad, filled = smear_tiles(layer.image)
         if filled and bad / filled > SMEAR_SHARE:
             out.append(f"smear: {layer.name}: {bad} of {filled} tiles are blurred with no drawn edge; make this layer again")
@@ -123,16 +132,18 @@ def check_hands(renderer, spec, clip, frames, fps):
     def arm_mask(index, side, pose, sk):
         """Only the same arm's support; neighbouring opaque clothes are context."""
         if index not in masks:
-            from .puppet import raster
+            from .puppet import raster, measured_surface
             native = Canvas(size,renderer.ss,renderer.unit,GROUND_FRAC,1,False,(0,0,0))
             native.set_squash(pose['squash'],0.)
             masks[index] = {}
-            for layer,verts in puppet.meshes(native,sk,renderer.cloth_at(clip,frame_time(clip,index,len(frames),fps)),
-                                              'ground' in clip.tags):
+            indexed = {layer.name:(layer,verts) for layer,verts in puppet.meshes(
+                native,sk,renderer.cloth_at(clip,frame_time(clip,index,len(frames),fps)), 'ground' in clip.tags)}
+            for name,(layer,verts) in indexed.items():
                 if layer.name not in ('arm_near','arm_far'):
                     continue
-                alpha = raster(layer,verts,puppet.mip(layer,native.s/puppet.px_per_unit),native.w,native.h)[...,3]
-                masks[index][layer.name] = np.asarray(Image.fromarray(np.uint8(np.clip(alpha,0,1)*255+.5)).resize(
+                surface,verts,mip = measured_surface(puppet,indexed,name,native.s/puppet.px_per_unit)
+                alpha = raster(surface,verts,mip,native.w,native.h)[...,3]
+                masks[index][name] = np.asarray(Image.fromarray(np.uint8(np.clip(alpha,0,1)*255+.5)).resize(
                     (size,size),Image.Resampling.LANCZOS))
         return masks[index]['arm_near' if side=='n' else 'arm_far']
     out = []
@@ -406,12 +417,16 @@ def check_connections(renderer, clip, n, fps, bindings=None):
     shapes = {part: [] for part in set(getattr(puppet,'socket_bindings',{}))|set(garment)}
     garment_shapes = {part:[] for part in garment}
     edges = {part:[] for part in garment}
+    carried = []
     for i in range(n):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
         cv.set_squash(pose['squash'], 0.)
         meshes = {layer.name: (layer, vertices) for layer, vertices in
                   puppet.meshes(cv, sk, renderer.cloth_at(clip, t), 'ground' in clip.tags)}
+        if getattr(meshes['torso'][0], 'source_upper_carry', None) is not None:
+            from .rifle_carry import rigidity_report
+            carried.append(rigidity_report(puppet,meshes,cv,sk,renderer.ss))
         for name, (parent, _, report) in bindings.items():
             source = np.asarray(report['source_points'], float)
             child, verts = meshes[name]
@@ -448,7 +463,8 @@ def check_connections(renderer, clip, n, fps, bindings=None):
     if not hasattr(renderer, 'connection_checks'):
         renderer.connection_checks = {}
     renderer.connection_checks[clip.name] = dict(frames=n,parts=values,shape_parts=shapes,
-                                                garment_shapes=garment_shapes,edge_visibility=edges)
+                                                garment_shapes=garment_shapes,edge_visibility=edges,
+                                                **({'carried_upper':carried} if carried else {}))
     faults = [f'connection: {name}: {clip.name} frame {i}: registered attachment separates by {error:.3f}px'
               for name, errors in values.items() for i, error in enumerate(errors) if error > 1.0]
     faults += [f'shape: {name}: {clip.name} frame {i}: {row["bad_share"]:.1%} of opaque thigh shaft collapses or stretches'
@@ -459,6 +475,8 @@ def check_connections(renderer, clip, n, fps, bindings=None):
                if not row['samples'] or row['bad_share']>THIGH_DEFORMATION_LIMITS['max_bad_share']]
     faults += [f'garment edge: {name}: {clip.name} frame {i}: {row["exposed"]} originally hidden cut-edge samples exposed'
                for name,rows in edges.items() for i,row in enumerate(rows) if row['exposed']]
+    faults += [f'carry: {clip.name} frame {i}: source upper-body/rifle/hand surface drifts {row["max_error_px"]:.3f}px'
+               for i,row in enumerate(carried) if row['max_error_px'] > 1.]
     if garment and clip.name == 'run':
         from .integrity import ordinary_run_faults
         renderer.ordinary_run_checks = ordinary_run_report(clip,renderer.art.body,n,fps)
@@ -515,7 +533,7 @@ def check_attachments(renderer, clip, n, fps):
     pixels. Callers opt into this additional measured scope explicitly.
     """
     from .art import Canvas
-    from .puppet import raster
+    from .puppet import raster, measured_surface
     from .render import GROUND_FRAC, frame_time
     puppet = renderer.art.puppet
     definitions = {
@@ -554,7 +572,8 @@ def check_attachments(renderer, clip, n, fps):
                     continue
                 # Integer translation keeps the original supersampling and
                 # subpixel grid. Only the output allocation/triangle ROI shrinks.
-                masks[part] = raster(layer, verts - offset, puppet.mip(layer, scale), w, h)[..., 3]
+                surface, verts, mip = measured_surface(puppet,meshes,part,scale)
+                masks[part] = raster(surface, verts - offset, mip, w, h)[..., 3]
                 if box == (0, 0, cv.w, cv.h):
                     full_masks[part] = masks[part]
             parent = np.zeros((h, w), dtype=float)

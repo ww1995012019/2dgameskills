@@ -116,6 +116,8 @@ def main():
     clips = build_clips(spec.get("style"), spec.get("custom_clips"), spec.get("clip_key_overrides"), spec.get("gait"),
                         Body.from_spec(spec["body"]) if spec.get("puppet") else None)
     names = list(clips) if a.clips == "all" else [c for c in a.clips.split(",") if c]
+    if spec.get('gait', {}).get('carry') and not set(names) <= {'idle', 'run'}:
+        sys.exit('source rifle carry is limited to reviewed idle/run; other actions require separate motion work')
     unknown = [c for c in names if c not in clips]
     if unknown:
         sys.exit(f"unknown clips: {unknown}\navailable: {list(clips)}")
@@ -291,6 +293,8 @@ def main():
             method='registered_garment_surfaces_v3',shape_limits=THIGH_DEFORMATION_LIMITS,
             edge_limits=GARMENT_EDGE_LIMITS,run_limits=ORDINARY_RUN_LIMITS,
             ordinary_run=getattr(r,'ordinary_run_checks',None),
+            **({'draw_owners':{layer.name:layer.draw_owner for layer in r.art.puppet.layers if layer.draw_owner}}
+               if spec.get('gait',{}).get('carry') else {}),
             source_reference_sha256=source_reference_sha256,
             bindings={name: report for name, (_, _, report) in
                       dict(r.art.puppet.pelvis_bindings,**r.art.puppet.socket_bindings,
@@ -308,7 +312,8 @@ def main():
                        **({"framing_scope": names} if a.fit_selected_clips else {}),
                        part_problems=problems, **connection_data,
                        **({'hand_detail':r.hand_detail_checks} if hasattr(r,'hand_detail_checks') else {}),
-                       **({'binding_profile':'basic-side-v1'} if connection_data else {}),
+                       **({'binding_profile':'side-rifle-carry-v1' if spec.get('gait',{}).get('carry')
+                            else 'basic-side-v1'} if connection_data else {}),
                        **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
                        head_size=r.art.body.head_size,
@@ -316,7 +321,9 @@ def main():
                        unit_px=unit_px, speeds={n: meta[n]['speed_px_s'] for n in names}), fh)
     if r.art.puppet and spec.get('puppet', {}).get('attachment_checks', False):
         with open(os.path.join(root, 'attachment_scope.json'), 'w', encoding='utf-8') as fh:
-            json.dump(dict(method='isolated_layer_alpha',
+            json.dump(dict(method='source_owned_alpha_v1' if spec.get('gait',{}).get('carry') else 'isolated_layer_alpha',
+                           **({'draw_owners':{layer.name:layer.draw_owner for layer in r.art.puppet.layers if layer.draw_owner}}
+                              if spec.get('gait',{}).get('carry') else {}),
                            parts=['arm_near','arm_far','leg_near','leg_far'],
                            frames={n:len(rendered[n]['frames']) for n in names},
                            scope='root/proximal continuity and parent contact; not semantic appearance'), fh, indent=2)

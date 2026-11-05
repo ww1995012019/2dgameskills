@@ -126,9 +126,20 @@ def rendered_run_faults(frames, leg_pixels):
     return out
 
 
+def source_carry_required(trace):
+    """A presentation flag cannot remove an actual registered source owner."""
+    if trace.get('binding_profile') == 'side-rifle-carry-v1':
+        return True
+    data=trace.get('connections',{})
+    bindings=data.get('bindings',{}) if isinstance(data,dict) else {}
+    torso=bindings.get('torso',{}) if isinstance(bindings,dict) else {}
+    return isinstance(torso,dict) and 'source_upper_carry' in torso
+
+
 def connection_report_faults(root, doc, trace):
     """Fail closed on missing/tampered full-frame registered connection evidence."""
-    if not (trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1'):
+    if not (trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1'
+            or source_carry_required(trace)):
         return []
     import hashlib
     from pathlib import Path
@@ -146,6 +157,19 @@ def connection_report_faults(root, doc, trace):
             raise ValueError('missing current thigh shape checks; zero connection drift is insufficient')
         if data.get('edge_limits') != GARMENT_EDGE_LIMITS:
             raise ValueError('missing native hidden garment-edge visibility checks')
+        carry = data['bindings']['torso'].get('source_upper_carry')
+        if source_carry_required(trace):
+            if (not isinstance(carry,dict) or carry.get('profile') != 'source_upper_rifle_v1'
+                    or data.get('draw_owners') != {'arm_near':'torso','arm_far':'torso'}):
+                raise ValueError('missing registered source carry and actual draw-owner evidence')
+            for field in ('protected_y','blend_end_y'):
+                value=carry.get(field)
+                if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value):
+                    raise ValueError('invalid source carry region')
+            if carry['blend_end_y']-carry['protected_y'] < 14:
+                raise ValueError('source carry has no separate lower garment transition')
+            if not set(doc['clips']) <= {'idle','run'}:
+                raise ValueError('source carry only measures idle/run')
         for name, binding in data['bindings'].items():
             points = np.asarray(binding['source_points'], float)
             if points.ndim != 2 or points.shape[1] != 2 or len(points) < 4 or not np.isfinite(points).all():
@@ -172,6 +196,20 @@ def connection_report_faults(root, doc, trace):
             count = len(meta['frames']); row = data['clips'][clip]
             if row['frames'] != count or set(row['parts']) != required:
                 raise ValueError(f'{clip}: missing connection frame/part coverage')
+            if carry is not None:
+                measurements=row.get('carried_upper',[])
+                if len(measurements)!=count:
+                    raise ValueError(f'{clip}: missing full-frame actual carried-surface measurements')
+                for frame,measured in enumerate(measurements):
+                    error=measured.get('max_error_px')
+                    if (measured.get('method')!='source_upper_rifle_v1'
+                            or type(measured.get('samples')) is not int or measured['samples']<4
+                            or isinstance(error,bool) or not isinstance(error,(int,float))
+                            or not math.isfinite(error) or error<0):
+                        raise ValueError(f'{clip} frame {frame}: invalid carried-surface measurement')
+                    if error>1.:
+                        out.append(dict(clip=clip,frame=frame,part='carry',
+                                        what=f'actual carried rifle/hand surface deforms by {error:.3f}px'))
             for name, errors in row['parts'].items():
                 if len(errors) != count or not all(isinstance(x, (int,float)) and not isinstance(x,bool)
                         and math.isfinite(x) and x >= 0 for x in errors):

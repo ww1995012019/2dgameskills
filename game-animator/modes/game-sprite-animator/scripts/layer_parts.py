@@ -23,7 +23,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sprite_anim.layer_slots import BASIC_PROFILE, HAND_HINTS, KEY_COLOR, SLOTS, hand_prompt, prompt  # noqa: E402
+from sprite_anim.layer_slots import BASIC_PROFILE, RIFLE_PROFILE, HAND_HINTS, KEY_COLOR, SLOTS, hand_prompt, prompt  # noqa: E402
 from sprite_anim.puppet_check import HOLE_SHARE, core_mask  # noqa: E402
 from sprite_anim.constraints import BAND, LIMITS  # noqa: E402
 
@@ -78,7 +78,7 @@ def find_basic_job(path):
                 value = json.loads(marker.read_text(encoding='utf-8'))
             except (OSError, ValueError) as error:
                 raise Rejected(f'cannot read workflow state: {marker}') from error
-            if isinstance(value, dict) and value.get('profile') == BASIC_PROFILE:
+            if isinstance(value, dict) and value.get('profile') in (BASIC_PROFILE, RIFLE_PROFILE):
                 return parent
     return None
 
@@ -90,7 +90,7 @@ def require_generic_binding(image, layers, review):
     if review and Path(review).is_file():
         try:
             value = json.loads(Path(review).read_text(encoding='utf-8'))
-            basic_review = isinstance(value, dict) and value.get('profile') == BASIC_PROFILE
+            basic_review = isinstance(value, dict) and value.get('profile') in (BASIC_PROFILE, RIFLE_PROFILE)
         except (OSError, ValueError):
             pass  # check_reference_review supplies the detailed invalid-review error.
     if job or basic_review:
@@ -870,17 +870,17 @@ def rear_appendage_binding(mask, parent, hip, leg_px):
     return layer, contact
 
 
-def bind(ref, layers, fit_cache=None, diagnostics=None, registered_connections=False):
+def bind(ref, layers, fit_cache=None, diagnostics=None, registered_connections=False, retained_upper=False):
     """Keep the current partial registration available even when acceptance fails."""
     state = diagnostics if diagnostics is not None else {}
     try:
-        return _bind(ref, layers, fit_cache, state, registered_connections)
+        return _bind(ref, layers, fit_cache, state, registered_connections, retained_upper)
     except Rejected as exc:
         state.update(status="rejected", reason=str(exc))
         raise
 
 
-def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
+def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False, retained_upper=False):
     """Places every layer and works out the rig. Returns (placed layers, spec's puppet + body, report)."""
     size = (ref.shape[1], ref.shape[0])
     missing = [n for n, s in SLOTS.items() if s[2] and n not in layers]
@@ -896,7 +896,7 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
             raise Rejected(f"{name}: the layer is empty; make it again")
         # Hidden art has no shown colour to register. Start at the authored
         # position; the measured waist/crotch can correct modest drift below.
-        if name in HIDDEN:
+        if name in HIDDEN or retained_upper:
             fit = dict(s=1.0, deg=0.0, dx=0.0, dy=0.0, cx=0.0, cy=0.0, error=0.0)
         else:
             fit = registration(name, layers[name], ref, fit_cache)
@@ -935,6 +935,9 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
     union = np.zeros(seen.shape, bool)
     for a in out.values():
         union |= a[..., 3] > 128
+    if retained_upper:
+        from sprite_anim.rifle_carry import upper_pixels
+        union |= upper_pixels(ref, out)[..., 3] > 128
     cover = float((union & seen).sum() / seen.sum())
     spill = float((union & ~seen).sum() / union.sum())
     if cover < MIN_COVER:
@@ -1276,7 +1279,7 @@ def save_diagnostics(folder, ref, state):
             draw.ellipse((x-5, y-5, x+5, y+5), fill=colour)
         draw.text(tuple(points[0]), name, fill=colour)
     canvas.save(os.path.join(folder, "bind_joints.png"))
-    report = {k: v for k, v in state.items() if k not in ("layers",'neck_front_mask')}
+    report = {k: v for k, v in state.items() if k not in ("layers",'neck_front_mask','carry_material_alpha')}
     if 'neck_front_mask' in state:
         Image.fromarray(state['neck_front_mask'],'L').save(os.path.join(folder,'neck_front_mask.png'))
     with open(os.path.join(folder, "bind_report.json"), "w", encoding="utf-8") as target:
@@ -1293,11 +1296,14 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
         box = Image.fromarray(arr[..., 3]).getbbox()
         Image.fromarray(arr, "RGBA").crop(box).save(os.path.join(folder, name + ".png"))
         spec["puppet"]["layers"][name].update(image=f"layers/{name}.png", offset=[box[0], box[1]])
+        if name=='torso' and 'carry_material_alpha' in state:
+            Image.fromarray(state['carry_material_alpha'],'L').crop(box).save(os.path.join(folder,'torso-carry-material.png'))
+            spec['puppet']['layers'][name]['carry_material_mask']='layers/torso-carry-material.png'
         if name=='torso' and 'neck_front_mask' in state:
             Image.fromarray(state['neck_front_mask'],'L').crop(box).save(os.path.join(folder,'torso-neck-front.png'))
             spec['puppet']['layers'][name]['front_mask']='layers/torso-neck-front.png'
     Image.fromarray(ref, "RGBA").save(os.path.join(out_dir, "source.png"))
-    spec.update(name=character_name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
+    spec.update(name=character_name, weapon=spec.get("weapon", "sword" if "weapon" in out else "none"), cloth=[], style={"speed": 1.0, "bounce": 0.8})
     if spec.get('puppet', {}).get('connection_skinning') == 'registered_garment_v3':
         from sprite_anim.puppet import Puppet
         try:

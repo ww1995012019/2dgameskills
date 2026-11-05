@@ -127,14 +127,26 @@ def pelvis_blend_weights(child, parent, seat, distal):
     grid = np.stack((child.vx, child.vy), -1)+child.offset
     s = np.clip(((grid-seat)@axis-attach)/fade, 0, 1)
     weights = 1-s*s*(3-2*s)
+    carried = getattr(child, 'source_upper_carry', None)
+    if carried is not None:
+        start, end = float(carried['protected_y']), float(carried['blend_end_y'])
+        # The complete grid cell containing the source hem follows the pelvis.
+        end = min(end, float(points[:, 1].min())-GRID)
+        if child.name != 'torso' or end-start < GRID:
+            raise ValueError('source upper carry requires a separate garment blend below both hands')
+        blend = np.clip((grid[..., 1]-start)/(end-start),0,1)
+        weights *= blend*blend*(3-2*blend)
     # Grid sampling plus extrema covers the full attachment, not only a centre seat.
     points = points[np.lexsort((points[:, 0], points[:, 1]))]
     sample = points[np.linspace(0, len(points)-1, min(96, len(points))).astype(int)]
     extremes = points[[points[:, 0].argmin(), points[:, 0].argmax(), points[:, 1].argmin(), points[:, 1].argmax()]]
     sample = np.unique(np.vstack((sample, extremes)), axis=0)
-    return weights, dict(method='registered_pelvis_overlap', parent=parent.name,
-                         source_points=sample.tolist(), overlap_pixels=len(points),
-                         attachment_start=attach, fade=fade)
+    report = dict(method='registered_pelvis_overlap', parent=parent.name,
+                  source_points=sample.tolist(), overlap_pixels=len(points),
+                  attachment_start=attach, fade=fade)
+    if carried is not None:
+        report['source_upper_carry'] = dict(carried)
+    return weights, report
 
 
 def joint_socket_binding(child, parent):
@@ -365,6 +377,8 @@ class Layer:
         self.root_lock = bool(data.get("root_lock", False))
         self.tip_lock = bool(data.get("tip_lock", False))
         self.source_frame = bool(data.get("source_frame", False))
+        self.draw_owner = data.get('draw_owner')
+        self.source_upper_carry = data.get('source_upper_carry')
         self.kind = data["kind"]        # tube | rigid | cloth
         self.bones = data.get("bones", [])
         self.rest = [np.array(p, dtype=np.float64) for p in data.get("rest", [])]
@@ -616,6 +630,36 @@ def rigid(vx, vy, pivot_src, pivot_out, angle, scale):
 RASTER_BUDGET = 1 << 21   # bounding-box pixels evaluated at once while rasterising triangles
 
 
+def measured_surface(puppet, indexed, name, scale):
+    """Actual draw geometry with a registered part's analysis-only alpha mask.
+
+    Source-owned arms are landmarks, not independent painted draws. Their
+    measurements must follow their real drawing owner, including a missing
+    owner's pixels. This temporary mask never enters the exported artwork.
+    """
+    layer, vertices = indexed[name]
+    if not getattr(layer, 'draw_owner', None):
+        return layer, vertices, puppet.mip(layer, scale)
+    owner, vertices = indexed[layer.draw_owner]
+    if (layer.name not in ('arm_near','arm_far') or owner.name != 'torso'
+            or not getattr(owner,'source_upper_carry',None)):
+        raise ValueError('unsupported source drawing owner')
+    import copy
+    key = (layer.name, owner.name)
+    cache = getattr(puppet, 'measured_owner_layers', {})
+    if key not in cache:
+        alpha = Image.new('L',owner.image.size)
+        alpha.paste(layer.image.getchannel('A'),tuple(np.rint(layer.offset-owner.offset).astype(int)))
+        image = np.asarray(owner.image).copy()
+        image[...,3] = np.minimum(image[...,3],np.asarray(alpha))
+        proxy = copy.copy(owner)
+        proxy.name = owner.name+':measured:'+layer.name
+        proxy.image = Image.fromarray(image,'RGBA')
+        cache[key] = proxy
+        puppet.measured_owner_layers = cache
+    return owner, vertices, puppet.mip(cache[key],scale)
+
+
 def raster(layer, verts, mip, w, h):
     """Draw the layer's mesh into a premultiplied RGBA float image of (h, w).
 
@@ -844,6 +888,15 @@ class Puppet:
                     verts = verts * (1 - foot_w[..., None]) + held * foot_w[..., None]
             if layer.kind != "rigid" and relax:
                 verts = untangle(blur(verts, EASE_PASSES), layer.cells)
+            if getattr(layer, 'source_upper_carry', None) is not None:
+                # A carried illustration contains the original connected hands
+                # and rifle. A spine tube bends that rigid object, even when its
+                # logical wrist landmarks are correct. Transport its real mesh
+                # in chest space, then attach only the lower garment below it.
+                vx, vy = (layer.vx, layer.vy) if sel is None else (layer.vx[sel], layer.vy[sel])
+                verts = rigid(vx+layer.offset[0], vy+layer.offset[1], self.joints['waist'],
+                              cv.T(sk['waist']),
+                              math.radians(sk['chest_rot']-self.rest_angles['chest_rot']),scale)
             if getattr(layer, 'root_lock', False) and layer.kind == "tube":
                 verts = lock_tip(layer, verts, self.tube_points(layer, sk, cv), scale, root=True, sel=sel)
             if getattr(layer, 'tip_lock', False) and layer.kind == "tube":
@@ -877,6 +930,8 @@ class Puppet:
                 verts = verts*(1-weights[..., None])+attached*weights[..., None]
                 if relax:
                     pinned = weights >= 1-1e-12
+                    if getattr(layer, 'source_upper_carry', None) is not None:
+                        pinned |= source[..., 1] <= layer.source_upper_carry['protected_y']
                     if layer.foot:
                         pinned = pinned | (layer.foot_w >= 1-1e-12)
                     verts = untangle(verts, layer.cells, pinned=pinned)
@@ -910,6 +965,10 @@ class Puppet:
         # surface; the torso's reconstructed bare neck stays behind the head.
         surfaces=[];indexed={layer.name:(layer,verts) for layer,verts in meshes}
         for layer,verts in meshes:
+            if getattr(layer, 'draw_owner', None):
+                if layer.draw_owner not in indexed:
+                    raise ValueError('missing declared source carry drawing owner')
+                continue
             surfaces.append((layer,verts,self.mip(layer,scale)))
             if layer.neck_skin:
                 parent,parent_verts=indexed[layer.neck_skin]

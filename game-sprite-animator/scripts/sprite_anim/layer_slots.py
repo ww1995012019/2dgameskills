@@ -107,7 +107,7 @@ HAND_HINTS = {
 def hand_prompt():
     return COMMON.format(
         keep="only the exposed hand and all its fingers at the end of this arm, from the wrist to the fingertips, in their exact original position",
-        remove="all fabric, the entire sleeve, cuff, bracelet, ribbons, the upper arm and shoulder, and everything except the hand and its fingers")
+        remove="the ENTIRE FOREARM including bare skin, all fabric, the entire sleeve, cuff, bracelet, ribbons, the upper arm and shoulder, and everything except the hand and its fingers. End at the narrow wrist crease immediately behind the palm; NO long cylindrical forearm or forearm stump remains")
 
 
 def prompt(slot):
@@ -192,6 +192,68 @@ REPAIR_RULES = {
     'neck': NATURAL_NECK,
     'hand_pose': NATURAL_HANDS + '\nRepair the original reference if its hand pose is wrong. If separation alone damaged it, restore the accepted reference pose in the arm layer. Regenerate its hand hint only from the repaired finished arm, never use a hint to re-pose the hand.',
 }
+
+
+RIFLE_PROFILE = 'side-rifle-carry-v1'
+RIFLE_SCOPE_CHECKS = ('short_fitted_clothing', 'no_trailing_accessories',
+                      'two_hand_rifle_carry', 'opaque_crisp_art')
+
+
+def rifle_reference_prompt(who, style):
+    return f'''Use the supplied picture as character identity, not a pose to trace.
+Character: {who}. Style: {style}.
+Create one complete full-body 2D game registration image, strict orthographic RIGHT-facing
+90-degree SIDE ELEVATION, on a portrait 1024 x 1536 canvas. Preserve recognisable face,
+build, helmet/headgear, clothing, equipment, palette and the ONE rifle from the reference.
+Head level, no front-facing chest or three-quarter perspective. Calm low-ready TWO-HAND
+rifle carry in front of the chest/waist: camera-side hand on the pistol grip, far hand on
+the fore-end. BOTH complete shoulder/elbow/forearm/wrist paths must be READABLE. Put the
+supporting elbow forward and below the gun, outside the chest silhouette, so its full
+forearm is visible below the gun. The near trigger elbow is lower/back, with visible
+upper arm and forearm. No isolated palm emerging from the torso, no hidden stump arm.
+Anatomical closed grips, neutral wrists, no extra hand or duplicate gun.
+The complete rigid rifle points forward RIGHT and slightly down; stock, receiver,
+magazine, barrel and muzzle remain inside the frame. No firing, flash or cartridge.
+Small staggered standing stride, separate complete legs, both complete boot soles exactly
+flat on ONE horizontal baseline, pointing RIGHT. Connected original trousers at waist
+and crotch, short fitted upper garment ending at the hips. Secure equipment and straps
+against their own body part; no loose glove, trailing strap, cape or long coat.
+Figure about 85 percent of canvas height with generous margins. Crisp opaque material
+detail, even illumination, no blur, floor, scenery, shadow, text or guide marks. Outside
+the complete character and rifle use ONLY flat pure MAGENTA #FF00FF, no magenta on art.
+Output one static registration image, not a sheet or a closeup.
+''' + NATURAL_NECK + '\n' + NATURAL_HANDS
+
+
+def rifle_prompt(slot):
+    if slot in HAND_HINTS:
+        return basic_prompt(slot)
+    if slot not in BASIC_SLOTS:
+        raise ValueError('unsupported rifle carry layer: ' + slot)
+    keep, remove = BASIC_KEEP.get(slot, SLOTS[slot][:2])
+    if slot == 'arm_near':
+        keep = ('the CAMERA-SIDE arm on the PISTOL GRIP, complete from its real shoulder '
+                'through upper arm, elbow, forearm, wrist and closed trigger-hand fingers; '
+                'preserve the sleeve, elbow and exact grip pose in the reference')
+        remove = 'the other supporting arm/hand, head, torso, legs, ALL rifle parts and every other object'
+    elif slot == 'arm_far':
+        keep = ('the FAR-SIDE SUPPORTING arm whose hand is under the rifle FORE-END, complete '
+                'from its own shoulder through upper arm, elbow, forearm, wrist and curled '
+                'supporting fingers; reconstruct hidden segments with matching sleeve/skin detail '
+                'without moving the visible supporting palm')
+        remove = 'the camera-side trigger arm/hand, head, torso, legs, ALL rifle parts and every other object'
+    anatomy = ('\n'+NATURAL_NECK if slot in ('head', 'torso') else
+               '\n'+NATURAL_HANDS if slot in ('arm_near', 'arm_far') else '')
+    return COMMON.format(keep=keep, remove=remove)+anatomy+'''
+RIFLE-CARRY contract: one complete connected requested layer on the unchanged full
+registration canvas. Do not re-pose, recenter, zoom, simplify details or copy the other limb.
+Arm layers NEVER contain any part of the rifle, handle or magazine. The trigger hand and
+supporting hand have different roles and must not be selected merely by screen-left/right.
+Preserve each accepted hand gesture while removing the rifle. The torso has no arms or
+detached shoulder pieces; the hips contain only complete hidden internal trouser material,
+no duplicate visible waistband or outer pocket. Each leg includes its own whole thigh,
+knee and boot, with tightly attached equipment belonging to that leg alone.
+'''
 
 
 def basic_reference_prompt(who, style, weapon):

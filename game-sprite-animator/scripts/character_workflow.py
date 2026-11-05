@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw
 import layer_parts as lp
 import visual_review as vr
 from sprite_anim.layer_slots import (BASIC_PROFILE, BASIC_SCOPE_CHECKS, BASIC_SLOTS, HAND_HINTS,
-                                    IDENTITY_PROMPT, REPAIR_RULES, REFERENCE_HAND_REPAIR, basic_prompt, basic_reference_prompt)
+                                    IDENTITY_PROMPT, REPAIR_RULES, REFERENCE_HAND_REPAIR, basic_prompt, basic_reference_prompt, RIFLE_PROFILE, RIFLE_SCOPE_CHECKS, rifle_prompt, rifle_reference_prompt)
 
 LAYER_CHECKS = ('complete_shape', 'exclusive_contents', 'sharp_art', 'unchanged_pose', 'valid_attachment')
 
@@ -40,7 +40,7 @@ def read_json(path):
 def load_job(folder, allow_blocked=False):
     root = Path(folder).resolve()
     job = read_json(root/'job.json')
-    if job.get('profile') != BASIC_PROFILE or job.get('weapon') not in ('none', 'sword'):
+    if (job.get('profile'), job.get('weapon')) not in ((BASIC_PROFILE, 'none'), (BASIC_PROFILE, 'sword'), (RIFLE_PROFILE, 'rifle')):
         raise lp.Rejected('unsupported job profile or weapon; do not switch a production job to an experimental rig')
     if vr.file_hash(root/'source.png') != job['source_hash']:
         raise lp.Rejected('source image changed; prepare a new job and inspect identity again')
@@ -53,6 +53,14 @@ def slots(job):
     return (*BASIC_SLOTS, *(('weapon',) if job['weapon'] == 'sword' else ()))
 
 
+def scope_checks(job):
+    return RIFLE_SCOPE_CHECKS if job['profile'] == RIFLE_PROFILE else BASIC_SCOPE_CHECKS
+
+
+def art_prompt(job, slot):
+    return rifle_prompt(slot) if job['profile'] == RIFLE_PROFILE else basic_prompt(slot)
+
+
 def write_pose_guide(path, weapon="none"):
     """One fixed skeleton for the whole basic profile, never traced on a character."""
     image = Image.new('RGB', (1024, 1536), (255, 0, 255))
@@ -62,6 +70,9 @@ def write_pose_guide(path, weapon="none"):
     shoulder = (500, 370)
     far = [shoulder, (350, 520), (285, 680)]
     near = [shoulder, (650, 520), (800, 430)]
+    if weapon == 'rifle':
+        near = [shoulder, (450, 590), (610, 530)]
+        far = [shoulder, (575, 620), (760, 565)]
     legs = [[hip, (405, 1080), (350, 1360)], [hip, (585, 1080), (665, 1360)]]
     draw.polygon([(450, 320), (540, 320), (550, 790), (450, 790)], fill=(80, 90, 110))
     draw.ellipse((425, 110, 565, 310), fill=(160, 170, 180))
@@ -77,10 +88,14 @@ def write_pose_guide(path, weapon="none"):
         draw.line([(x-35, 1405), (x+90, 1405)], fill='white', width=4)
     if weapon == 'sword':
         draw.line([(775, 475), (935, 195)], fill=(205, 205, 215), width=10)
+    elif weapon == 'rifle':
+        draw.line([(510, 475), (910, 620)], fill=(205, 205, 215), width=24)
     image.save(path)
 
 
-def prepare(image, folder, name='character', weapon='none', who=None, style=None, source_proxy_note=None):
+def prepare(image, folder, name='character', weapon='none', who=None, style=None, source_proxy_note=None, profile=BASIC_PROFILE):
+    if (profile, weapon) not in ((BASIC_PROFILE, 'none'), (BASIC_PROFILE, 'sword'), (RIFLE_PROFILE, 'rifle')):
+        raise lp.Rejected('unsupported production profile or equipment')
     root = Path(folder).resolve()
     if root.exists() and any(root.iterdir()):
         raise lp.Rejected('prepare needs a new or empty output directory; existing jobs must not lose their history')
@@ -94,10 +109,12 @@ def prepare(image, folder, name='character', weapon='none', who=None, style=None
     (root/'layers').mkdir()
     write_pose_guide(root/'pose_guide.png', weapon)
     (root/'prompts/00_identity.txt').write_text(IDENTITY_PROMPT, encoding='utf-8')
-    (root/'prompts/01_reference.txt').write_text(basic_reference_prompt(
-        who or 'the same character as the supplied identity picture',
-        style or 'preserve the supplied picture\'s linework, palette and shading', weapon), encoding='utf-8')
-    job = dict(profile=BASIC_PROFILE, name=name, weapon=weapon, source_hash=vr.file_hash(root/'source.png'),
+    identity = who or 'the same character as the supplied identity picture'
+    art_style = style or "preserve the supplied picture's linework, palette and shading"
+    reference_prompt = (rifle_reference_prompt(identity, art_style) if profile == RIFLE_PROFILE
+                        else basic_reference_prompt(identity, art_style, weapon))
+    (root/'prompts/01_reference.txt').write_text(reference_prompt, encoding='utf-8')
+    job = dict(profile=profile, name=name, weapon=weapon, source_hash=vr.file_hash(root/'source.png'),
                phase='awaiting_standard_reference', attempts={'reference': 1}, retries=[],
                source_kind='generated_identity_proxy' if source_proxy_note else 'original_file',
                original_source_note=source_proxy_note)
@@ -117,8 +134,8 @@ def reference_template(root):
     image, _ = current_reference(root)
     review = lp.reference_review_template(image)
     job = read_json(root/'job.json')
-    review.update(profile=BASIC_PROFILE, expected_weapon=job['weapon'], source_hash=job['source_hash'])
-    review['checks'].update({k: dict(status='pending', evidence='') for k in BASIC_SCOPE_CHECKS})
+    review.update(profile=job['profile'], expected_weapon=job['weapon'], source_hash=job['source_hash'])
+    review['checks'].update({k: dict(status='pending', evidence='') for k in scope_checks(job)})
     return review
 
 
@@ -126,10 +143,10 @@ def accepted_reference(root):
     image, _ = current_reference(root)
     review = lp.check_reference_review(image, root/'reference_review.json')
     job = read_json(root/'job.json')
-    if (review.get('profile') != BASIC_PROFILE or review.get('expected_weapon') != job['weapon']
+    if (review.get('profile') != job['profile'] or review.get('expected_weapon') != job['weapon']
             or review.get('source_hash') != job['source_hash']):
         raise lp.Rejected('reference review must explicitly cover this profile, source and expected weapon')
-    for name in BASIC_SCOPE_CHECKS:
+    for name in scope_checks(job):
         item = review.get('checks', {}).get(name, {})
         if item.get('status') != 'pass' or not isinstance(item.get('evidence'), str) or not item['evidence'].strip():
             raise lp.Rejected(f'unsupported reference or incomplete review: {name}; regenerate within basic scope or stop')
@@ -164,7 +181,7 @@ def review_reference(folder, review=None):
         item = value.get('checks', {}).get(key, {})
         if item.get('status') != 'pass' or not isinstance(item.get('evidence'), str) or not item['evidence'].strip():
             raise lp.Rejected(f'reference: {key} has not passed visual inspection')
-    if (value.get('profile') != BASIC_PROFILE or value.get('expected_weapon') != job['weapon']
+    if (value.get('profile') != job['profile'] or value.get('expected_weapon') != job['weapon']
             or value.get('source_hash') != job['source_hash']):
         raise lp.Rejected('reference: wrong profile, source or expected weapon')
     notes = root/'identity_notes.md'
@@ -172,7 +189,7 @@ def review_reference(folder, review=None):
         raise lp.Rejected('identity_notes.md must record identity preservation and any adaptations')
     write_json(root/'reference_review.json', value)
     for slot in (*slots(job), *HAND_HINTS):
-        (root/'prompts'/f'{slot}.txt').write_text(basic_prompt(slot), encoding='utf-8')
+        (root/'prompts'/f'{slot}.txt').write_text(art_prompt(job, slot), encoding='utf-8')
         job['attempts'].setdefault(slot, 1)
     job['phase'] = 'awaiting_layers'
     write_json(root/'job.json', job)
@@ -200,14 +217,14 @@ def layer_assets(root, job):
 
 
 def layer_template(root, job):
-    return dict(profile=BASIC_PROFILE, reviewer='', assets=layer_assets(root, job), layers={
+    return dict(profile=job['profile'], reviewer='', assets=layer_assets(root, job), layers={
         name: dict(checks={k: dict(status='pending', evidence='') for k in layer_checks(name)})
         for name in (*slots(job), *HAND_HINTS)})
 
 
 def accepted_layers(root, job, path):
     review = path if isinstance(path, dict) else read_json(path)
-    if review.get('profile') != BASIC_PROFILE or review.get('assets') != layer_assets(root, job):
+    if review.get('profile') != job['profile'] or review.get('assets') != layer_assets(root, job):
         raise lp.Rejected('layer review is stale or for another profile; inspect current layers again')
     if not isinstance(review.get('reviewer'), str) or not review['reviewer'].strip():
         raise lp.Rejected('layer review needs a reviewer')
@@ -261,12 +278,15 @@ def bind_job(folder):
     layers = {name: lp.key_out(root/'layers'/f'{name}.png') for name in (*slots(job), *HAND_HINTS)}
     state = {}
     try:
-        out, spec, report = lp.bind(ref, layers, str(root/'fit_cache'), state, registered_connections=True)
+        out, spec, report = lp.bind(ref, layers, str(root/'fit_cache'), state, registered_connections=True, retained_upper=job['profile'] == RIFLE_PROFILE)
     except lp.Rejected:
         lp.save_diagnostics(root/'rig', ref, state)
         raise
-    state.update(profile=BASIC_PROFILE, reference_review=semantic, layer_review=layer_review,
+    state.update(profile=job['profile'], reference_review=semantic, layer_review=layer_review,
                  semantic_verification='reviewer_attested')
+    if job['profile'] == RIFLE_PROFILE:
+        from sprite_anim.rifle_carry import configure_binding
+        configure_binding(ref, out, spec, state, layers)
     lp.write_binding(str(root/'rig'), job['name'], ref, out, spec, report, state)
     job['rig_assets'] = {str(p.relative_to(root/'rig')): vr.file_hash(p)
                          for pattern in ('*.json', '*.png', 'layers/*.png') for p in (root/'rig').glob(pattern)}
@@ -303,8 +323,8 @@ def check_render_input(character):
             value = read_json(report)
             if not isinstance(value, dict) or not isinstance(value.get('reference_review', {}), dict):
                 raise lp.Rejected('invalid binding review provenance')
-            if (value.get('profile') == BASIC_PROFILE
-                    or value.get('reference_review', {}).get('profile') == BASIC_PROFILE):
+            if (value.get('profile') in (BASIC_PROFILE, RIFLE_PROFILE)
+                    or value.get('reference_review', {}).get('profile') in (BASIC_PROFILE, RIFLE_PROFILE)):
                 raise lp.Rejected('basic-side-v1 rig has no owning production job; '
                                   'render from the original reviewed job')
         return
@@ -324,7 +344,7 @@ def preview_job(folder):
     check_bound_rig(root, job)
     scripts = [
         ['generate.py', '--character', str(root/'rig/character.json'), '--preset', 'hd512',
-         '--clips', 'idle,walk', '--no-fx', '--out', str(root/'build')],
+         '--clips', 'idle,run' if job['profile'] == RIFLE_PROFILE else 'idle,walk', '--no-fx', '--out', str(root/'build')],
         ['qa_motion.py', str(root/'build')],
         ['visual_review.py', str(root/'build')],
     ]
@@ -377,7 +397,7 @@ def retry(folder, stage, fault, reason):
     if stage == 'reference':
         for name in (*slots(job), *HAND_HINTS):
             (root/'prompts'/f'{name}.txt').unlink(missing_ok=True)
-    baseline = (root/'prompts/01_reference.txt').read_text(encoding='utf-8') if stage == 'reference' else basic_prompt(stage)
+    baseline = (root/'prompts/01_reference.txt').read_text(encoding='utf-8') if stage == 'reference' else art_prompt(job, stage)
     if stage == 'reference' and fault == 'hand_pose':
         baseline = REFERENCE_HAND_REPAIR
     (root/'prompts'/f'retry_{stage}.txt').write_text(repair_prompt(baseline, fault, reason), encoding='utf-8')
@@ -396,7 +416,8 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('prepare')
     p.add_argument('--image', required=True); p.add_argument('--out', required=True)
-    p.add_argument('--name', default='character'); p.add_argument('--weapon', choices=('none', 'sword'), default='none')
+    p.add_argument('--name', default='character'); p.add_argument('--weapon', choices=('none', 'sword', 'rifle'), default='none')
+    p.add_argument('--profile', choices=(BASIC_PROFILE, RIFLE_PROFILE), default=BASIC_PROFILE)
     p.add_argument('--who'); p.add_argument('--style')
     p.add_argument('--source-proxy-note', help='explicit provenance when a generated proxy is used because the original chat image has no readable local file; never claim it is the original')
     for command in ('reference', 'layers', 'bind', 'preview', 'status', 'retry'):
@@ -409,7 +430,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == 'prepare':
-            prepare(args.image, args.out, args.name, args.weapon, args.who, args.style, args.source_proxy_note)
+            prepare(args.image, args.out, args.name, args.weapon, args.who, args.style, args.source_proxy_note, args.profile)
         elif args.command == 'reference':
             review_reference(args.job, args.review)
         elif args.command == 'layers':
