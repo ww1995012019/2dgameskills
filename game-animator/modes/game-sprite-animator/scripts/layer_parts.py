@@ -150,7 +150,8 @@ def warp(arr, s, deg, dx, dy, cx, cy, size, resample=Image.BILINEAR):
     c, n = math.cos(t) / s, math.sin(t) / s
     tx, ty = cx + dx, cy + dy
     coeff = (c, n, cx - c * tx - n * ty, -n, c, cy + n * tx - c * ty)
-    return np.asarray(Image.fromarray(arr).transform(size, Image.AFFINE, coeff, resample=resample))
+    image = arr if isinstance(arr, Image.Image) else Image.fromarray(arr)
+    return np.asarray(image.transform(size, Image.AFFINE, coeff, resample=resample))
 
 
 def small(a, f):
@@ -164,23 +165,33 @@ def small(a, f):
     return (np.clip(out, 0, 1) * 255).astype(np.uint8)
 
 
+class RegistrationScore:
+    """Fixed data for one search scale; candidate arithmetic is unchanged."""
+    def __init__(self, layer, reference, cx, cy):
+        self.image = Image.fromarray(layer)
+        self.size = reference.shape[1], reference.shape[0]
+        self.seen = reference[..., 3] > 128
+        self.rgb = reference[..., :3].astype(np.float32)
+        self.opaque = int((layer[..., 3] > 128).sum())
+        self.center = cx, cy
+
+    def __call__(self, params):
+        w = warp(self.image, *params, *self.center, self.size, Image.NEAREST)
+        on = w[..., 3] > 128
+        n = int(on.sum())
+        if n == 0:
+            return 1.0
+        diff = np.abs(w[..., :3].astype(np.float32) - self.rgb).mean(2) / 255
+        cost = np.minimum(diff, 0.16)
+        cost = np.where(self.seen, cost, 0.24)
+        total = float(cost[on].sum())
+        lost = max(0, int(self.opaque * params[0] ** 2) - n)
+        return (total + lost * 0.24) / (n + lost)
+
+
 def score(layer, ref, params, cx, cy):
-    """Mean colour error over the layer's pixels. Capped, because a layer holds art the reference
-    hides; off the reference silhouette costs the most, so a layer can't sit outside the figure."""
-    size = (ref.shape[1], ref.shape[0])
-    w = warp(layer, *params, cx, cy, size, Image.NEAREST)
-    on = w[..., 3] > 128
-    n = int(on.sum())
-    if n == 0:
-        return 1.0
-    seen = ref[..., 3] > 128
-    diff = np.abs(w[..., :3].astype(np.float32) - ref[..., :3]).mean(2) / 255
-    cost = np.minimum(diff, 0.16)
-    cost = np.where(seen, cost, 0.24)
-    total = float(cost[on].sum())
-    # Pixels the layer loses off the canvas count against it too.
-    lost = max(0, int((layer[..., 3] > 128).sum() * params[0] ** 2) - n)
-    return (total + lost * 0.24) / (n + lost)
+    """Capped colour error, including hidden art and pixels lost off the canvas."""
+    return RegistrationScore(layer, ref, cx, cy)(params)
 
 
 def place(layer, ref):
@@ -191,12 +202,13 @@ def place(layer, ref):
     if not len(ys):
         return None
     cx, cy = float(xs.mean()), float(ys.mean())
+    evaluate = RegistrationScore(L, R, cx, cy)
     best = None
     for s in np.arange(0.76, 1.30, 0.06):
         for deg in np.arange(-12, 12.1, 4):
             for dy in range(-16, 17, 2):
                 for dx in range(-16, 17, 2):
-                    e = score(L, R, (s, deg, dx, dy), cx, cy)
+                    e = evaluate((s, deg, dx, dy))
                     if best is None or e < best[0]:
                         best = (e, s, deg, dx, dy)
     e, s, deg, dx, dy = best
@@ -205,8 +217,9 @@ def place(layer, ref):
     for f, steps in ((4, (0.03, 2.0, 8.0)), (2, (0.012, 0.8, 4.0)), (2, (0.005, 0.3, 2.0))):
         L, R = small(layer, f), small(ref, f)
         c = (cx / f, cy / f)
+        evaluate = RegistrationScore(L, R, *c)
         scaled = lambda p: (p[0], p[1], p[2] / f, p[3] / f)
-        e = score(L, R, scaled(params), *c)
+        e = evaluate(scaled(params))
         improved = True
         while improved:
             improved = False
@@ -214,7 +227,7 @@ def place(layer, ref):
                 for sign in (1, -1):
                     trial = list(params)
                     trial[i] += sign * step
-                    t = score(L, R, scaled(trial), *c)
+                    t = evaluate(scaled(trial))
                     if t < e - 1e-5:
                         e, params, improved = t, trial, True
     return dict(s=float(params[0]), deg=float(params[1]), dx=float(params[2]), dy=float(params[3]), cx=cx, cy=cy, error=e)
@@ -880,8 +893,8 @@ def bind(ref, layers, fit_cache=None, diagnostics=None, registered_connections=F
         raise
 
 
-def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False, retained_upper=False):
-    """Places every layer and works out the rig. Returns (placed layers, spec's puppet + body, report)."""
+def register_layers(ref, layers, fit_cache, diagnostics, retained_upper=False):
+    """Align layers, then check their source coverage, ownership and neck contact."""
     size = (ref.shape[1], ref.shape[0])
     missing = [n for n, s in SLOTS.items() if s[2] and n not in layers]
     if missing:
@@ -954,6 +967,12 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False, ret
     for name in ("cloth_back", "hair_back", "robe"):
         if name in masks and (masks[name] & masks["torso"]).sum() > MAX_SHARED * masks[name].sum():
             raise Rejected(f"torso: it also holds the art of {name}, so that cloth would be drawn twice; make torso again")
+    return out, fits, placements, cover, spill, masks
+
+
+def measure_limbs(out, layers, placements, size, diagnostics):
+    """Measure and validate both arm/leg chains before assembling the runtime rig."""
+    masks = {name: image[..., 3] > 128 for name, image in out.items()}
     ln, lf = read_leg(masks["leg_near"]), read_leg(masks["leg_far"])
     hand_masks = {}
     for hint, arm in HAND_HINTS.items():
@@ -989,6 +1008,21 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False, ret
     far_px = np.hypot(*(lf["knee"] - lf["hip"])) + np.hypot(*(lf["ankle"] - lf["knee"]))
     ppu = (near_px + far_px) / 2 / LEG_LEN
 
+    return ({"leg_near": ln, "leg_far": lf, "arm_near": an, "arm_far": af},
+            (near_px, far_px), ppu, hand_masks, pair_ratios)
+
+
+def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False, retained_upper=False):
+    """Places every layer and works out the rig. Returns (placed layers, spec's puppet + body, report)."""
+    out, fits, placements, cover, spill, masks = register_layers(
+        ref, layers, fit_cache, diagnostics, retained_upper)
+    size = ref.shape[1], ref.shape[0]
+    seen = ref[..., 3] > 128
+    limbs, leg_pixels, ppu, hand_masks, pair_ratios = measure_limbs(
+        out, layers, placements, size, diagnostics)
+    ln, lf = limbs["leg_near"], limbs["leg_far"]
+    an, af = limbs["arm_near"], limbs["arm_far"]
+    near_px, far_px = leg_pixels
     troot = torso_attachment(masks["torso"])
     hip = (ln["hip"] + lf["hip"]) / 2 + np.array([0.0, 0.5 * np.hypot(*(ln["hip"] - lf["hip"]))])
     neck = troot
@@ -1332,7 +1366,7 @@ def reference_review_template(image):
         name: dict(status="pending", evidence="") for name in REFERENCE_CHECKS})
 
 
-def check_reference_review(image, path):
+def check_reference_review(image, path, image_digest=None):
     if not path or not os.path.isfile(path):
         raise Rejected("reference: semantic review required; inspect the reference and complete reference_review.json from plan")
     try:
@@ -1340,7 +1374,14 @@ def check_reference_review(image, path):
             review = json.load(source)
     except (ValueError, OSError) as exc:
         raise Rejected("reference: cannot read semantic review JSON; complete the plan template") from exc
-    if review.get("image_sha256") != reference_review_template(image)["image_sha256"]:
+    if image_digest is None:
+        image_digest = reference_review_template(image)["image_sha256"]
+    return validate_reference_review(review, image_digest)
+
+
+def validate_reference_review(review, image_digest):
+    """Validate the same review contract on submission and later input checks."""
+    if review.get("image_sha256") != image_digest:
         raise Rejected("reference: semantic review is stale; review this exact image again")
     if not isinstance(review.get("reviewer"), str) or not review["reviewer"].strip():
         raise Rejected("reference: semantic review needs a reviewer")

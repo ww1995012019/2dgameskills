@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw
 
 import layer_parts as lp
 import visual_review as vr
+from workflow_assets import JobAssets
 from sprite_anim.layer_slots import (BASIC_PROFILE, BASIC_SCOPE_CHECKS, BASIC_SLOTS, HAND_HINTS,
                                     IDENTITY_PROMPT, REPAIR_RULES, REFERENCE_HAND_REPAIR, basic_prompt, basic_reference_prompt, RIFLE_PROFILE, RIFLE_SCOPE_CHECKS, rifle_prompt, rifle_reference_prompt)
 
@@ -122,9 +123,9 @@ def prepare(image, folder, name='character', weapon='none', who=None, style=None
     print(f'Prepared {BASIC_PROFILE}: inspect source identity, then use prompts/01_reference.txt -> reference.png')
 
 
-def current_reference(root):
+def current_reference(root, assets=None):
     image = root/'reference.png'
-    array = lp.reference(image)
+    array = (assets or JobAssets(root)).require_root(root).reference()
     if (array.shape[1], array.shape[0]) != (1024, 1536):
         raise lp.Rejected('standard reference must use the fixed 1024 x 1536 portrait canvas; regenerate it')
     return image, array
@@ -139,10 +140,8 @@ def reference_template(root):
     return review
 
 
-def accepted_reference(root):
-    image, _ = current_reference(root)
-    review = lp.check_reference_review(image, root/'reference_review.json')
-    job = read_json(root/'job.json')
+def validate_job_reference(root, job, review):
+    """Profile and identity requirements shared by submission and later checks."""
     if (review.get('profile') != job['profile'] or review.get('expected_weapon') != job['weapon']
             or review.get('source_hash') != job['source_hash']):
         raise lp.Rejected('reference review must explicitly cover this profile, source and expected weapon')
@@ -154,6 +153,14 @@ def accepted_reference(root):
     if not notes.is_file() or not notes.read_text(encoding='utf-8').strip():
         raise lp.Rejected('inspect the source identity and record preserved traits/adaptations in identity_notes.md first')
     return review
+
+
+def accepted_reference(root, assets=None):
+    assets = (assets or JobAssets(root)).require_root(root)
+    current_reference(root, assets)
+    review = lp.check_reference_review(root/'reference.png', root/'reference_review.json',
+                                      assets.reference_digest())
+    return validate_job_reference(root, read_json(root/'job.json'), review)
 
 
 def review_reference(folder, review=None):
@@ -172,21 +179,10 @@ def review_reference(folder, review=None):
             (root/'prompts'/f'{name}.txt').unlink(missing_ok=True)
         job['phase'] = 'awaiting_standard_reference'
         write_json(root/'job.json', job)
-    if value.get('image_sha256') != lp.reference_review_template(root/'reference.png')['image_sha256']:
-        raise lp.Rejected('reference review is stale; inspect the current image again')
-    if not isinstance(value.get('reviewer'), str) or not value['reviewer'].strip():
-        raise lp.Rejected('reference review needs a reviewer')
-    template = reference_template(root)
-    for key in template['checks']:
-        item = value.get('checks', {}).get(key, {})
-        if item.get('status') != 'pass' or not isinstance(item.get('evidence'), str) or not item['evidence'].strip():
-            raise lp.Rejected(f'reference: {key} has not passed visual inspection')
-    if (value.get('profile') != job['profile'] or value.get('expected_weapon') != job['weapon']
-            or value.get('source_hash') != job['source_hash']):
-        raise lp.Rejected('reference: wrong profile, source or expected weapon')
-    notes = root/'identity_notes.md'
-    if not notes.is_file() or not notes.read_text(encoding='utf-8').strip():
-        raise lp.Rejected('identity_notes.md must record identity preservation and any adaptations')
+    assets = JobAssets(root)
+    current_reference(root, assets)
+    lp.validate_reference_review(value, assets.reference_digest())
+    validate_job_reference(root, job, value)
     write_json(root/'reference_review.json', value)
     for slot in (*slots(job), *HAND_HINTS):
         (root/'prompts'/f'{slot}.txt').write_text(art_prompt(job, slot), encoding='utf-8')
@@ -196,24 +192,23 @@ def review_reference(folder, review=None):
     print('Reference reviewed. Generate only the released layer prompts; then generate BOTH hand hints from the finished arm layers.')
 
 
-def layer_assets(root, job):
-    accepted_reference(root)
+def layer_assets(root, job, assets=None):
+    assets = (assets or JobAssets(root)).require_root(root)
+    accepted_reference(root, assets)
     names = (*slots(job), *HAND_HINTS)
     actual = {p.stem for p in (root/'layers').glob('*.png')}
     if actual != set(names):
         raise lp.Rejected(f'layers do not match the basic contract: missing {sorted(set(names)-actual)}, extra {sorted(actual-set(names))}')
-    assets = {'source.png': vr.file_hash(root/'source.png'), 'reference.png': vr.file_hash(root/'reference.png'),
-              'reference_review.json': vr.file_hash(root/'reference_review.json'),
-              'identity_notes.md': vr.file_hash(root/'identity_notes.md')}
+    hashes = {name: assets.file_hash(name) for name in
+              ('source.png', 'reference.png', 'reference_review.json', 'identity_notes.md')}
     for name in names:
-        path = root/'layers'/f'{name}.png'
-        with Image.open(path) as image:
-            if image.size != (1024, 1536):
-                raise lp.Rejected(f'{name}: changed canvas; regenerate at the reference canvas size')
-        if not (lp.key_out(path)[..., 3] > 128).any():
+        relative = f'layers/{name}.png'
+        if assets.image_size(relative) != (1024, 1536):
+            raise lp.Rejected(f'{name}: changed canvas; regenerate at the reference canvas size')
+        if not (assets.keyed(relative)[..., 3] > 128).any():
             raise lp.Rejected(f'{name}: empty layer; regenerate it')
-        assets[f'layers/{name}.png'] = vr.file_hash(path)
-    return assets
+        hashes[relative] = assets.file_hash(relative)
+    return hashes
 
 
 def layer_template(root, job):
@@ -222,9 +217,9 @@ def layer_template(root, job):
         for name in (*slots(job), *HAND_HINTS)})
 
 
-def accepted_layers(root, job, path):
+def accepted_layers(root, job, path, assets=None):
     review = path if isinstance(path, dict) else read_json(path)
-    if review.get('profile') != job['profile'] or review.get('assets') != layer_assets(root, job):
+    if review.get('profile') != job['profile'] or review.get('assets') != layer_assets(root, job, assets):
         raise lp.Rejected('layer review is stale or for another profile; inspect current layers again')
     if not isinstance(review.get('reviewer'), str) or not review['reviewer'].strip():
         raise lp.Rejected('layer review needs a reviewer')
@@ -272,10 +267,11 @@ def bind_job(folder):
     root, job = load_job(folder)
     if job['phase'] not in ('ready_to_bind', 'bound', 'awaiting_walk_review', 'preview_blocked'):
         raise lp.Rejected('finish the reference and per-layer reviews before binding')
-    semantic = accepted_reference(root)
-    layer_review = accepted_layers(root, job, root/'layer_review.json')
-    _, ref = current_reference(root)
-    layers = {name: lp.key_out(root/'layers'/f'{name}.png') for name in (*slots(job), *HAND_HINTS)}
+    assets = JobAssets(root)
+    semantic = accepted_reference(root, assets)
+    layer_review = accepted_layers(root, job, root/'layer_review.json', assets)
+    _, ref = current_reference(root, assets)
+    layers = {name: assets.keyed(f'layers/{name}.png') for name in (*slots(job), *HAND_HINTS)}
     state = {}
     try:
         out, spec, report = lp.bind(ref, layers, str(root/'fit_cache'), state, registered_connections=True, retained_upper=job['profile'] == RIFLE_PROFILE)
@@ -296,7 +292,8 @@ def bind_job(folder):
 
 def check_bound_rig(root, job):
     """Shared by the staged preview and direct generation; neither may skip review."""
-    accepted_layers(root, job, root/'layer_review.json')
+    assets = JobAssets(root)
+    review = accepted_layers(root, job, root/'layer_review.json', assets)
     if not job.get('rig_assets'):
         raise lp.Rejected('missing exported rig provenance; bind through this workflow first')
     for relative, digest in job['rig_assets'].items():
@@ -305,7 +302,8 @@ def check_bound_rig(root, job):
             raise lp.Rejected('exported rig was changed; fix the general rule and bind again, do not tune one character')
     # Refuse a stale rig after a reviewed layer was replaced and re-reviewed.
     bound = read_json(root/'rig/bind_report.json')
-    if bound.get('layer_review', {}).get('assets') != layer_assets(root, job) or bound.get('status') != 'accepted':
+    # accepted_layers already checked this exact asset map in this command.
+    if bound.get('layer_review', {}).get('assets') != review['assets'] or bound.get('status') != 'accepted':
         raise lp.Rejected('rig is stale; bind the current reviewed layers again')
     spec = read_json(root/'rig/character.json')
     if (spec.get('puppet', {}).get('connection_skinning') != 'registered_garment_v3'

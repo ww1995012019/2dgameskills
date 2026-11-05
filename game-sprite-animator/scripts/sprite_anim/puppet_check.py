@@ -20,6 +20,7 @@ from PIL import Image
 
 from .puppet import winding
 from .rig import full_pose, solve
+from .frame_checks import sample_frame, frame_meshes
 
 TILE = 24             # px of a layer's art
 SMEAR_RANGE = 30      # 0-255: a tile must change this much to count as having content
@@ -111,10 +112,10 @@ def disc_crop(a, x, y, r):
     return a[max(int(y - r), 0):min(int(y + r), h), max(int(x - r), 0):min(int(x + r), w)]
 
 
-def check_hands(renderer, spec, clip, frames, fps):
+def check_hands(renderer, spec, clip, frames, fps, *, context=None):
     """The hand in the frames against the hand in the reference, shrunk to the same size."""
     from .art import Canvas
-    from .render import GROUND_FRAC, frame_time
+    from .render import GROUND_FRAC
     puppet = renderer.art.puppet
     source = spec["puppet"].get("source")
     if not source:
@@ -136,8 +137,8 @@ def check_hands(renderer, spec, clip, frames, fps):
             native = Canvas(size,renderer.ss,renderer.unit,GROUND_FRAC,1,False,(0,0,0))
             native.set_squash(pose['squash'],0.)
             masks[index] = {}
-            indexed = {layer.name:(layer,verts) for layer,verts in puppet.meshes(
-                native,sk,renderer.cloth_at(clip,frame_time(clip,index,len(frames),fps)), 'ground' in clip.tags)}
+            indexed = {layer.name:(layer,verts) for layer,verts in frame_meshes(
+                renderer,clip,index,len(frames),fps,native,sk,context)}
             for name,(layer,verts) in indexed.items():
                 if layer.name not in ('arm_near','arm_far'):
                     continue
@@ -164,8 +165,7 @@ def check_hands(renderer, spec, clip, frames, fps):
         want = edge_energy(disc_crop(reference, rx, ry, radius))
         got = []
         for i in np.linspace(0, len(frames) - 1, HAND_FRAMES).astype(int):
-            pose = full_pose(clip.sample(frame_time(clip, int(i), len(frames), fps)))
-            sk = solve(pose, renderer.art.body)
+            _, pose, sk = sample_frame(renderer,clip,int(i),len(frames),fps,context)
             wr, el = np.array(sk["wr_" + side]), np.array(sk["el_" + side])
             x, y = cv.T(tuple(wr + (wr - el) * 0.28))
             actual = frames[int(i)]
@@ -194,19 +194,18 @@ def core_mask(size, waist, hip, radius):
     return (s >= 0) & (s <= CORE_END) & ((xx - a[0] - u[0] * s) ** 2 + (yy - a[1] - u[1] * s) ** 2 <= radius * radius)
 
 
-def check_core(renderer, clip, frames, fps):
+def check_core(renderer, clip, frames, fps, *, context=None):
     """The body between belt and hips is solid in every frame. The silhouette can't show a hole here,
     because what hangs around it stays in place: the background shows through the middle of the figure."""
     from .art import Canvas
-    from .render import GROUND_FRAC, frame_time
+    from .render import GROUND_FRAC
     radius = renderer.art.puppet.core_radius * renderer.unit
     if not radius:
         return []
     cv = Canvas(renderer.size, 1, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     worst, at = 0.0, 0
     for i, frame in enumerate(frames):
-        pose = full_pose(clip.sample(frame_time(clip, i, len(frames), fps)))
-        sk = solve(pose, renderer.art.body)
+        _, pose, sk = sample_frame(renderer,clip,i,len(frames),fps,context)
         cv.set_squash(pose["squash"], 0.0)
         core = core_mask((frame.shape[1], frame.shape[0]), cv.T(sk["waist"]), cv.T(sk["hip"]), radius)
         share = float((frame[core][:, 3] < 128).mean()) if core.any() else 0.0
@@ -231,7 +230,7 @@ def neck_surface_errors(puppet, meshes):
     return out
 
 
-def check_neck(renderer, clip, n, fps):
+def check_neck(renderer, clip, n, fps, *, context=None):
     """Check moving neck roots independently of optional limb-attachment checks.
 
     This measures skin correspondence, not the appearance of a painted cut edge.
@@ -239,17 +238,16 @@ def check_neck(renderer, clip, n, fps):
     requires the mandatory semantic head/neck review.
     """
     from .art import Canvas
-    from .render import GROUND_FRAC, frame_time
+    from .render import GROUND_FRAC
     puppet = renderer.art.puppet
     if not puppet.neck_bindings:
         return []
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     worst, at = 0., 0
     for i in range(n):
-        t = frame_time(clip, i, n, fps)
-        pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
+        _, pose, sk = sample_frame(renderer,clip,i,n,fps,context)
         cv.set_squash(pose['squash'], 0.)
-        meshes = list(puppet.meshes(cv, sk, renderer.cloth_at(clip, t), 'ground' in clip.tags))
+        meshes = frame_meshes(renderer,clip,i,n,fps,cv,sk,context)
         error = max(neck_surface_errors(puppet, meshes).values())/renderer.ss
         if error > worst:
             worst, at = error, i
@@ -391,7 +389,7 @@ def ordinary_run_report(clip, body, n, fps):
                                            phase_samples=phase_samples))
 
 
-def check_connections(renderer, clip, n, fps, bindings=None):
+def check_connections(renderer, clip, n, fps, bindings=None, *, context=None):
     """Check the torso seam, rotating thigh caps and thigh material every frame.
 
     The torso shares its pelvis surface. Each thigh cap follows its own bone,
@@ -403,7 +401,7 @@ def check_connections(renderer, clip, n, fps, bindings=None):
     from .puppet import mesh_points,rigid
     from .mathx import rot
     from .integrity import THIGH_DEFORMATION_LIMITS
-    from .render import GROUND_FRAC, frame_time
+    from .render import GROUND_FRAC
     puppet = renderer.art.puppet
     garment = getattr(puppet,'garment_bindings',{})
     if bindings is None:
@@ -419,11 +417,10 @@ def check_connections(renderer, clip, n, fps, bindings=None):
     edges = {part:[] for part in garment}
     carried = []
     for i in range(n):
-        t = frame_time(clip, i, n, fps)
-        pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
+        _, pose, sk = sample_frame(renderer,clip,i,n,fps,context)
         cv.set_squash(pose['squash'], 0.)
         meshes = {layer.name: (layer, vertices) for layer, vertices in
-                  puppet.meshes(cv, sk, renderer.cloth_at(clip, t), 'ground' in clip.tags)}
+                  frame_meshes(renderer,clip,i,n,fps,cv,sk,context)}
         if getattr(meshes['torso'][0], 'source_upper_carry', None) is not None:
             from .rifle_carry import rigidity_report
             carried.append(rigidity_report(puppet,meshes,cv,sk,renderer.ss))
@@ -526,7 +523,7 @@ def attachment_faults(alpha, parent_alpha, root, next_joint, radius):
     return []
 
 
-def check_attachments(renderer, clip, n, fps):
+def check_attachments(renderer, clip, n, fps, *, context=None):
     """Check every requested frame in isolated alpha buffers, locating first faults.
 
     Kept separate from composite QA so an opaque torso cannot hide missing arm
@@ -534,7 +531,7 @@ def check_attachments(renderer, clip, n, fps):
     """
     from .art import Canvas
     from .puppet import raster, measured_surface
-    from .render import GROUND_FRAC, frame_time
+    from .render import GROUND_FRAC
     puppet = renderer.art.puppet
     definitions = {
         'arm_near': ('sh_n', 'el_n', ('torso',)),
@@ -548,13 +545,11 @@ def check_attachments(renderer, clip, n, fps):
     scale = cv.s / puppet.px_per_unit
     found = {}
     for i in range(n):
-        t = frame_time(clip, i, n, fps)
-        pose = full_pose(clip.sample(t))
-        sk = solve(pose, renderer.art.body)
+        _, pose, sk = sample_frame(renderer,clip,i,n,fps,context)
         cv.set_squash(pose['squash'], 0.)
         needed = set(active) | {p for _, _, parents in active.values() for p in parents}
         meshes = {layer.name: (layer, verts) for layer, verts in
-                  puppet.meshes(cv, sk, renderer.cloth_at(clip, t), 'ground' in clip.tags)
+                  frame_meshes(renderer,clip,i,n,fps,cv,sk,context)
                   if layer.name in needed}
         full_masks = {}
 
@@ -635,10 +630,10 @@ def spacing_fault(ratios, fps):
     return None
 
 
-def check_motion(renderer, clip, n, fps):
+def check_motion(renderer, clip, n, fps, *, context=None):
     """Mesh folds, cloth kinks and the planted knee across one clip."""
     from .art import Canvas
-    from .render import GROUND_FRAC, frame_time
+    from .render import GROUND_FRAC
     puppet = renderer.art.puppet
     body = renderer.art.body
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
@@ -655,17 +650,15 @@ def check_motion(renderer, clip, n, fps):
         reference_spacing = np.where(reference_spacing > width, reference_spacing, 0.0)
     spacing_ratios = []
     for i in range(n):
-        t = frame_time(clip, i, n, fps)
-        pose = full_pose(clip.sample(t))
-        sk = solve(pose, body)
+        t, pose, sk = sample_frame(renderer,clip,i,n,fps,context)
         if reference_spacing is not None:
             actual = arm_spacing([sk[k] for k in ("sh_n", "el_n", "wr_n")],
                                  [sk[k] for k in ("sh_f", "el_f", "wr_f")])
             spacing_ratios.append(np.divide(actual, reference_spacing,
                                            out=np.ones(2), where=reference_spacing > 0))
-        cloth = renderer.cloth_at(clip, t)
+        cloth = context.cloth(i) if context is not None else renderer.cloth_at(clip, t)
         cv.set_squash(pose["squash"], 0.0)
-        for layer, verts in puppet.meshes(cv, sk, cloth, 'ground' in clip.tags):
+        for layer, verts in frame_meshes(renderer,clip,i,n,fps,cv,sk,context,cloth):
             share = inverted(verts, layer.cells)
             if share > worst_fold.get(layer.name, (0,))[0]:
                 worst_fold[layer.name] = (share, i)

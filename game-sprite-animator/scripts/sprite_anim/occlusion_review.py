@@ -92,19 +92,18 @@ def arm_regions(shape, wrist, elbow, radius):
     return hand, forearm
 
 
-def frame_metrics(renderer, clip, index, count, fps):
+def frame_metrics(renderer, clip, index, count, fps, *, context=None):
     """Measure one frame at the renderer's actual supersampling, in its layer order."""
     from sprite_anim.art import Canvas
-    from sprite_anim.rig import full_pose, solve
-    from sprite_anim.render import GROUND_FRAC, frame_time
+    from sprite_anim.render import GROUND_FRAC
     from sprite_anim.puppet import raster, measured_surface
     puppet = renderer.art.puppet
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0,0,0))
-    t = frame_time(clip, index, count, fps)
-    pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
+    from .frame_checks import sample_frame, frame_meshes
+    _, pose, sk = sample_frame(renderer,clip,index,count,fps,context)
     cv.set_squash(pose['squash'], 0.)
     scale = cv.s / puppet.px_per_unit
-    layers = list(puppet.meshes(cv, sk, renderer.cloth_at(clip,t), 'ground' in clip.tags))
+    layers = frame_meshes(renderer,clip,index,count,fps,cv,sk,context)
     indexed = {part.name:(part,verts) for part,verts in layers}
     result = []
     for position, (layer, vertices) in enumerate(layers):
@@ -154,8 +153,9 @@ def is_candidate(row):
                 and row.get('forearm_opaque_occlusion_fraction',0) >= MIN_OPAQUE_FOREARM_SHARE)
 
 
-def clip_candidates(renderer,clip,count,fps):
-    return [row for i in range(count) for row in frame_metrics(renderer,clip,i,count,fps) if is_candidate(row)]
+def clip_candidates(renderer,clip,count,fps, *, context=None):
+    return [row for i in range(count) for row in frame_metrics(
+        renderer,clip,i,count,fps,context=context) if is_candidate(row)]
 
 
 def _digest(value):

@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
+from review_support import playback_media, sheet_groups, pose_coverage, ReviewFrames
 
 CELL = 180
 PELVIS_CELL = 256
@@ -121,41 +122,50 @@ def detail_boxes(sk, trace, kind, frame=None):
             for points, radius in groups]
 
 
-def detail_sheets(root, doc, trace, out, kind):
+def detail_media(doc, trace, kind):
+    return {name: playback_media(doc['clips'][name], name, f'{kind}_motion_{number:03d}.gif')
+            for number, name in enumerate(detail_scope(doc, trace, kind))}
+
+
+def detail_entries(doc, trace, kind, rows=None):
+    rows = detail_rows(doc, trace, kind) if rows is None else rows
+    media = detail_media(doc, trace, kind)
+    return [dict(sheet=filename, kind=kind, clips=sorted({name for name, _, _ in group}),
+                 poses=pose_coverage(group),
+                 playback=[media[name][0] for name in sorted({name for name, _, _ in group})])
+            for filename, group in sheet_groups(rows, kind, DETAIL_PER_SHEET)]
+
+
+def detail_sheets(root, doc, trace, out, kind, *, reader=None):
     rows, files, media = detail_rows(doc, trace, kind), [], {}
+    entries = detail_entries(doc, trace, kind, rows)
     scopes = detail_scope(doc, trace, kind)
     boxes = {name: detail_boxes(sk, trace, kind) for name, sk in scopes.items()}
     for number, name in enumerate(scopes):
         clip = doc['clips'][name]
         frames = []
         for frame in range(len(clip['frames'])):
-            original = composite(root, doc, name, frame)
+            original = composite(root, doc, name, frame, reader=reader)
             cell = Image.new('RGB', (DETAIL_CELL * len(boxes[name]), DETAIL_CELL), BG[:3])
             for col, box in enumerate(boxes[name]):
                 art = original.crop(box).resize((DETAIL_CELL, DETAIL_CELL), Image.Resampling.NEAREST)
                 cell.paste(art, (col * DETAIL_CELL, 0), art)
             # Keep every frame, including identical holds; duration is the exported FPS.
             frames.append(cell)
-        filename = f'{kind}_motion_{number:03d}.gif'
-        # Integer-centisecond GIF timing uses cumulative rounding rather than speeding up 30fps.
-        durations = [max(10, (round((i + 1) * 100 / clip['fps']) - round(i * 100 / clip['fps'])) * 10)
-                     for i in range(len(frames))]
+        media[name], durations = playback_media(clip, name, f'{kind}_motion_{number:03d}.gif')
+        filename = media[name]['file']
         frames[0].save(os.path.join(out, filename), save_all=True, append_images=frames[1:],
                        duration=durations, loop=0, disposal=2, optimize=False)
-        media[name] = dict(clip=name, file=filename, frame_count=len(frames), fps=clip['fps'],
-                           loop=bool(clip['loop']), duration_ms=sum(durations))
-    for start in range(0, len(rows), DETAIL_PER_SHEET):
-        group = rows[start:start + DETAIL_PER_SHEET]
+    for filename, group in sheet_groups(rows, kind, DETAIL_PER_SHEET):
         sheet = Image.new('RGBA', (DETAIL_CELL * MAX_POSES, (28 + 2 * DETAIL_CELL) * len(group)), BG)
         draw = ImageDraw.Draw(sheet)
-        poses = []
         for row, (name, sk, picks) in enumerate(group):
             top = row * (28 + 2 * DETAIL_CELL)
             labels = 'head context / enlarged neck root + driving bones' if kind == 'neck' else 'near hand / far hand'
             draw.text((4, top + 3), f'{name}: {labels}; PLAY {media[name]["file"]}', fill='white')
             for col, pose in enumerate(picks):
                 frame, x = pose['frame'], col * DETAIL_CELL
-                original = composite(root, doc, name, frame)
+                original = composite(root, doc, name, frame, reader=reader)
                 closeups = detail_boxes(sk, trace, kind, frame)
                 for band in range(2):
                     box = closeups[band]
@@ -171,12 +181,8 @@ def detail_sheets(root, doc, trace, out, kind):
                         bones.line((point('waist'), point('neck')), fill=(40, 235, 225), width=2)
                         sheet.alpha_composite(overlay, (x, top + 28 + DETAIL_CELL))
                     draw.text((x + 4, top + 31 + band * DETAIL_CELL), f'#{frame}', fill='white')
-                poses.append(dict(clip=name, **pose))
-        filename = f'{kind}_{len(files):02d}.png'
         sheet.convert('RGB').save(os.path.join(out, filename))
-        clips = sorted({name for name, _, _ in group})
-        files.append(dict(sheet=filename, kind=kind, clips=clips, poses=poses,
-                          playback=[media[name] for name in clips]))
+        files.append(entries[len(files)])
     return files
 
 
@@ -201,8 +207,10 @@ def silhouette(im):
     return Image.fromarray(out, "RGBA")
 
 
-def composite(root, doc, name, i):
+def composite(root, doc, name, i, *, reader=None):
     """Upper-body clips are half a character; review them on the idle legs so the pose reads."""
+    if reader is not None:
+        return reader.read(root, doc, name, i)
     path = os.path.join(root, "frames", name, f"{name}_{i:03d}.png")
     im = Image.open(path).convert("RGBA")
     c = doc["clips"][name]
@@ -232,12 +240,12 @@ def crop_box(images, size, ground_y):
     return (left, top, left + side, top + side)
 
 
-def draw_clip(sheet, d, root, doc, name, flagged, y, zoom):
+def draw_clip(sheet, d, root, doc, name, flagged, y, zoom, *, reader=None):
     c = doc["clips"][name]
     n = len(c["frames"])
     picks = pick_frames(n, flagged)
     size = doc["frame_size"]
-    images = [composite(root, doc, name, i) for i in picks]
+    images = [composite(root, doc, name, i, reader=reader) for i in picks]
     box = crop_box(images, size, int(doc["pivot"][1]))
     side = box[2] - box[0]
     d.text((4, y + 2), f"{name}  ({n}f @ {c['fps']}fps, {'loop' if c['loop'] else 'once'}, shown x{CELL / side:.1f})", fill=(255, 255, 255, 255))
@@ -273,7 +281,7 @@ def sharpest(traces, doc, joint, a, b):
     return sorted(out)
 
 
-def joint_sheet(root, doc, trace, out):
+def joint_sheet(root, doc, trace, out, *, reader=None):
     """Every joint at its worst, enlarged. Trouble at a joint only shows at its sharpest bend and is
     a few pixels across, so a full-body cell can't show it."""
     traces, unit = trace.get("traces", {}), trace.get("unit_px", 1.0)
@@ -294,7 +302,7 @@ def joint_sheet(root, doc, trace, out):
             x0, y0 = traces[name]["skeleton"][joint][frame]
             half = units * unit / 2
             box = (int(x0 - half), int(y0 - half), int(x0 + half), int(y0 + half))
-            im = composite(root, doc, name, frame).crop(box).resize((CELL, CELL), Image.NEAREST)
+            im = composite(root, doc, name, frame, reader=reader).crop(box).resize((CELL, CELL), Image.NEAREST)
             cell = Image.new("RGBA", (CELL, CELL), BG)
             cell.alpha_composite(im)
             sheet.alpha_composite(cell, (k * CELL, y + 16))
@@ -315,7 +323,7 @@ def shoulder_frames(sk):
     return sorted(picks)
 
 
-def shoulder_sheets(root, doc, trace, out, full_arms=False):
+def shoulder_sheets(root, doc, trace, out, full_arms=False, *, reader=None):
     """Shoulder connections need torso context, with both art and joint seats visible."""
     required = ("neck", "waist", "sh_n", "el_n", "sh_f", "el_f")
     if full_arms:
@@ -352,7 +360,7 @@ def shoulder_sheets(root, doc, trace, out, full_arms=False):
                 center = (pts.min(0) + pts.max(0)) / 2
                 left, top = center - side / 2
                 box = (int(left), int(top), int(left + side + 1), int(top + side + 1))
-                im = composite(root, doc, name, frame).crop(box).resize((CELL, CELL), Image.NEAREST)
+                im = composite(root, doc, name, frame, reader=reader).crop(box).resize((CELL, CELL), Image.NEAREST)
                 cell = Image.new("RGBA", im.size, BG)
                 cell.alpha_composite(im)
                 sheet.alpha_composite(cell, (col * CELL, y + 20))
@@ -452,13 +460,12 @@ def pelvic_rows(doc, trace):
     return rows
 
 
-def pelvic_sheets(root, doc, trace, out):
+def pelvic_sheets(root, doc, trace, out, *, reader=None):
     """Enlarged waist/hip/inner-thigh art followed by the exact rendered bones."""
     files, rows = [], pelvic_rows(doc, trace)
     unit = float(trace.get("unit_px", 1))
     per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
-    for start in range(0, len(rows), per_sheet):
-        group = rows[start:start + per_sheet]
+    for filename, group in sheet_groups(rows, 'hips', per_sheet):
         sheet = Image.new("RGBA", (PELVIS_CELL * MAX_POSES, (28 + 2 * PELVIS_CELL) * len(group)), BG)
         draw = ImageDraw.Draw(sheet)
         evidence = []
@@ -475,7 +482,7 @@ def pelvic_sheets(root, doc, trace, out):
                 side = max(float(max(high - low)) + 2 * pad, unit * 38, 24)
                 center = (low + high) / 2
                 box = (int(center[0] - side / 2), int(center[1] - side / 2), int(center[0] + side / 2 + 1), int(center[1] + side / 2 + 1))
-                im = composite(root, doc, name, frame).crop(box).resize((PELVIS_CELL, PELVIS_CELL), Image.NEAREST)
+                im = composite(root, doc, name, frame, reader=reader).crop(box).resize((PELVIS_CELL, PELVIS_CELL), Image.NEAREST)
                 cell = Image.new("RGBA", im.size, BG)
                 checker = ImageDraw.Draw(cell)
                 for yy in range(0, PELVIS_CELL, 16):
@@ -497,7 +504,6 @@ def pelvic_sheets(root, doc, trace, out):
                 sheet.alpha_composite(overlay, (x, top + 28 + PELVIS_CELL))
                 draw.text((x + 4, top + 16), f"#{frame}  {pose['reasons'][0]}", fill="white")
                 evidence.append(dict(clip=name, frame=frame, reasons=pose["reasons"], crop=list(box)))
-        filename = f"hips_{len(files):02d}.png"
         sheet.convert("RGB").save(os.path.join(out, filename))
         files.append(dict(sheet=filename, kind="pelvis", clips=sorted({name for name, _, _ in group}), poses=evidence))
     return files
@@ -519,11 +525,10 @@ def garment_rows(doc, trace):
     return rows
 
 
-def garment_sheets(root, doc, trace, out):
+def garment_sheets(root, doc, trace, out, *, reader=None):
     files,rows = [],garment_rows(doc,trace)
     unit = float(trace.get('unit_px',1))
-    for start in range(0,len(rows),2):
-        group = rows[start:start+2]
+    for filename, group in sheet_groups(rows, 'garment_edges', 2):
         sheet = Image.new('RGBA',(PELVIS_CELL*MAX_POSES,(PELVIS_CELL+28)*len(group)),BG)
         draw = ImageDraw.Draw(sheet);evidence = []
         for row,(name,sk,poses) in enumerate(group):
@@ -537,12 +542,11 @@ def garment_sheets(root, doc, trace, out):
                 center = (low+high)/2
                 box = [int(center[0]-side/2),int(center[1]-side/2),
                        int(center[0]+side/2+1),int(center[1]+side/2+1)]
-                art = composite(root,doc,name,frame).crop(box).resize((PELVIS_CELL,PELVIS_CELL),Image.NEAREST)
+                art = composite(root,doc,name,frame,reader=reader).crop(box).resize((PELVIS_CELL,PELVIS_CELL),Image.NEAREST)
                 cell = Image.new('RGBA',art.size,(142,180,212,255));cell.alpha_composite(art)
                 sheet.alpha_composite(cell,(col*PELVIS_CELL,top+28))
                 draw.text((col*PELVIS_CELL+4,top+16),f'#{frame}',fill='white')
                 evidence.append(dict(clip=name,frame=frame,reasons=pose['reasons'],crop=box))
-        filename = f'garment_edges_{len(files):02d}.png'
         sheet.convert('RGB').save(os.path.join(out,filename))
         files.append(dict(sheet=filename,kind='pelvis',clips=sorted({n for n,_,_ in group}),poses=evidence))
     return files
@@ -560,20 +564,17 @@ def run_support_poses(doc):
 
 
 def run_support_media(doc):
-    from sprite_anim.export import gif_durations
-    meta = doc['clips']['run'];count = len(meta['frames'])
-    return dict(clip='run',file='run_support_motion_000.gif',frame_count=count,
-                fps=meta['fps'],loop=bool(meta['loop']),
-                duration_ms=sum(gif_durations(count,meta['fps'],meta.get('frame_multiple',1))))
+    meta = doc['clips']['run']
+    return playback_media(meta, 'run', 'run_support_motion_000.gif', meta.get('frame_multiple', 1))[0]
 
 
-def run_support_sheets(root, doc, trace, out):
+def run_support_sheets(root, doc, trace, out, *, reader=None):
     """Complete fixed-canvas playback plus actual silhouette/hip height tracks."""
     if not run_support_required(doc,trace):
         return []
     from sprite_anim.export import gif_durations
     meta = doc['clips']['run'];count = len(meta['frames'])
-    frames = [composite(root,doc,'run',i) for i in range(count)]
+    frames = [composite(root,doc,'run',i,reader=reader) for i in range(count)]
     top = np.array([np.flatnonzero((np.asarray(f)[...,3]>=128).any(1))[0] for f in frames])
     sk = trace['traces']['run']['skeleton']
     hip = np.array(sk['hip'])[:,1]
@@ -636,11 +637,8 @@ def selected_clips(doc, qa):
 
 def carry_media(doc,name,index):
     clip=doc['clips'][name];count=len(clip['frames'])
-    durations=[max(10,(round((i+1)*100/clip['fps'])-round(i*100/clip['fps']))*10) for i in range(count)]
-    if clip.get('frame_multiple')==2 and count%2==0:
-        durations=durations[:count//2]*2
-    return dict(clip=name,file=f'carry_motion_{index:03d}.gif',frame_count=count,fps=clip['fps'],
-                loop=bool(clip['loop']),duration_ms=sum(durations)),durations
+    parts = 2 if clip.get('frame_multiple')==2 and count%2==0 else 1
+    return playback_media(clip, name, f'carry_motion_{index:03d}.gif', parts)
 
 
 def carry_entries(doc,trace):
@@ -653,11 +651,11 @@ def carry_entries(doc,trace):
             for i,(name,clip) in enumerate(doc['clips'].items())]
 
 
-def carry_sheets(root,doc,trace,out):
+def carry_sheets(root,doc,trace,out, *, reader=None):
     entries=carry_entries(doc,trace)
     for index,entry in enumerate(entries):
         name=entry['clips'][0];sk=trace['traces'][name]['skeleton']
-        frames=[composite(root,doc,name,p['frame']) for p in entry['poses']]
+        frames=[composite(root,doc,name,p['frame'],reader=reader) for p in entry['poses']]
         bottom=int(max(p[1] for p in sk['hip'])+2*trace['unit_px'])
         bounds=[im.crop((0,0,im.width,min(im.height,bottom))).getbbox() for im in frames]
         if any(b is None for b in bounds):
@@ -722,11 +720,43 @@ def expected_sheets(doc, trace, qa, root=None):
         expected.add('run_support_00.png')
     expected.update(row['sheet'] for row in carry_entries(doc,trace))
     for kind in ('neck', 'hands'):
-        count = len(detail_rows(doc, trace, kind))
-        expected.update(f'{kind}_{i:02d}.png' for i in range((count + DETAIL_PER_SHEET - 1) // DETAIL_PER_SHEET))
+        expected.update(entry['sheet'] for entry in detail_entries(doc, trace, kind))
     if root is not None:
         expected.update(entry["sheet"] for entry in binding_sheets(root))
     return expected
+
+
+def build_sheets(root, doc, trace, qa, out):
+    """Create the same sheets while decoding shared input frames once per build."""
+    with ReviewFrames(root, doc, composite) as reader:
+        names = selected_clips(doc, qa)
+
+        index = []
+        for s in range(0, len(names), PER_SHEET):
+            group = names[s:s + PER_SHEET]
+            sheet = Image.new("RGBA", (CELL * MAX_POSES, (16 + CELL * 2) * len(group)), BG)
+            d = ImageDraw.Draw(sheet)
+            y = 0
+            for n in group:
+                flagged = {int(k) for k in qa.get(n, {}).get("flags", {})}
+                y = draw_clip(sheet, d, root, doc, n, flagged, y, 1, reader=reader)
+            fn = f"sheet_{len(index):02d}.png"
+            sheet.convert("RGB").save(os.path.join(out, fn))
+            index.append(dict(sheet=fn, clips=group))
+        if trace:
+            fn = joint_sheet(root, doc, trace, out, reader=reader)
+            if fn:     # listed like any sheet, so --record refuses a verdict that skips it
+                index.append(dict(sheet=fn, clips=["joints"]))
+            index.extend(shoulder_sheets(root, doc, trace, out, reader=reader))
+            index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True, reader=reader))
+            index.extend(pelvic_sheets(root, doc, trace, out, reader=reader))
+            index.extend(garment_sheets(root,doc,trace,out,reader=reader))
+            index.extend(run_support_sheets(root,doc,trace,out,reader=reader))
+            index.extend(carry_sheets(root,doc,trace,out,reader=reader))
+            for kind in ('neck', 'hands'):
+                index.extend(detail_sheets(root, doc, trace, out, kind, reader=reader))
+        index.extend(binding_sheets(root))
+    return index, names
 
 
 def build(root):
@@ -751,33 +781,7 @@ def build(root):
     for old in (*glob.glob(os.path.join(out, "*.png")), *glob.glob(os.path.join(out, "*_motion_*.gif"))):
         os.remove(old)
 
-    names = selected_clips(doc, qa)
-
-    index = []
-    for s in range(0, len(names), PER_SHEET):
-        group = names[s:s + PER_SHEET]
-        sheet = Image.new("RGBA", (CELL * MAX_POSES, (16 + CELL * 2) * len(group)), BG)
-        d = ImageDraw.Draw(sheet)
-        y = 0
-        for n in group:
-            flagged = {int(k) for k in qa.get(n, {}).get("flags", {})}
-            y = draw_clip(sheet, d, root, doc, n, flagged, y, 1)
-        fn = f"sheet_{len(index):02d}.png"
-        sheet.convert("RGB").save(os.path.join(out, fn))
-        index.append(dict(sheet=fn, clips=group))
-    if trace:
-        fn = joint_sheet(root, doc, trace, out)
-        if fn:     # listed like any sheet, so --record refuses a verdict that skips it
-            index.append(dict(sheet=fn, clips=["joints"]))
-        index.extend(shoulder_sheets(root, doc, trace, out))
-        index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True))
-        index.extend(pelvic_sheets(root, doc, trace, out))
-        index.extend(garment_sheets(root,doc,trace,out))
-        index.extend(run_support_sheets(root,doc,trace,out))
-        index.extend(carry_sheets(root,doc,trace,out))
-        for kind in ('neck', 'hands'):
-            index.extend(detail_sheets(root, doc, trace, out, kind))
-    index.extend(binding_sheets(root))
+    index, names = build_sheets(root, doc, trace, qa, out)
     value = dict(schema_version=REVIEW_SCHEMA, sheets=index, required_sheets=sorted(expected_sheets(doc, trace, qa, root)),
                  skipped=sorted(set(doc["clips"]) - set(names)),
                  qa_flags={n: qa[n]["flags"] for n in names if qa.get(n, {}).get("flags")})
@@ -786,7 +790,7 @@ def build(root):
     value["review_id"] = review_id(review_assets(root))
     with open(os.path.join(out, "index.json"), "w", encoding="utf-8") as fh:
         json.dump(value, fh, ensure_ascii=False, indent=1)
-    template = dict(reviewer="", review_id=review_id(review_assets(root)), sheets={
+    template = dict(reviewer="", review_id=value['review_id'], sheets={
         e["sheet"]: dict(verdict="fail", checks={name: dict(status="pending", evidence="", **(
             {"observations": [dict(clip=p["clip"], frame=p["frame"], evidence="") for p in e.get("poses", [])]}
             if name in POSE_CHECKS else {}), **(
@@ -901,18 +905,16 @@ def validate_index(root, index):
             raise ValueError(f"missing required review sheet: {name}")
     rows = pelvic_rows(doc, trace)
     per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
-    for start in range(0, len(rows), per_sheet):
-        name = f"hips_{start // per_sheet:02d}.png"
+    for name, group in sheet_groups(rows, 'hips', per_sheet):
         entry = next(row for row in entries if row["sheet"] == name)
-        want = [(clip, pose["frame"], pose["reasons"]) for clip, _, poses in rows[start:start + per_sheet] for pose in poses]
+        want = [(p['clip'], p['frame'], p['reasons']) for p in pose_coverage(group)]
         got = [(pose["clip"], pose["frame"], pose["reasons"]) for pose in entry.get("poses", [])]
         if got != want:
             raise ValueError(f"{name}: missing or altered required pelvis pose coverage")
     rows = garment_rows(doc,trace)
-    for start in range(0,len(rows),2):
-        name = f'garment_edges_{start//2:02d}.png'
+    for name, group in sheet_groups(rows, 'garment_edges', 2):
         entry = next(row for row in entries if row['sheet']==name)
-        want = [(clip,p['frame'],p['reasons']) for clip,_,poses in rows[start:start+2] for p in poses]
+        want = [(p['clip'], p['frame'], p['reasons']) for p in pose_coverage(group)]
         got = [(p['clip'],p['frame'],p['reasons']) for p in entry.get('poses',[])]
         if got != want:
             raise ValueError(f'{name}: missing or altered required garment-edge pose coverage')
@@ -928,26 +930,16 @@ def validate_index(root, index):
         if entry!=required or not os.path.isfile(os.path.join(root,'review',required['playback'][0]['file'])):
             raise ValueError('missing or altered complete source-carry visual review')
     for kind in ('neck', 'hands'):
-        rows = detail_rows(doc, trace, kind)
-        scope = list(detail_scope(doc, trace, kind))
-        for start in range(0, len(rows), DETAIL_PER_SHEET):
-            name = f'{kind}_{start // DETAIL_PER_SHEET:02d}.png'
+        for required in detail_entries(doc, trace, kind):
+            name = required['sheet']
             entry = next(row for row in entries if row['sheet'] == name)
-            group = rows[start:start + DETAIL_PER_SHEET]
-            want = [dict(clip=clip, **pose) for clip, _, poses in group for pose in poses]
-            if entry.get('poses') != want:
+            if entry.get('poses') != required['poses']:
                 raise ValueError(f'{name}: missing or altered required {kind} pose coverage')
-            expected_media = []
-            for clip in sorted({clip for clip, _, _ in group}):
-                meta = doc['clips'][clip]
-                count = len(meta['frames'])
-                filename = f'{kind}_motion_{scope.index(clip):03d}.gif'
-                expected_media.append(dict(clip=clip, file=filename, frame_count=count, fps=meta['fps'],
-                                           loop=bool(meta['loop']), duration_ms=sum(
-                    max(10, (round((i + 1) * 100 / meta['fps']) - round(i * 100 / meta['fps'])) * 10) for i in range(count))))
+            for media in required['playback']:
+                filename = media['file']
                 if not os.path.isfile(os.path.join(root, 'review', filename)):
                     raise ValueError(f'{name}: missing required playback: {filename}')
-            if entry.get('playback') != expected_media:
+            if entry.get('playback') != required['playback']:
                 raise ValueError(f'{name}: missing or altered required playback coverage')
     return {entry["sheet"]: entry for entry in entries}
 
