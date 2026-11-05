@@ -131,16 +131,30 @@ Look at each clip for these, in this order. Name the clip and frame when somethi
 
 - A zero-drift connection or positive triangle area is not an anatomy verdict. Positive triangles
   can be nearly flat; a rigid thigh can also follow the wrong parent's rotation.
-- Compare the same clip/frame before and after the change at equal world/pixel scale. Keep whole
+- Compare the same clip/frame before and after the change at equal world/pixel scale. When a
+  cadence change alters frame count, compare nearby normalized cycle phases and label both frame
+  numbers; equal frame indices then no longer mean equal poses. Keep whole
   thighs and knees visible; the previous waist-only crop hid thigh regressions.
 - `limb_shape_preservation` is mandatory for every hips-sheet pose. Inspect thickness, thigh
   direction, knee location, shorts/trouser hems and the full playback. Do not batch-generate
   passing visual claims from a checklist template.
-- Current basic exports require `registered_articulations_v2` evidence. The torso's seam is shared;
-  thigh caps rotate with their own bones. Their opaque shaft Jacobians are checked outside the
+- Current basic exports require `registered_garment_surfaces_v3` evidence. The original hidden
+  waist rim follows its garment owner; a free deformation band connects it to the moving thigh.
+  The opaque shaft Jacobians are checked outside the
   knee envelope (two local knee radii): min singular scale 0.25, max 3, signed area ratio 0.15–3;
   over 1% distressed shaft material is a blocker. These conservative limits identify catastrophic
   collapse/stretch, not every unnatural silhouette. Existing fold/contact limits remain intact.
+- Apply those same strain limits separately to the waist transition; the previous thigh ROI
+  excluded exactly that region. Native alpha checks also require every originally hidden source
+  cut-edge point to remain under the recorded later garment surfaces, within one output pixel.
+  A rotating cap is not sufficient proof that a trouser rim or pocket top remains hidden.
+- Complete `hidden_garment_edges` and `motion_style_match` for each required pose. Open the blue
+  `garment_edges_*.png` waist macros, where a small folded corner is large enough to inspect.
+- The explicit `ordinary_run_v1` profile is body-scaled; ordinary-run evidence limits stride to
+  1 leg length, lift to 0.3 legs, horizontal ankle separation to 1 leg, thigh angle to 65 degrees,
+  torso lean to 15 degrees and bob to 0.05 legs. These are conservative bounds for ordinary running,
+  not universal limits for a sprint or an action pose. Watch the actual cycle and compare the user's
+  intent; a fixed large-step template can pass skeletal integrity and still be the wrong motion.
 - Revoke the actual current visual pass when a user identifies an omitted defect. Preserve the
   failure and show changed-frame evidence for that same issue before accepting another result.
 

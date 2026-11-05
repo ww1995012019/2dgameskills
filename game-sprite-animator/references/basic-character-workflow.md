@@ -142,14 +142,15 @@ requires the owning job's accepted layers and unchanged `rig/character.json`; a 
 directory cannot bypass those checks. A successful numeric report is not a visual verdict, and
 calling a failed output a prototype does not authorize delivery or publication.
 
-Current basic bindings preserve registered hip-core placement and use `registered_pelvis_v2`.
-Only the lower torso shares the pelvis surface. Each thigh has an anatomical rotating socket,
-with the source rest joint matching Body's measured seat, and a cap following its own first bone.
-Knee radii use local opaque cross-sections; shorts/boots must not enlarge the knee bend.
-The v1 shared-surface rule for whole thigh roots was wrong: its positive-area solver could flatten
-a thigh while reporting zero drift. That rule is not a valid release check. v2 separately checks
-rotation-covariant cap points, local parent contact, and opaque thigh-shaft strain on every frame.
-It moves geometry, never paints a seam cover. All limb attachment checks are mandatory.
+Current basic bindings preserve registered hip-core placement and use `registered_garment_v3`.
+The original hidden waistband rim shares the garment's body transform. A constrained free cloth
+band connects it to the thigh without pinning the whole thigh. ARAP rotations and bounded local
+strain projection preserve material while both ends stay registered; independent QA still rejects
+folding or compression. Source rest joints match actual measured seats and knee radii use local width.
+v1 flattened thighs by freezing too much material; v2 allowed hidden waist cuts to rotate out of
+the jacket. Both acceptance conclusions have been revoked. The current checks include the complete
+source-hidden proximal boundary, actual final occluder alpha, waist-band AND thigh-shaft strain,
+hip registration and isolated limb support. No source texture is repainted or covered with a patch.
 The source-valid interior core check excludes reference background instead of pulling pants
 upward to fill an imaginary constant-width body. Missing true source fabric still fails binding.
 
@@ -159,6 +160,16 @@ frame rather than only extrema. Compare garment height and both waist edges agai
 `binding_reference.png`; complete `source_garment_registration` and `limb_shape_preservation` as
 well as continuity/alignment. The crops include full thighs and knees. Compare identical frame
 times and equal pixel/world scale against the previous result before accepting a seam repair.
+If cadence changes the frame count, use nearby normalized cycle phases, label both frame numbers,
+and keep world scale identical; do not describe those comparisons as identical timestamps.
+Inspect `garment_edges_*.png` waist macros separately and complete `hidden_garment_edges` and
+`motion_style_match`; an intact alpha silhouette can still show an exposed internal cut.
+
+Basic ordinary running uses `gait.run.profile = ordinary_run_v1`, derived from leg length:
+stride 0.75 legs, lift 0.22 legs, period 0.7 seconds at default speed, duty 0.44. Explicit planar
+hip motion preserves a single garment owner. Native measurements and the recorded output scope
+must include every delivered run frame. This profile is not a sprint; matching the user's motion
+intent, natural recovery and cloth appearance still require full playback review.
 
 ## 4. Bounded repairs
 

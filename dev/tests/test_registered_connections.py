@@ -23,7 +23,7 @@ from sprite_anim.art import Canvas
 from sprite_anim.rig import full_pose,solve
 from sprite_anim.motions import Proc
 from sprite_anim.render import GROUND_FRAC
-from sprite_anim.integrity import connection_report_faults,THIGH_DEFORMATION_LIMITS
+from sprite_anim.integrity import connection_report_faults,THIGH_DEFORMATION_LIMITS,GARMENT_EDGE_LIMITS
 
 
 class RegisteredConnections(unittest.TestCase):
@@ -139,12 +139,15 @@ class ConnectionEvidence(unittest.TestCase):
         parts=('torso','leg_near','leg_far')
         self.doc={'clips':{'idle':{'frames':[0,1]}}}
         good=dict(samples=30,bad_share=0.,min_scale=1.,max_scale=1.,min_area=1.,max_area=1.)
-        self.trace={'connection_review_required':True,'connections':dict(method='registered_articulations_v2',shape_limits=THIGH_DEFORMATION_LIMITS.copy(),
+        self.trace={'connection_review_required':True,'connections':dict(method='registered_garment_surfaces_v3',shape_limits=THIGH_DEFORMATION_LIMITS.copy(),edge_limits=GARMENT_EDGE_LIMITS.copy(),
             bindings={n:{'source_points':[[2,2],[4,2],[2,5],[4,5]],'parent':'hips',
-                         'method':'registered_pelvis_overlap' if n=='torso' else 'registered_articulated_socket_v2',
-                         **({} if n=='torso' else {'source_joint':[3,3]})} for n in parts},
+                         'method':'registered_pelvis_overlap' if n=='torso' else 'registered_garment_rim_v1',
+                         **({} if n=='torso' else {'source_joint':[3,3],'origin':[3,3],'up':[0.,-1.],
+                            'attachment_depth':0.,'fade':12.,'occluders':['hips','torso'] if n=='leg_near' else ['leg_near','hips','torso']})} for n in parts},
             clips={'idle':{'frames':2,'parts':{n:[0.,0.] for n in parts},
-                           'shape_parts':{n:[good.copy(),good.copy()] for n in ('leg_near','leg_far')}}},frame_hashes={'idle':hashes})}
+                           'shape_parts':{n:[good.copy(),good.copy()] for n in ('leg_near','leg_far')},
+                           'garment_shapes':{n:[good.copy(),good.copy()] for n in ('leg_near','leg_far')},
+                           'edge_visibility':{n:[dict(samples=4,exposed=0,exposed_indices=[]) for _ in range(2)] for n in ('leg_near','leg_far')}}},frame_hashes={'idle':hashes})}
         reference=self.root/'binding_reference.png';Image.new('RGBA',(32,40),(40,80,130,255)).save(reference)
         self.trace['connections']['source_reference_sha256']=hashlib.sha256(reference.read_bytes()).hexdigest()
 
@@ -158,6 +161,24 @@ class ConnectionEvidence(unittest.TestCase):
 
     def test_old_welded_leg_evidence_is_not_current_acceptance(self):
         self.trace['connections']['method']='registered_pelvis_overlap'
+        self.assertTrue(self.faults())
+
+    def test_rotating_socket_evidence_cannot_omit_hidden_clothing_edges(self):
+        self.trace['connections']['method']='registered_articulations_v2'
+        self.assertTrue(self.faults())
+
+    def test_zero_drift_does_not_clear_an_exposed_original_cut_edge(self):
+        self.trace['connections']['clips']['idle']['edge_visibility']['leg_far'][1].update(
+            exposed=1,exposed_indices=[2])
+        faults=self.faults()
+        self.assertEqual([(f['clip'],f['frame'],f['part']) for f in faults],[('idle',1,'leg_far')])
+        self.assertIn('hidden garment',faults[0]['what'])
+
+    def test_waist_deformation_cannot_be_omitted_or_cleared_by_a_good_thigh(self):
+        row=self.trace['connections']['clips']['idle']
+        row['garment_shapes']['leg_near'][1].update(bad_share=.4,min_scale=.02)
+        self.assertTrue(any(f['frame']==1 and 'waist garment' in f['what'] for f in self.faults()))
+        del row['garment_shapes']
         self.assertTrue(self.faults())
 
     def test_a_shared_surface_cannot_be_mislabelled_as_a_rotating_thigh(self):

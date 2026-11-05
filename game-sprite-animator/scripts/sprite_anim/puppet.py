@@ -164,6 +164,135 @@ def joint_socket_binding(child, parent):
                 source_joint=root.tolist(),source_points=samples.tolist())
 
 
+def mask_interior(mask, passes=1):
+    """Four-neighbour source interior; preserve originally hidden cut edges."""
+    result = mask.copy()
+    for _ in range(passes):
+        p = np.pad(result, 1)
+        result = p[1:-1,1:-1]&p[:-2,1:-1]&p[2:,1:-1]&p[1:-1,:-2]&p[1:-1,2:]
+    return result
+
+
+def hidden_garment_edges(child, occluders, up):
+    """Actual proximal alpha boundaries hidden by later source surfaces.
+
+    A waistband's internal cut must stay inside the garment. Its own rigid
+    thigh rotation is insufficient evidence: that rotation can expose it.
+    """
+    mask = np.asarray(child.image)[...,3] > 128
+    y,x = np.nonzero(mask&~mask_interior(mask))
+    points = np.column_stack((x,y))+child.offset
+    proximal = (points-child.rest[0])@up >= -GRID
+    covered = np.zeros(len(points),bool)
+    for parent in occluders:
+        alpha = mask_interior(np.asarray(parent.image)[...,3]>250,2)
+        xy = np.rint(points-parent.offset).astype(int)
+        inside = ((xy[:,0]>=0)&(xy[:,1]>=0)
+                  &(xy[:,0]<alpha.shape[1])&(xy[:,1]<alpha.shape[0]))
+        covered[inside] |= alpha[xy[inside,1],xy[inside,0]]
+    points = points[proximal&covered]
+    if len(points) < 4:
+        raise ValueError(f'garment rim: {child.name} lacks an original hidden proximal edge')
+    return dict(method='registered_garment_rim_v1',parent='hips',
+                source_joint=child.rest[0].tolist(),source_points=points.tolist(),
+                occluders=[p.name for p in occluders])
+
+
+class GarmentBand:
+    """Constrained ARAP on the free cloth band between waist and thigh.
+
+    The hidden rim and distal leg positions are fixed. Local rotations and a
+    Laplacian solve preserve material instead of flattening inverted triangles
+    to a tiny positive area. Existing fold/strain checks still reject failures.
+    """
+    def __init__(self, layer, weights):
+        width = layer.vx.shape[1]
+        j,i = layer.cells.T
+        a = j*width+i; b = a+1; c = a+width; d = c+1
+        edges = np.concatenate([np.stack(pair,1) for pair in
+                                ((a,b),(a,c),(b,c),(b,d),(c,d))])
+        edges = np.unique(np.sort(edges,axis=1),axis=0)
+        self.i,self.j = np.concatenate((edges,edges[:,::-1])).T
+        source = np.stack((layer.vx,layer.vy),-1).reshape(-1,2)
+        self.edges = source[self.i]-source[self.j]
+        self.count = len(source)
+        self.free = np.flatnonzero(((weights>1e-12)&(weights<1-1e-12)&layer.used).ravel())
+        lookup = np.full(self.count,-1)
+        lookup[self.free] = np.arange(len(self.free))
+        degree = np.bincount(self.i,minlength=self.count)
+        matrix = np.diag(degree[self.free].astype(float))
+        u,v = lookup[self.i],lookup[self.j]
+        both = (u>=0)&(v>=0)
+        np.add.at(matrix,(u[both],v[both]),-1.)
+        self.inverse = np.linalg.inv(matrix) if len(self.free) else None
+        boundary = (u>=0)&(v<0)
+        self.boundary_free,self.boundary_fixed = u[boundary],self.j[boundary]
+        triangles = np.concatenate((np.stack((a,b,c),1),np.stack((d,c,b),1)))
+        active = (lookup[triangles]>=0).any(1)
+        colors = np.concatenate((2*(j%2)+i%2,4+2*(j%2)+i%2))[active]
+        triangles = triangles[active]
+        self.triangle_groups = [np.flatnonzero(colors==color) for color in range(8)]
+        self.triangles = triangles
+        self.triangle_source = source[triangles]
+        se = np.stack((self.triangle_source[:,1]-self.triangle_source[:,0],
+                       self.triangle_source[:,2]-self.triangle_source[:,0]),-1)
+        self.triangle_inverse = np.linalg.inv(se)
+        self.movable = np.zeros(self.count,bool)
+        self.movable[self.free] = True
+
+    def solve(self, vertices, scale):
+        if not len(self.free):
+            return vertices
+        flat = vertices.reshape(-1,2).copy()
+        fixed = np.zeros((len(self.free),2))
+        np.add.at(fixed,self.boundary_free,flat[self.boundary_fixed])
+        edge = self.edges*scale
+        for _ in range(48):
+            delta = flat[self.i]-flat[self.j]
+            dot,cross = np.zeros(self.count),np.zeros(self.count)
+            np.add.at(dot,self.i,np.sum(delta*edge,axis=1))
+            np.add.at(cross,self.i,delta[:,1]*edge[:,0]-delta[:,0]*edge[:,1])
+            angle = np.arctan2(cross,dot)
+            co,si = np.cos(angle),np.sin(angle)
+            c,s = (co[self.i]+co[self.j])*.5,(si[self.i]+si[self.j])*.5
+            target = np.stack((c*edge[:,0]-s*edge[:,1],s*edge[:,0]+c*edge[:,1]),1)
+            rhs = np.zeros((self.count,2))
+            np.add.at(rhs,self.i,target)
+            flat[self.free] = self.inverse@(rhs[self.free]+fixed)
+        # ARAP alone can converge to a folded local minimum in a wide garment.
+        # Project actual material strain as well, keeping both boundary owners
+        # fixed. These are solver targets; the independent QA limits are unchanged.
+        for _ in range(80):
+            changed = False
+            # Same-colour triangles share no vertices. Sequential colour groups
+            # avoid cancelling opposite corrections at a compressed cloth fold.
+            for group in self.triangle_groups:
+                if not len(group):
+                    continue
+                ids = self.triangles[group]
+                points = flat[ids]
+                de = np.stack((points[:,1]-points[:,0],points[:,2]-points[:,0]),-1)
+                jac = de@self.triangle_inverse[group]/scale
+                u,s,vh = np.linalg.svd(jac)
+                reflected = np.linalg.det(u@vh)<0
+                bad = reflected|(s[:,1]<.5)|(s[:,0]>1.8)
+                if not bad.any():
+                    continue
+                changed = True
+                u,s,vh = u[bad],s[bad],vh[bad]
+                u[reflected[bad],:,-1] *= -1
+                corrected = (u*np.clip(s,.6,1.6)[:,None,:])@vh
+                source = self.triangle_source[group[bad]]
+                target = ((source-source.mean(1,keepdims=True))*scale)@corrected.transpose(0,2,1)
+                target += points[bad].mean(1,keepdims=True)
+                ids = ids[bad]
+                delta = (target-points[bad])*self.movable[ids][...,None]
+                flat[ids.ravel()] += .8*delta.reshape(-1,2)
+            if not changed:
+                break
+        return flat.reshape(vertices.shape)
+
+
 def corner_run(a, b, c, radius, reach):
     """How far along each bone the arc at corner b starts. A sharper corner needs a longer run to
     keep the same radius; a limb half as wide as that radius would otherwise pinch to a point."""
@@ -240,6 +369,7 @@ class Layer:
         self.neck_skin = data.get('neck_skin')
         self.pelvis_skin = data.get('pelvis_skin')
         self.pelvis_joint = data.get('pelvis_joint')
+        self.pelvis_garment = data.get('pelvis_garment')
         im = Image.open(os.path.join(base, data["image"])).convert("RGBA")
         self.offset = np.array(data.get("offset", (0, 0)), dtype=np.float64)
         self.image = im
@@ -583,6 +713,7 @@ class Puppet:
         self.neck_bindings = {}
         self.pelvis_bindings = {}
         self.socket_bindings = {}
+        self.garment_bindings = {}
         indexed = {layer.name: layer for layer in self.layers}
         for layer in self.layers:
             if layer.neck_skin:
@@ -605,6 +736,38 @@ class Puppet:
                         or not layer.root_lock or layer.pelvis_skin):
                     raise ValueError('articulated pelvis requires independent, root-locked thigh tubes')
                 self.socket_bindings[layer.name] = (parent,None,joint_socket_binding(layer,parent))
+        garment = [layer for layer in self.layers if layer.pelvis_garment]
+        if garment:
+            if {layer.name for layer in garment} != {'leg_near','leg_far'}:
+                raise ValueError('garment rim requires both registered leg layers')
+            parent = indexed.get('hips')
+            if parent is None or parent.kind != 'rigid':
+                raise ValueError('garment rim requires the registered rigid hips surface')
+            up = self.joints['waist']-self.joints['hip']
+            up /= np.linalg.norm(up)
+            reports = {}
+            for layer in garment:
+                if (layer.kind != 'tube' or not layer.root_lock or layer.pelvis_skin
+                        or layer.pelvis_joint or layer.pelvis_garment != 'hips'):
+                    raise ValueError('garment rim requires independent thigh tubes and one waist owner')
+                # Keep the complete physical hip registration preflight.
+                joint_socket_binding(layer,parent)
+                later = self.layers[self.layers.index(layer)+1:]
+                occluders = [p for p in later if p.name in ('leg_near','hips','torso')]
+                reports[layer.name] = hidden_garment_edges(layer,occluders,up)
+            points = np.vstack([r['source_points'] for r in reports.values()])
+            origin = self.joints['hip']
+            attach = float(((points-origin)@(-up)).max()+GRID*np.abs(up).sum())
+            # A narrow transition cannot turn material as wide as a trouser leg.
+            fade = max(2*GRID,2*max(l.radius for l in garment),
+                       .5*min(np.linalg.norm(l.rest[1]-l.rest[0]) for l in garment))
+            for layer in garment:
+                source = np.stack((layer.vx,layer.vy),-1)+layer.offset
+                s = np.clip(((source-origin)@(-up)-attach)/fade,0.,1.)
+                weights = 1-s*s*(3-2*s)
+                report = dict(reports[layer.name],origin=origin.tolist(),up=up.tolist(),
+                              attachment_depth=attach,fade=fade)
+                self.garment_bindings[layer.name] = (parent,weights,report,GarmentBand(layer,weights))
 
     def palette(self):
         cols = set()
@@ -618,7 +781,10 @@ class Puppet:
         alias fine lines; this keeps them, and the warp then moves it by less than a pixel's worth."""
         key = (layer.name, round(scale, 3))
         if key not in self.mips:
-            k = min(1.0, scale * 1.15)
+            # A rigid fingertip's fine lines must survive the final SS downsample.
+            # Avoid an extra early low-resolution filter for preserved hand art.
+            preserve_hand = getattr(layer,'tip_lock',False) and getattr(layer,'source_frame',False)
+            k = min(1.0, scale * (2.0 if preserve_hand else 1.15))
             a = np.asarray(layer.image, dtype=np.float32) / 255
             a[..., :3] *= a[..., 3:]
             size = max(2, round(a.shape[1] * k)), max(2, round(a.shape[0] * k))
@@ -708,6 +874,17 @@ class Puppet:
                     if layer.foot:
                         pinned = pinned | (layer.foot_w >= 1-1e-12)
                     verts = untangle(verts, layer.cells, pinned=pinned)
+            if layer.name in getattr(self,'garment_bindings',{}):
+                parent,weights,_,band = self.garment_bindings[layer.name]
+                source = np.stack((layer.vx,layer.vy),-1)+layer.offset
+                if sel is not None:
+                    source,weights = source[sel],weights[sel]
+                attached = rigid(source[...,0],source[...,1],parent.anchor,
+                                 self.carried(parent,sk,cv,scale),
+                                 math.radians(sk[parent.follow[1]]-self.rest_angles[parent.follow[1]]),scale)
+                verts = verts*(1-weights[...,None])+attached*weights[...,None]
+                if relax:
+                    verts = band.solve(verts,scale)
             if layer.name in parents:
                 cached[layer.name] = verts
             yield layer, verts[layer.used] if used_only and layer.name in parents else verts

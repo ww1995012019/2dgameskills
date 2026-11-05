@@ -53,13 +53,15 @@ cut edge, background slit, doubled trouser panel or bone emerging from the wrong
 a blocker. Mandatory `rig_alignment` and `pelvis_continuity` observations must name the actual
 clip/frame. Missing trace or missing close-up evidence cannot become a pass.
 
-Basic jobs now require `registered_pelvis_v2`: the lower torso shares the pelvis surface;
-each thigh rotates about its own registered joint. Never weld the full thigh overlap to the
-pelvis. Source rest joints and the body's joint seats must agree, and knee bend radii come from
-the knee's own opaque width, excluding wide shorts and boots. Every exported frame must have
-measured torso/hip seams and rotating thigh-cap correspondence, isolated limb attachment checks, and
-RGBA-bound evidence in `rig_trace.json`. Missing frames, missing parts, changed pixels, or a
-separation over one output pixel block QA and visual acceptance. Rebind old basic rigs.
+Basic jobs require `registered_garment_v3`. The lower torso and originally hidden waistband
+cuts share their registered garment owner; a free cloth band connects that rim to each rotating
+thigh. Rotating a whole leg cap can expose its original cut, pocket top or duplicate waistband
+even when its hip registration is exact. Do not freeze an entire thigh overlap to hide it.
+The source rest joints and actual hip seats must agree; knee radii use local opaque knee width.
+Every exported frame needs final seam/hip, thigh AND waist-band strain measurements, plus native
+alpha evidence that each originally hidden proximal edge stays under its recorded source depth
+owners. One output pixel is the fixed contact tolerance. Missing source edges, frame/part coverage,
+changed RGBA pixels or exposed internal edges block acceptance. Rebind earlier basic rigs.
 Zero drift and positive triangle winding do not establish preserved anatomy: a solver can make
 all triangles positive by flattening them. Mandatory opaque thigh-shaft strain checks measure
 thickness, stretch and area, independently of the joint rotation. Missing shape evidence also
@@ -75,6 +77,19 @@ per-frame observations. Do not batch-fill passing anatomy claims from a template
 earlier visual conclusion forward without looking at the current pixels. The hidden core must not
 be lifted or enlarged to fill pixels outside the registered source silhouette. Numeric geometry
 still does not identify a wrong opaque material, painted cut line, hand anatomy or naturalness.
+
+Also complete `hidden_garment_edges` and `motion_style_match`. Inspect the mandatory blue-background
+`garment_edges_*.png` waist macros as well as the whole thighs and knees. A black folded rim or
+loose trouser corner is a blocker even if no transparent hole appears. Compare clean art on a
+light/blue background and watch every delivered loop; bone overlays alone can hide these edges.
+
+Basic `run` uses the explicit `ordinary_run_v1` profile: stride/lift follow leg length, with a
+short airborne phase and restrained hip motion. The legacy fixed 48-unit stride/19-unit lift
+is an action-game sprint and is not the default ordinary run for measured artwork. Required
+ordinary-run evidence bounds stride, lift, foot separation, thigh angle and torso lean against
+the measured body. Those limits enforce this requested style, not all possible sprinting.
+Do not claim natural motion merely because the envelope passes; inspect the actual cadence,
+waist, leg recovery and foot support in the browser.
 
 For an external/custom atlas skin, export its **actual** source points, skin weights, per-frame
 matrices and isolated RGBA frames to a binding manifest, then run

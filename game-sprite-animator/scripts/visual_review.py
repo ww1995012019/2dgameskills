@@ -36,7 +36,8 @@ JOINTS = (("kn_n", "hip_n", "an_n"), ("kn_f", "hip_f", "an_f"), ("el_n", "sh_n",
 GROUND = (240, 184, 74, 255)
 BG = (58, 62, 74, 255)
 PELVIS_JOINTS = ("waist", "neck", "hip_n", "hip_f", "kn_n", "kn_f", "an_n", "an_f")
-PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity", "source_garment_registration", "limb_shape_preservation")
+PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity", "source_garment_registration", "limb_shape_preservation",
+                 "hidden_garment_edges", "motion_style_match")
 NECK_CHECKS = ("neck_continuity", "head_motion_naturalness")
 HAND_CHECKS = ("hand_pose_naturalness", "wrist_continuity")
 POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS
@@ -502,6 +503,51 @@ def pelvic_sheets(root, doc, trace, out):
     return files
 
 
+def garment_rows(doc, trace):
+    """Separate waist macros so full-thigh crops cannot hide small cut edges."""
+    if trace.get('connections',{}).get('method') != 'registered_garment_surfaces_v3':
+        return []
+    rows = []
+    for name,sk in humanoid_scope(doc,trace).items():
+        count = len(sk['waist'])
+        poses = {p['frame']:p for p in pelvic_frames(sk,doc['clips'][name],trace['traces'][name])}
+        for frame in (0,count-1,*(min(count-1,round(count*k/4)) for k in range(4))):
+            poses.setdefault(frame,dict(frame=frame,reasons=['waist edge / motion phase']))
+        ordered = [poses[i] for i in sorted(poses)]
+        for start in range(0,len(ordered),MAX_POSES):
+            rows.append((name,sk,ordered[start:start+MAX_POSES]))
+    return rows
+
+
+def garment_sheets(root, doc, trace, out):
+    files,rows = [],garment_rows(doc,trace)
+    unit = float(trace.get('unit_px',1))
+    for start in range(0,len(rows),2):
+        group = rows[start:start+2]
+        sheet = Image.new('RGBA',(PELVIS_CELL*MAX_POSES,(PELVIS_CELL+28)*len(group)),BG)
+        draw = ImageDraw.Draw(sheet);evidence = []
+        for row,(name,sk,poses) in enumerate(group):
+            top = row*(PELVIS_CELL+28)
+            draw.text((4,top+2),f'{name}: enlarged waistband / original hidden cut edges',fill='white')
+            for col,pose in enumerate(poses):
+                frame = pose['frame']
+                points = np.asarray([sk[k][frame] for k in ('waist','hip_n','hip_f')])
+                low,high = points.min(0),points.max(0)
+                side = max(float(max(high-low))+8*unit,20*unit,24)
+                center = (low+high)/2
+                box = [int(center[0]-side/2),int(center[1]-side/2),
+                       int(center[0]+side/2+1),int(center[1]+side/2+1)]
+                art = composite(root,doc,name,frame).crop(box).resize((PELVIS_CELL,PELVIS_CELL),Image.NEAREST)
+                cell = Image.new('RGBA',art.size,(142,180,212,255));cell.alpha_composite(art)
+                sheet.alpha_composite(cell,(col*PELVIS_CELL,top+28))
+                draw.text((col*PELVIS_CELL+4,top+16),f'#{frame}',fill='white')
+                evidence.append(dict(clip=name,frame=frame,reasons=pose['reasons'],crop=box))
+        filename = f'garment_edges_{len(files):02d}.png'
+        sheet.convert('RGB').save(os.path.join(out,filename))
+        files.append(dict(sheet=filename,kind='pelvis',clips=sorted({n for n,_,_ in group}),poses=evidence))
+    return files
+
+
 def selected_clips(doc, qa):
     def key(name):
         return (0 if qa.get(name, {}).get("flags") else 1, name)
@@ -550,6 +596,7 @@ def expected_sheets(doc, trace, qa, root=None):
     rows = pelvic_rows(doc, trace)
     pelvis_per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
     expected.update(f"hips_{i:02d}.png" for i in range((len(rows) + pelvis_per_sheet - 1) // pelvis_per_sheet))
+    expected.update(f'garment_edges_{i:02d}.png' for i in range((len(garment_rows(doc,trace))+1)//2))
     for kind in ('neck', 'hands'):
         count = len(detail_rows(doc, trace, kind))
         expected.update(f'{kind}_{i:02d}.png' for i in range((count + DETAIL_PER_SHEET - 1) // DETAIL_PER_SHEET))
@@ -601,6 +648,7 @@ def build(root):
         index.extend(shoulder_sheets(root, doc, trace, out))
         index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True))
         index.extend(pelvic_sheets(root, doc, trace, out))
+        index.extend(garment_sheets(root,doc,trace,out))
         for kind in ('neck', 'hands'):
             index.extend(detail_sheets(root, doc, trace, out, kind))
     index.extend(binding_sheets(root))
@@ -640,7 +688,7 @@ def checks_for_sheet(name):
         return CHECKS + NECK_CHECKS
     if name.startswith('hands_'):
         return CHECKS + HAND_CHECKS
-    return CHECKS + PELVIS_CHECKS if name.startswith("hips_") else CHECKS
+    return CHECKS + PELVIS_CHECKS if name.startswith(("hips_","garment_edges_")) else CHECKS
 
 
 def file_hash(path):
@@ -730,6 +778,14 @@ def validate_index(root, index):
         got = [(pose["clip"], pose["frame"], pose["reasons"]) for pose in entry.get("poses", [])]
         if got != want:
             raise ValueError(f"{name}: missing or altered required pelvis pose coverage")
+    rows = garment_rows(doc,trace)
+    for start in range(0,len(rows),2):
+        name = f'garment_edges_{start//2:02d}.png'
+        entry = next(row for row in entries if row['sheet']==name)
+        want = [(clip,p['frame'],p['reasons']) for clip,_,poses in rows[start:start+2] for p in poses]
+        got = [(p['clip'],p['frame'],p['reasons']) for p in entry.get('poses',[])]
+        if got != want:
+            raise ValueError(f'{name}: missing or altered required garment-edge pose coverage')
     for kind in ('neck', 'hands'):
         rows = detail_rows(doc, trace, kind)
         scope = list(detail_scope(doc, trace, kind))

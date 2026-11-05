@@ -13,6 +13,7 @@
 Thresholds and how each was set are in references/layered-art.md.
 """
 import os
+import math
 
 import numpy as np
 from PIL import Image
@@ -213,27 +214,23 @@ def check_neck(renderer, clip, n, fps):
     return []
 
 
-def thigh_strain(layer, vertices, scale):
-    """Measure opaque thigh shaft material, excluding the knee's bend envelope.
-
-    Positive triangle area alone permits arbitrarily flat or sheared artwork.
-    Singular values measure thickness/stretch independently of orientation.
-    """
-    from .integrity import THIGH_DEFORMATION_LIMITS as limits
+def material_triangles(layer, vertices):
+    """Actual source/final triangles and opaque material sample locations."""
     j,i = layer.cells.T;w = vertices.shape[1]
     triangles = np.concatenate((np.stack((j*w+i,j*w+i+1,(j+1)*w+i),-1),
         np.stack(((j+1)*w+i+1,(j+1)*w+i,j*w+i+1),-1)))
     source = (np.stack((layer.vx,layer.vy),-1)+layer.offset).reshape(-1,2)[triangles]
     dest = vertices.reshape(-1,2)[triangles]
-    centers = source.mean(1);axis = layer.rest[1]-layer.rest[0]
-    length = float(np.linalg.norm(axis));axis = axis/length
-    along = (centers-layer.rest[0])@axis/length
-    across = (centers-layer.rest[0])@np.array([-axis[1],axis[0]])
+    centers = source.mean(1)
     local = np.rint(centers-layer.offset).astype(int);alpha = np.asarray(layer.image)[...,3]
     inside = ((local[:,0]>=0)&(local[:,1]>=0)&(local[:,0]<alpha.shape[1])&(local[:,1]<alpha.shape[0]))
     solid = np.zeros(len(local),bool);solid[inside] = alpha[local[inside,1],local[inside,0]]>200
-    end = min(.75,1-limits['knee_exclusion_radii']*layer.radius/length)
-    chosen = solid&(along>=limits['root_start'])&(along<=end)&(np.abs(across)<=layer.radius*.75)
+    return source,dest,centers,solid
+
+
+def material_strain(source, dest, chosen, scale):
+    """Orientation-independent strain; positive winding alone is insufficient."""
+    from .integrity import THIGH_DEFORMATION_LIMITS as limits
     if not chosen.any():
         return dict(samples=0,bad_share=1.,min_scale=0.,max_scale=0.,min_area=0.,max_area=0.)
     se = np.stack((source[:,1]-source[:,0],source[:,2]-source[:,0]),-1)
@@ -245,6 +242,91 @@ def thigh_strain(layer, vertices, scale):
     return dict(samples=int(chosen.sum()),bad_share=round(float(bad.mean()),6),
                 min_scale=round(float(singular[:,1].min()),6),max_scale=round(float(singular[:,0].max()),6),
                 min_area=round(float(area.min()),6),max_area=round(float(area.max()),6))
+
+
+def thigh_strain(layer, vertices, scale):
+    """Opaque thigh shaft, excluding its existing two-radius knee envelope."""
+    from .integrity import THIGH_DEFORMATION_LIMITS as limits
+    source,dest,centers,solid = material_triangles(layer,vertices)
+    axis = layer.rest[1]-layer.rest[0]
+    length = float(np.linalg.norm(axis));axis = axis/length
+    along = (centers-layer.rest[0])@axis/length
+    across = (centers-layer.rest[0])@np.array([-axis[1],axis[0]])
+    end = min(.75,1-limits['knee_exclusion_radii']*layer.radius/length)
+    chosen = solid&(along>=limits['root_start'])&(along<=end)&(np.abs(across)<=layer.radius*.75)
+    return material_strain(source,dest,chosen,scale)
+
+
+def garment_strain(layer, vertices, scale, report):
+    """Also inspect the waist transition that the thigh-only ROI excluded."""
+    from .puppet import GRID
+    source,dest,centers,solid = material_triangles(layer,vertices)
+    depth = (centers-np.asarray(report['origin']))@(-np.asarray(report['up']))
+    start = report['attachment_depth']
+    chosen = solid&(depth>=start-GRID)&(depth<=start+report['fade']+GRID)
+    return material_strain(source,dest,chosen,scale)
+
+
+def garment_visibility(puppet, meshes, cv):
+    """Native final alpha coverage of originally hidden proximal cut edges.
+
+    Check actual rendered occluders within one output pixel of each mapped
+    edge point. This does not dilate the composite body or infer shirt colours.
+    """
+    from .puppet import mesh_points,raster
+    from .integrity import GARMENT_EDGE_LIMITS as limits
+    bindings = puppet.garment_bindings
+    mapped = {name:mesh_points(meshes[name][0],meshes[name][1],report['source_points'])
+              for name,(_,_,report,_) in bindings.items()}
+    points = np.vstack(list(mapped.values()))
+    margin = math.ceil(cv.ss*limits['contact_radius_px'])+2
+    lo = np.maximum(0,np.floor(points.min(0)).astype(int)-margin)
+    hi = np.minimum((cv.w,cv.h),np.ceil(points.max(0)).astype(int)+margin+1)
+    if np.any(hi<=lo):
+        return {name:dict(samples=len(p),exposed=len(p),exposed_indices=list(range(len(p))))
+                for name,p in mapped.items()}
+    masks = {}
+    parents = {p for _,_,report,_ in bindings.values() for p in report['occluders']}
+    for name in parents:
+        layer,verts = meshes[name]
+        masks[name] = raster(layer,verts-lo,puppet.mip(layer,cv.s/puppet.px_per_unit),
+                             int(hi[0]-lo[0]),int(hi[1]-lo[1]))[...,3]
+    radius = cv.ss*limits['contact_radius_px']
+    offsets = np.arange(-margin,margin+1)
+    dx,dy = np.meshgrid(offsets,offsets)
+    offsets = np.column_stack((dx.ravel(),dy.ravel()))
+    result = {}
+    for name,(_,_,report,_) in bindings.items():
+        p = mapped[name]-lo
+        near = np.rint(p).astype(int)[:,None,:]+offsets
+        alpha = np.maximum.reduce([masks[n] for n in report['occluders']])
+        valid = ((near[...,0]>=0)&(near[...,1]>=0)
+                 &(near[...,0]<alpha.shape[1])&(near[...,1]<alpha.shape[0]))
+        covered = np.zeros(valid.shape,bool)
+        y,x = near[...,1],near[...,0]
+        covered[valid] = alpha[y[valid],x[valid]]>=limits['occluder_alpha']
+        covered &= np.sum((near-p[:,None,:])**2,axis=-1)<=radius*radius+1e-9
+        bad = np.flatnonzero(~covered.any(1)).tolist()
+        result[name] = dict(samples=len(p),exposed=len(bad),exposed_indices=bad)
+    return result
+
+
+def ordinary_run_report(clip, body, n, fps):
+    """Measure the requested ordinary-run style against this body's leg length."""
+    from .render import frame_time
+    legs = min(sum(body.leg_bones(side)) for side in 'nf')
+    samples = []
+    for i in range(n):
+        pose = full_pose(clip.sample(frame_time(clip,i,n,fps)))
+        sk = solve(pose,body)
+        angles = [abs(math.degrees(math.atan2(sk['kn_'+s][0]-sk['hip_'+s][0],
+                    sk['hip_'+s][1]-sk['kn_'+s][1]))) for s in 'nf']
+        samples.append(dict(foot_span_ratio=abs(sk['an_n'][0]-sk['an_f'][0])/legs,
+                            lift_ratio=max(pose['foot_n_y'],pose['foot_f_y'])/legs,
+                            thigh_deg=max(angles),lean_deg=abs(sk['chest_rot'])))
+    return dict(profile=getattr(clip,'profile','legacy_run'),frames=n,
+                stride_ratio=clip.L/legs,lift_ratio=clip.lift/legs,bob_ratio=clip.bob/legs,
+                samples=samples)
 
 
 def check_connections(renderer, clip, n, fps, bindings=None):
@@ -261,13 +343,18 @@ def check_connections(renderer, clip, n, fps, bindings=None):
     from .integrity import THIGH_DEFORMATION_LIMITS
     from .render import GROUND_FRAC, frame_time
     puppet = renderer.art.puppet
-    bindings = dict(puppet.pelvis_bindings,**getattr(puppet,'socket_bindings',{})) if bindings is None else bindings
+    garment = getattr(puppet,'garment_bindings',{})
+    if bindings is None:
+        bindings = dict(puppet.pelvis_bindings,**getattr(puppet,'socket_bindings',{}),
+                        **{name:(parent,weights,report) for name,(parent,weights,report,_) in garment.items()})
     required = {'torso', 'leg_near', 'leg_far'}
     if set(bindings) != required:
         return [f'connection: {clip.name} frame 0: missing full pelvis attachment evidence']
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     values = {part: [] for part in required}
-    shapes = {part: [] for part in getattr(puppet,'socket_bindings',{})}
+    shapes = {part: [] for part in set(getattr(puppet,'socket_bindings',{}))|set(garment)}
+    garment_shapes = {part:[] for part in garment}
+    edges = {part:[] for part in garment}
     for i in range(n):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
@@ -296,15 +383,36 @@ def check_connections(renderer, clip, n, fps, bindings=None):
                 error = np.linalg.norm(mesh_points(child, verts, source)-
                                        mesh_points(parent, meshes[parent.name][1], source), axis=-1)
                 worst = float(error.max())
+                if name in garment:
+                    joint = np.asarray([report['source_joint']],float)
+                    side = 'n' if name == 'leg_near' else 'f'
+                    at = mesh_points(child,verts,joint)[0]
+                    worst = max(worst,float(np.linalg.norm(at-np.asarray(cv.T(sk['hip_'+side])))))
+                    shapes[name].append(thigh_strain(child,verts,cv.s/puppet.px_per_unit))
+                    garment_shapes[name].append(garment_strain(child,verts,cv.s/puppet.px_per_unit,report))
             values[name].append(round(worst/renderer.ss, 5))
+        if garment:
+            for name,row in garment_visibility(puppet,meshes,cv).items():
+                edges[name].append(row)
     if not hasattr(renderer, 'connection_checks'):
         renderer.connection_checks = {}
-    renderer.connection_checks[clip.name] = dict(frames=n,parts=values,shape_parts=shapes)
+    renderer.connection_checks[clip.name] = dict(frames=n,parts=values,shape_parts=shapes,
+                                                garment_shapes=garment_shapes,edge_visibility=edges)
     faults = [f'connection: {name}: {clip.name} frame {i}: registered attachment separates by {error:.3f}px'
               for name, errors in values.items() for i, error in enumerate(errors) if error > 1.0]
     faults += [f'shape: {name}: {clip.name} frame {i}: {row["bad_share"]:.1%} of opaque thigh shaft collapses or stretches'
                for name, rows in shapes.items() for i,row in enumerate(rows)
                if not row['samples'] or row['bad_share']>THIGH_DEFORMATION_LIMITS['max_bad_share']]
+    faults += [f'garment shape: {name}: {clip.name} frame {i}: {row["bad_share"]:.1%} of waist material collapses or stretches'
+               for name,rows in garment_shapes.items() for i,row in enumerate(rows)
+               if not row['samples'] or row['bad_share']>THIGH_DEFORMATION_LIMITS['max_bad_share']]
+    faults += [f'garment edge: {name}: {clip.name} frame {i}: {row["exposed"]} originally hidden cut-edge samples exposed'
+               for name,rows in edges.items() for i,row in enumerate(rows) if row['exposed']]
+    if garment and clip.name == 'run':
+        from .integrity import ordinary_run_faults
+        renderer.ordinary_run_checks = ordinary_run_report(clip,renderer.art.body,n,fps)
+        faults += [f'ordinary run: run frame {row["frame"]}: {row["what"]}'
+                   for row in ordinary_run_faults(renderer.ordinary_run_checks,n)]
     return faults
 
 

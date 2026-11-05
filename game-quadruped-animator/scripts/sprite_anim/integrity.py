@@ -17,6 +17,42 @@ import numpy as np
 
 THIGH_DEFORMATION_LIMITS = dict(min_scale=.25,max_scale=3.,min_area=.15,max_area=3.,max_bad_share=.01,
                                 root_start=.15,knee_exclusion_radii=2.)
+GARMENT_EDGE_LIMITS = dict(contact_radius_px=1.,occluder_alpha=.9)
+ORDINARY_RUN_LIMITS = dict(max_stride_ratio=1.,max_lift_ratio=.3,max_foot_span_ratio=1.,
+                           max_thigh_deg=65.,max_lean_deg=15.,max_bob_ratio=.05)
+
+
+def ordinary_run_faults(report, count):
+    """The declared ordinary run must stay inside its body-scaled envelope."""
+    if report.get('frames') != count or len(report['samples']) != count:
+        raise ValueError('ordinary run: incomplete exported-frame coverage')
+    out = []
+    def fault(frame,what):
+        out.append(dict(clip='run',frame=frame,part='motion',what=what))
+    def number(value):
+        return (not isinstance(value,bool) and isinstance(value,(int,float))
+                and math.isfinite(value) and value>=0)
+    if report.get('profile') != 'ordinary_run_v1':
+        fault(0,'missing the requested ordinary_run_v1 style')
+    frame_limits = dict(foot_span_ratio=ORDINARY_RUN_LIMITS['max_foot_span_ratio'],
+                        lift_ratio=ORDINARY_RUN_LIMITS['max_lift_ratio'],
+                        thigh_deg=ORDINARY_RUN_LIMITS['max_thigh_deg'],
+                        lean_deg=ORDINARY_RUN_LIMITS['max_lean_deg'])
+    for i,row in enumerate(report['samples']):
+        for key,limit in frame_limits.items():
+            if not number(row[key]):
+                raise ValueError(f'ordinary run frame {i}: invalid {key}')
+            if row[key]>limit:
+                fault(i,f'ordinary run {key} {row[key]:.3f} exceeds {limit:.3f}')
+    for key,peak in (('stride_ratio','foot_span_ratio'),('lift_ratio','lift_ratio'),('bob_ratio','thigh_deg')):
+        value = report[key]
+        if not number(value):
+            raise ValueError(f'ordinary run: invalid {key}')
+        limit = ORDINARY_RUN_LIMITS['max_'+key]
+        if value>limit:
+            frame = max(range(count),key=lambda i:report['samples'][i][peak])
+            fault(frame,f'ordinary run {key} {value:.3f} exceeds {limit:.3f}')
+    return out
 
 def connection_report_faults(root, doc, trace):
     """Fail closed on missing/tampered full-frame registered connection evidence."""
@@ -32,21 +68,32 @@ def connection_report_faults(root, doc, trace):
         reference = Path(root)/'binding_reference.png'
         if hashlib.sha256(reference.read_bytes()).hexdigest() != data['source_reference_sha256']:
             raise ValueError('connection evidence uses a different registered source reference')
-        if data['method'] != 'registered_articulations_v2' or set(data['bindings']) != required:
+        if data['method'] != 'registered_garment_surfaces_v3' or set(data['bindings']) != required:
             raise ValueError('missing complete registered connection bindings')
         if data.get('shape_limits') != THIGH_DEFORMATION_LIMITS:
             raise ValueError('missing current thigh shape checks; zero connection drift is insufficient')
+        if data.get('edge_limits') != GARMENT_EDGE_LIMITS:
+            raise ValueError('missing native hidden garment-edge visibility checks')
         for name, binding in data['bindings'].items():
             points = np.asarray(binding['source_points'], float)
             if points.ndim != 2 or points.shape[1] != 2 or len(points) < 4 or not np.isfinite(points).all():
                 raise ValueError(f'{name}: missing attachment edge samples')
-            expected = 'registered_pelvis_overlap' if name == 'torso' else 'registered_articulated_socket_v2'
+            expected = 'registered_pelvis_overlap' if name == 'torso' else 'registered_garment_rim_v1'
             if binding.get('method') != expected or binding.get('parent') != 'hips':
                 raise ValueError(f'{name}: incorrect registered joint/surface binding kind')
             if name != 'torso':
                 joint = np.asarray(binding['source_joint'],float)
                 if joint.shape != (2,) or not np.isfinite(joint).all():
                     raise ValueError(f'{name}: missing source joint registration')
+                parents = ['hips','torso'] if name=='leg_near' else ['leg_near','hips','torso']
+                if binding.get('occluders') != parents:
+                    raise ValueError(f'{name}: missing original garment depth owners')
+                origin,up = np.asarray(binding['origin'],float),np.asarray(binding['up'],float)
+                if (origin.shape!=(2,) or up.shape!=(2,) or not np.isfinite(origin).all()
+                        or not np.isfinite(up).all() or abs(np.linalg.norm(up)-1)>1e-6
+                        or not math.isfinite(binding['attachment_depth'])
+                        or not math.isfinite(binding['fade']) or binding['fade']<=0):
+                    raise ValueError(f'{name}: invalid registered waist transition')
         if set(data['clips']) != set(doc['clips']):
             raise ValueError('connection scope differs from exported clips')
         for clip, meta in doc['clips'].items():
@@ -61,27 +108,43 @@ def connection_report_faults(root, doc, trace):
                     if error > 1.0:
                         out.append(dict(clip=clip, frame=frame, part=name,
                                         what=f'registered garment connection separates by {error:.3f}px'))
-            shapes = row['shape_parts']
-            if set(shapes) != {'leg_near','leg_far'}:
-                raise ValueError(f'{clip}: missing both thigh shape measurements')
-            for name, measurements in shapes.items():
+            for field,label in (('shape_parts','thigh'),('garment_shapes','waist garment')):
+                shapes = row[field]
+                if set(shapes) != {'leg_near','leg_far'}:
+                    raise ValueError(f'{clip}: missing both {label} shape measurements')
+                for name, measurements in shapes.items():
+                    if len(measurements) != count:
+                        raise ValueError(f'{clip}/{name}: incomplete {label} shape frame coverage')
+                    for frame, measured in enumerate(measurements):
+                        if type(measured.get('samples')) is not int or measured['samples'] < 1:
+                            raise ValueError(f'{clip}/{name}: missing opaque {label} material samples')
+                        for key in ('bad_share','min_scale','max_scale','min_area','max_area'):
+                            x = measured[key]
+                            if isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x):
+                                raise ValueError(f'{clip}/{name}: invalid {label} deformation measurement')
+                        if not 0 <= measured['bad_share'] <= 1:
+                            raise ValueError(f'{clip}/{name}: invalid deformed material share')
+                        if (measured['min_scale'] < 0 or measured['min_scale'] > measured['max_scale']
+                                or measured['min_area'] > measured['max_area']):
+                            raise ValueError(f'{clip}/{name}: inconsistent {label} deformation extrema')
+                        if measured['bad_share'] > THIGH_DEFORMATION_LIMITS['max_bad_share']:
+                            out.append(dict(clip=clip,frame=frame,part=name,
+                                            what=f"{label} material collapses or stretches over {measured['bad_share']:.1%}"))
+            if set(row['edge_visibility']) != {'leg_near','leg_far'}:
+                raise ValueError(f'{clip}: missing both hidden garment-edge checks')
+            for name,measurements in row['edge_visibility'].items():
                 if len(measurements) != count:
-                    raise ValueError(f'{clip}/{name}: incomplete thigh shape frame coverage')
-                for frame, measured in enumerate(measurements):
-                    if type(measured.get('samples')) is not int or measured['samples'] < 1:
-                        raise ValueError(f'{clip}/{name}: missing opaque thigh material samples')
-                    for key in ('bad_share','min_scale','max_scale','min_area','max_area'):
-                        x = measured[key]
-                        if isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x):
-                            raise ValueError(f'{clip}/{name}: invalid thigh deformation measurement')
-                    if not 0 <= measured['bad_share'] <= 1:
-                        raise ValueError(f'{clip}/{name}: invalid deformed material share')
-                    if (measured['min_scale'] < 0 or measured['min_scale'] > measured['max_scale']
-                            or measured['min_area'] > measured['max_area']):
-                        raise ValueError(f'{clip}/{name}: inconsistent thigh deformation extrema')
-                    if measured['bad_share'] > THIGH_DEFORMATION_LIMITS['max_bad_share']:
+                    raise ValueError(f'{clip}/{name}: incomplete hidden garment-edge frame coverage')
+                for frame,measured in enumerate(measurements):
+                    n = len(data['bindings'][name]['source_points'])
+                    indices = measured['exposed_indices']
+                    if (measured.get('samples')!=n or type(measured.get('exposed')) is not int
+                            or measured['exposed']!=len(indices) or len(indices)!=len(set(indices))
+                            or any(type(i) is not int or i<0 or i>=n for i in indices)):
+                        raise ValueError(f'{clip}/{name}: invalid hidden garment-edge measurements')
+                    if indices:
                         out.append(dict(clip=clip,frame=frame,part=name,
-                                        what=f"thigh material collapses or stretches over {measured['bad_share']:.1%} of its shaft"))
+                                        what=f'{len(indices)} originally hidden garment cut-edge samples exposed'))
             hashes = data['frame_hashes'][clip]
             if len(hashes) != count:
                 raise ValueError(f'{clip}: missing measured RGBA frame hashes')
@@ -91,6 +154,10 @@ def connection_report_faults(root, doc, trace):
                     current = hashlib.sha256(str(image.size).encode()+image.tobytes()).hexdigest()
                 if current != expected:
                     out.append(dict(clip=clip, frame=frame, part='frame', what='connection evidence measures different RGBA pixels'))
+        if 'run' in doc['clips']:
+            if data.get('run_limits') != ORDINARY_RUN_LIMITS:
+                raise ValueError('missing body-scaled ordinary-run limits')
+            out += ordinary_run_faults(data['ordinary_run'],len(doc['clips']['run']['frames']))
     except (KeyError,ValueError,TypeError,IndexError,OSError) as error:
         out.append(dict(clip=next(iter(doc['clips']), ''),frame=0,part='scope',what=str(error)))
     return out

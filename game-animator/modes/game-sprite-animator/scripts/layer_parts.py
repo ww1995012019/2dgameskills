@@ -1127,7 +1127,7 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
             while hi+1 < len(solid) and solid[hi+1]:hi += 1
             radius = min(half(name), float((distances[hi]-distances[lo]+.5)/2))
             data[name].update(radius=round(radius, 2), source_frame=True,
-                              root_lock=True, pelvis_joint='hips')
+                              root_lock=True, pelvis_garment='hips')
             diagnostics.setdefault('knee_cross_sections', {})[name] = dict(
                 average_radius=round(half(name), 2), knee_radius=round(radius, 2))
     # The torso's hanging panels bend between the thighs: a virtual joint below the hip.
@@ -1155,6 +1155,8 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
     data["hips"] = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
     if registered_connections:
         data['torso'].update(source_frame=True, pelvis_skin='hips')
+        for name in ('arm_near','arm_far'):
+            data[name].update(source_frame=True,tip_lock=True)
     if "appendage_back" in out:
         data["appendage_back"], contact = rear_appendage_binding(
             masks["appendage_back"], masks["hips"] | masks["torso"], hip, (near_px + far_px) / 2)
@@ -1232,6 +1234,9 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
         gait["idle"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)
     for clip in ('idle', 'walk', 'run'):
         gait.setdefault(clip, {})['head_response'] = 'neck_inertia_v1'
+    if registered_connections:
+        gait['walk']['planar_hips'] = True
+        gait['run']['profile'] = 'ordinary_run_v1'
     puppet = dict(px_per_unit=round(float(ppu), 4), joints={k: [round(float(x), 2) for x in v] for k, v in joints.items()},
                   rest_angles={k: round(float(v), 3) for k, v in rest_angles.items()}, skirt_len=round(float(skirt_len / ppu), 3),
                   core_radius=round(core_px / ppu, 3),
@@ -1239,7 +1244,7 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
                             "f": [[round(float(v), 2) for v in af["wrist"]], [round(float(v), 2) for v in af["elbow"]]]},
                   layers=ordered, chains=chains, source="source.png")
     if registered_connections:
-        puppet.update(connection_skinning='registered_pelvis_v2', attachment_checks=True)
+        puppet.update(connection_skinning='registered_garment_v3', attachment_checks=True)
     if "robe" in masks:
         puppet["robe_len"] = round(float(robe_len / ppu), 3)
     if weapon_len:
@@ -1293,7 +1298,7 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
             spec['puppet']['layers'][name]['front_mask']='layers/torso-neck-front.png'
     Image.fromarray(ref, "RGBA").save(os.path.join(out_dir, "source.png"))
     spec.update(name=character_name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
-    if spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v2':
+    if spec.get('puppet', {}).get('connection_skinning') == 'registered_garment_v3':
         from sprite_anim.puppet import Puppet
         try:
             Puppet(dict(spec, _dir=os.path.abspath(out_dir)))
