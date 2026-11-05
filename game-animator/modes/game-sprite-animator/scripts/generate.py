@@ -189,6 +189,8 @@ def main():
             next=c.next if not c.loop else None, prev=c.prev,
             chain_frame=int(round(c.chain_at / step)) if c.chain_at else None,
             tags=sorted(c.tags))
+        if getattr(c,'frame_multiple',1)>1:
+            meta[nm]['frame_multiple'] = c.frame_multiple
         if isinstance(c, Gait) and nm == 'walk':
             # Both the legacy and natural walking loop can retain their phase
             # while braking to a two-foot support frame. Use the baked clock.
@@ -305,6 +307,7 @@ def main():
                        **({'portrait_review_required': True} if r.art.puppet else {}),
                        **({"framing_scope": names} if a.fit_selected_clips else {}),
                        part_problems=problems, **connection_data,
+                       **({'hand_detail':r.hand_detail_checks} if hasattr(r,'hand_detail_checks') else {}),
                        **({'binding_profile':'basic-side-v1'} if connection_data else {}),
                        **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),

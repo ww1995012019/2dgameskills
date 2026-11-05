@@ -116,22 +116,60 @@ def check_hands(renderer, spec, clip, frames, fps):
     size = renderer.size
     scale = renderer.unit / puppet.px_per_unit
     ref = Image.open(path).convert("RGBA")
+    source_size = ref.size
     ref = np.asarray(ref.resize((max(1, round(ref.width * scale)), max(1, round(ref.height * scale))), Image.LANCZOS))
+    layers = {layer.name:layer for layer in puppet.layers}
+    masks = {}
+    def arm_mask(index, side, pose, sk):
+        """Only the same arm's support; neighbouring opaque clothes are context."""
+        if index not in masks:
+            from .puppet import raster
+            native = Canvas(size,renderer.ss,renderer.unit,GROUND_FRAC,1,False,(0,0,0))
+            native.set_squash(pose['squash'],0.)
+            masks[index] = {}
+            for layer,verts in puppet.meshes(native,sk,renderer.cloth_at(clip,frame_time(clip,index,len(frames),fps)),
+                                              'ground' in clip.tags):
+                if layer.name not in ('arm_near','arm_far'):
+                    continue
+                alpha = raster(layer,verts,puppet.mip(layer,native.s/puppet.px_per_unit),native.w,native.h)[...,3]
+                masks[index][layer.name] = np.asarray(Image.fromarray(np.uint8(np.clip(alpha,0,1)*255+.5)).resize(
+                    (size,size),Image.Resampling.LANCZOS))
+        return masks[index]['arm_near' if side=='n' else 'arm_far']
     out = []
+    measurements = {}
     cv = Canvas(size, 1, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     for side in "nf":
         wrist, elbow = puppet.rest_arm[side]
         radius = 0.5 * float(np.hypot(*np.subtract(wrist, elbow))) * scale
         rx, ry = (wrist[0] + (wrist[0] - elbow[0]) * 0.28) * scale, (wrist[1] + (wrist[1] - elbow[1]) * 0.28) * scale
-        want = edge_energy(disc_crop(ref, rx, ry, radius))
+        layer = layers['arm_near' if side=='n' else 'arm_far']
+        same_arm = layer.source_frame and layer.tip_lock
+        reference = ref
+        if same_arm:
+            alpha = Image.new('L',source_size)
+            alpha.paste(layer.image.getchannel('A'),tuple(int(round(v)) for v in layer.offset))
+            alpha = np.asarray(alpha.resize((ref.shape[1],ref.shape[0]),Image.Resampling.LANCZOS))
+            reference = ref.copy();reference[...,3] = np.minimum(reference[...,3],alpha)
+        want = edge_energy(disc_crop(reference, rx, ry, radius))
         got = []
         for i in np.linspace(0, len(frames) - 1, HAND_FRAMES).astype(int):
-            sk = solve(full_pose(clip.sample(frame_time(clip, int(i), len(frames), fps))), renderer.art.body)
+            pose = full_pose(clip.sample(frame_time(clip, int(i), len(frames), fps)))
+            sk = solve(pose, renderer.art.body)
             wr, el = np.array(sk["wr_" + side]), np.array(sk["el_" + side])
             x, y = cv.T(tuple(wr + (wr - el) * 0.28))
-            got.append(edge_energy(disc_crop(frames[int(i)], x, y, radius)))
+            actual = frames[int(i)]
+            if same_arm:
+                actual = actual.copy()
+                actual[...,3] = np.minimum(actual[...,3],arm_mask(int(i),side,pose,sk))
+            got.append(edge_energy(disc_crop(actual, x, y, radius)))
+        measurements[side] = dict(method='same_arm_alpha_context_v1' if same_arm else 'legacy_composite_crop',
+                                  reference_energy=want,frame_energies=got,
+                                  detail_ratio=float(np.mean(got))/want if want else None,limit=HAND_DETAIL)
         if want > 0 and float(np.mean(got)) < HAND_DETAIL * want:
             out.append(f"hand: {side}: {clip.name}: {np.mean(got) / want:.0%} of the reference's detail; the hand lost its drawing")
+    if not hasattr(renderer,'hand_detail_checks'):
+        renderer.hand_detail_checks = {}
+    renderer.hand_detail_checks[clip.name] = measurements
     return out
 
 
@@ -323,10 +361,23 @@ def ordinary_run_report(clip, body, n, fps):
                     sk['hip_'+s][1]-sk['kn_'+s][1]))) for s in 'nf']
         samples.append(dict(foot_span_ratio=abs(sk['an_n'][0]-sk['an_f'][0])/legs,
                             lift_ratio=max(pose['foot_n_y'],pose['foot_f_y'])/legs,
-                            thigh_deg=max(angles),lean_deg=abs(sk['chest_rot'])))
-    return dict(profile=getattr(clip,'profile','legacy_run'),frames=n,
+                            thigh_deg=max(angles),lean_deg=abs(sk['chest_rot']),
+                            pelvis_y_ratio=sk['hip'][1]/legs,
+                            head_y_ratio=sk['head_base'][1]/legs,
+                            near_contact=clip.contacts(frame_time(clip,i,n,fps))['n'],
+                            far_contact=clip.contacts(frame_time(clip,i,n,fps))['f']))
+    phase_samples = []
+    for i in range(240):
+        t = clip.duration*i/240
+        sk = solve(full_pose(clip.sample(t)),body)
+        contacts = clip.contacts(t)
+        phase_samples.append(dict(phase=i/240,pelvis_y_ratio=sk['hip'][1]/legs,
+                                  head_y_ratio=sk['head_base'][1]/legs,
+                                  near_contact=contacts['n'],far_contact=contacts['f']))
+    return dict(profile=getattr(clip,'profile','legacy_run'),frames=n,leg_length=legs,
                 stride_ratio=clip.L/legs,lift_ratio=clip.lift/legs,bob_ratio=clip.bob/legs,
-                samples=samples)
+                samples=samples,rhythm=dict(method='phase_sampled_run_support_v1',
+                                           phase_samples=phase_samples))
 
 
 def check_connections(renderer, clip, n, fps, bindings=None):

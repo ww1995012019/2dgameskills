@@ -25,6 +25,11 @@ def frame_count(clip, fps):
     """Loops sample [0, T) with no endpoint: repeating t=0 at the end would hold one pose
     for two frames every cycle, a visible hitch. One-shots include the end pose."""
     if clip.loop:
+        multiple = getattr(clip, 'frame_multiple', 1)
+        if type(multiple) is not int or multiple < 1:
+            raise ValueError('frame_multiple must be a positive integer')
+        if multiple > 1:
+            return max(multiple, int(math.floor(clip.duration*fps/multiple+.5))*multiple)
         return max(2, int(round(clip.duration * fps)))
     return max(2, int(round(clip.duration * fps)) + 1)
 

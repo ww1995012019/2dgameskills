@@ -83,13 +83,22 @@ Also complete `hidden_garment_edges` and `motion_style_match`. Inspect the manda
 loose trouser corner is a blocker even if no transparent hole appears. Compare clean art on a
 light/blue background and watch every delivered loop; bone overlays alone can hide these edges.
 
-Basic `run` uses the explicit `ordinary_run_v1` profile: stride/lift follow leg length, with a
+Basic `run` uses the explicit `ordinary_run_v2` profile: stride/lift follow leg length, with a
 short airborne phase and restrained hip motion. The legacy fixed 48-unit stride/19-unit lift
 is an action-game sprint and is not the default ordinary run for measured artwork. Required
 ordinary-run evidence bounds stride, lift, foot separation, thigh angle and torso lean against
 the measured body. Those limits enforce this requested style, not all possible sprinting.
 Do not claim natural motion merely because the envelope passes; inspect the actual cadence,
 waist, leg recovery and foot support in the browser.
+
+The previous support-height fit followed the recovering foot and overrode the declared bob.
+Measure the actual pelvis/head trajectories, half-step equality, vertical speed/acceleration and
+native rendered head-height changes. The configured bob is not evidence of the rendered motion.
+Both steps share one smooth height curve, with its apex in flight; one constant support envelope
+is fitted over the complete cycle. Export an even frame count and quantize both GIF half-cycles
+identically. Inspect `run_support_00.png` and its complete fixed-canvas playback against a fixed
+head/ground reference; fill every `support_rhythm` observation. Abrupt drops, unequal support or
+limping rhythm are blockers even when every foot touches the ground and the loop closes.
 
 For an external/custom atlas skin, export its **actual** source points, skin weights, per-frame
 matrices and isolated RGBA frames to a binding manifest, then run

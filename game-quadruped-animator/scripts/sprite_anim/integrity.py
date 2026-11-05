@@ -19,12 +19,15 @@ THIGH_DEFORMATION_LIMITS = dict(min_scale=.25,max_scale=3.,min_area=.15,max_area
                                 root_start=.15,knee_exclusion_radii=2.)
 GARMENT_EDGE_LIMITS = dict(contact_radius_px=1.,occluder_alpha=.9)
 ORDINARY_RUN_LIMITS = dict(max_stride_ratio=1.,max_lift_ratio=.3,max_foot_span_ratio=1.,
-                           max_thigh_deg=65.,max_lean_deg=15.,max_bob_ratio=.05)
+                           max_thigh_deg=65.,max_lean_deg=15.,max_bob_ratio=.05,
+                           max_pelvis_range_ratio=.05,max_head_range_ratio=.065,
+                           max_half_step_height_ratio=.015,max_vertical_step_ratio=.015,
+                           max_vertical_phase_speed_ratio=.5,max_vertical_phase_accel_ratio=8.)
 
 
 def ordinary_run_faults(report, count):
     """The declared ordinary run must stay inside its body-scaled envelope."""
-    if report.get('frames') != count or len(report['samples']) != count:
+    if not isinstance(report,dict) or report.get('frames') != count or len(report['samples']) != count:
         raise ValueError('ordinary run: incomplete exported-frame coverage')
     out = []
     def fault(frame,what):
@@ -32,8 +35,8 @@ def ordinary_run_faults(report, count):
     def number(value):
         return (not isinstance(value,bool) and isinstance(value,(int,float))
                 and math.isfinite(value) and value>=0)
-    if report.get('profile') != 'ordinary_run_v1':
-        fault(0,'missing the requested ordinary_run_v1 style')
+    if report.get('profile') != 'ordinary_run_v2':
+        fault(0,'missing the requested ordinary_run_v2 support rhythm')
     frame_limits = dict(foot_span_ratio=ORDINARY_RUN_LIMITS['max_foot_span_ratio'],
                         lift_ratio=ORDINARY_RUN_LIMITS['max_lift_ratio'],
                         thigh_deg=ORDINARY_RUN_LIMITS['max_thigh_deg'],
@@ -52,7 +55,76 @@ def ordinary_run_faults(report, count):
         if value>limit:
             frame = max(range(count),key=lambda i:report['samples'][i][peak])
             fault(frame,f'ordinary run {key} {value:.3f} exceeds {limit:.3f}')
+    if count%2:
+        fault(0,'ordinary run has unequal half-step frame counts')
+    for name in ('near_contact','far_contact'):
+        if any(type(row.get(name)) is not bool for row in report['samples']):
+            raise ValueError('ordinary run: missing actual exported support states')
+    if sum(row['near_contact'] for row in report['samples']) != sum(row['far_contact'] for row in report['samples']):
+        fault(0,'ordinary run has unequal exported stance durations')
+    rhythm = report['rhythm']
+    phase = rhythm['phase_samples']
+    if rhythm.get('method')!='phase_sampled_run_support_v1' or len(phase)!=240:
+        raise ValueError('ordinary run: missing full-cycle support-height measurements')
+    for i,row in enumerate(phase):
+        if row.get('phase')!=i/240 or any(not number(row.get(k)) for k in ('pelvis_y_ratio','head_y_ratio')):
+            raise ValueError('ordinary run: invalid actual height/phase evidence')
+        if any(type(row.get(k)) is not bool for k in ('near_contact','far_contact')):
+            raise ValueError('ordinary run: invalid phase support states')
+    heights = np.array([row['pelvis_y_ratio'] for row in phase])
+    head = np.array([row['head_y_ratio'] for row in phase])
+    def measured(values,limit,name):
+        index = int(np.argmax(values))
+        if values[index]>limit:
+            fault(int(math.floor(phase[index]['phase']*count+.5))%count,
+                  f'ordinary run actual {name} {values[index]:.4f} exceeds {limit:.4f}')
+    measured(heights-heights.min(),ORDINARY_RUN_LIMITS['max_pelvis_range_ratio'],'pelvis height range')
+    measured(head-head.min(),ORDINARY_RUN_LIMITS['max_head_range_ratio'],'head height range')
+    measured(np.abs(heights-np.roll(heights,120)),ORDINARY_RUN_LIMITS['max_half_step_height_ratio'],
+             'half-step height mismatch')
+    measured(np.abs(np.roll(heights,-1)-np.roll(heights,1))*120,
+             ORDINARY_RUN_LIMITS['max_vertical_phase_speed_ratio'],'vertical phase speed')
+    measured(np.abs(np.roll(heights,-1)-2*heights+np.roll(heights,1))*240**2,
+             ORDINARY_RUN_LIMITS['max_vertical_phase_accel_ratio'],'vertical phase acceleration')
+    exported = np.array([row['pelvis_y_ratio'] for row in report['samples']])
+    if not np.isfinite(exported).all():
+        raise ValueError('ordinary run: invalid exported pelvis heights')
+    step = np.abs(np.roll(exported,-1)-exported)
+    if step.max()>ORDINARY_RUN_LIMITS['max_vertical_step_ratio']:
+        frame = int(np.argmax(step))
+        fault((frame+1)%count,f'ordinary run actual vertical frame step {step[frame]:.4f} is abrupt')
+    apex = int(np.argmax(heights[:120]))
+    if phase[apex]['near_contact'] or phase[apex]['far_contact']:
+        fault(int(math.floor(phase[apex]['phase']*count+.5))%count,
+              'ordinary run pelvis apex occurs during stance instead of flight')
     return out
+
+
+def rendered_run_faults(frames, leg_pixels):
+    """Check the actual transparent frames, independently of declared bob."""
+    if not math.isfinite(leg_pixels) or leg_pixels<=0 or len(frames)<2:
+        raise ValueError('ordinary run: missing rendered height scale or frames')
+    top = []
+    for frame in frames:
+        rows = np.flatnonzero((np.asarray(frame)[...,3]>=128).any(1))
+        if not len(rows):
+            raise ValueError('ordinary run: empty rendered silhouette')
+        top.append(float(rows[0]))
+    top = np.asarray(top)
+    out = []
+    def fault(frame,what):out.append(dict(clip='run',frame=int(frame),part='motion',what=what))
+    tolerance = 1.  # raster rounding, in output pixels
+    if np.ptp(top)>ORDINARY_RUN_LIMITS['max_head_range_ratio']*leg_pixels+tolerance:
+        fault(np.argmax(top),'ordinary run rendered head-height range is excessive')
+    if len(top)%2==0:
+        mismatch = np.abs(top-np.roll(top,len(top)//2))
+        if mismatch.max()>ORDINARY_RUN_LIMITS['max_half_step_height_ratio']*leg_pixels+tolerance:
+            fault(np.argmax(mismatch),'ordinary run rendered half-step heights differ')
+    step = np.abs(np.roll(top,-1)-top)
+    if step.max()>ORDINARY_RUN_LIMITS['max_vertical_step_ratio']*leg_pixels+tolerance:
+        fault((np.argmax(step)+1)%len(top),'ordinary run rendered vertical frame step is abrupt')
+    return out
+
 
 def connection_report_faults(root, doc, trace):
     """Fail closed on missing/tampered full-frame registered connection evidence."""
@@ -157,7 +229,14 @@ def connection_report_faults(root, doc, trace):
         if 'run' in doc['clips']:
             if data.get('run_limits') != ORDINARY_RUN_LIMITS:
                 raise ValueError('missing body-scaled ordinary-run limits')
+            if doc['clips']['run'].get('frame_multiple') != 2:
+                raise ValueError('ordinary run lacks paired step sampling')
             out += ordinary_run_faults(data['ordinary_run'],len(doc['clips']['run']['frames']))
+            frames = []
+            for i in range(len(doc['clips']['run']['frames'])):
+                with Image.open(Path(root)/f'frames/run/run_{i:03d}.png') as frame:
+                    frames.append(np.asarray(frame.convert('RGBA')))
+            out += rendered_run_faults(frames,trace['unit_px']*data['ordinary_run']['leg_length'])
     except (KeyError,ValueError,TypeError,IndexError,OSError) as error:
         out.append(dict(clip=next(iter(doc['clips']), ''),frame=0,part='scope',what=str(error)))
     return out

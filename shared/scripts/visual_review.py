@@ -40,8 +40,8 @@ PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity", "source_garment_registrat
                  "hidden_garment_edges", "motion_style_match")
 NECK_CHECKS = ("neck_continuity", "head_motion_naturalness")
 HAND_CHECKS = ("hand_pose_naturalness", "wrist_continuity")
-POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS
-TEMPORAL_CHECKS = ("head_motion_naturalness", "hand_pose_naturalness")
+POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS + ('support_rhythm',)
+TEMPORAL_CHECKS = ("head_motion_naturalness", "hand_pose_naturalness", 'support_rhythm')
 DETAIL_CELL = 256
 DETAIL_PER_SHEET = 2
 
@@ -548,6 +548,79 @@ def garment_sheets(root, doc, trace, out):
     return files
 
 
+def run_support_required(doc, trace):
+    connection = trace.get('connections',{})
+    return ('run' in doc['clips'] and connection.get('method')=='registered_garment_surfaces_v3'
+            and isinstance(connection.get('ordinary_run'),dict))
+
+
+def run_support_poses(doc):
+    return [dict(clip='run',frame=i,reasons=['support cycle on fixed canvas'])
+            for i in range(len(doc['clips']['run']['frames']))]
+
+
+def run_support_media(doc):
+    from sprite_anim.export import gif_durations
+    meta = doc['clips']['run'];count = len(meta['frames'])
+    return dict(clip='run',file='run_support_motion_000.gif',frame_count=count,
+                fps=meta['fps'],loop=bool(meta['loop']),
+                duration_ms=sum(gif_durations(count,meta['fps'],meta.get('frame_multiple',1))))
+
+
+def run_support_sheets(root, doc, trace, out):
+    """Complete fixed-canvas playback plus actual silhouette/hip height tracks."""
+    if not run_support_required(doc,trace):
+        return []
+    from sprite_anim.export import gif_durations
+    meta = doc['clips']['run'];count = len(meta['frames'])
+    frames = [composite(root,doc,'run',i) for i in range(count)]
+    top = np.array([np.flatnonzero((np.asarray(f)[...,3]>=128).any(1))[0] for f in frames])
+    sk = trace['traces']['run']['skeleton']
+    hip = np.array(sk['hip'])[:,1]
+    width,cell,band,columns = 1440,120,160,12
+    chart = 240
+    sheet = Image.new('RGB',(width,chart+band*((count+columns-1)//columns)),BG[:3])
+    draw = ImageDraw.Draw(sheet)
+    draw.text((8,6),'run: complete cycle / fixed canvas / actual pixel heights; PLAY run_support_motion_000.gif',fill='white')
+    left,right,center,scale = 60,width-30,138,3.
+    for value in (-20,-10,0,10,20):
+        y=center+value*scale
+        draw.line((left,y,right,y),fill=(85,91,108),width=1)
+        draw.text((5,y-4),f'{value:+d}px',fill='white')
+    for number,(values,color,label) in enumerate(((top,(250,191,86),'rendered head top'),(hip,(80,220,223),'pelvis'))):
+        draw.text((65+number*250,25),label,fill=color)
+        ys=center+(values-values.mean())*scale
+        points=[(left+i*(right-left)/count,float(ys[i])) for i in range(count)]
+        draw.line(points+[ (right,float(ys[0])) ],fill=color,width=2)
+    samples=trace['connections']['ordinary_run']['samples']
+    for i,row in enumerate(samples):
+        x0=left+i*(right-left)/count;x1=left+(i+1)*(right-left)/count
+        for y,key,color in ((54,'near_contact',(80,220,223)),(68,'far_contact',(245,163,95))):
+            if row[key]:draw.rectangle((x0,y,x1,y+8),fill=color)
+    draw.text((5,54),'near',fill='white');draw.text((5,68),'far',fill='white')
+    for i,frame in enumerate(frames):
+        x,y=(i%columns)*cell,chart+(i//columns)*band
+        thumb=frame.resize((cell,cell),Image.Resampling.LANCZOS)
+        bg=Image.new('RGBA',thumb.size,(237,241,247,255));bg.alpha_composite(thumb)
+        guide=ImageDraw.Draw(bg)
+        guide.line((0,float(top.mean()*cell/frame.height),cell,float(top.mean()*cell/frame.height)),fill=(211,122,111),width=1)
+        ground=doc['pivot'][1]*cell/frame.height
+        guide.line((0,ground,cell,ground),fill=(132,148,171),width=1)
+        sheet.paste(bg.convert('RGB'),(x,y+20));draw.text((x+3,y+3),f'#{i}',fill='white')
+    filename='run_support_00.png';sheet.save(os.path.join(out,filename))
+    movie=[]
+    for frame in frames:
+        bg=Image.new('RGBA',frame.size,(237,241,247,255));bg.alpha_composite(frame)
+        d=ImageDraw.Draw(bg);d.line((0,float(top.mean()),frame.width,float(top.mean())),fill=(211,122,111),width=1)
+        d.line((0,doc['pivot'][1],frame.width,doc['pivot'][1]),fill=(132,148,171),width=1)
+        movie.append(bg.convert('RGB'))
+    media=run_support_media(doc)
+    movie[0].save(os.path.join(out,media['file']),save_all=True,append_images=movie[1:],
+                  duration=gif_durations(count,meta['fps'],meta.get('frame_multiple',1)),
+                  loop=0,disposal=2,optimize=False)
+    return [dict(sheet=filename,kind='run_support',clips=['run'],poses=run_support_poses(doc),playback=[media])]
+
+
 def selected_clips(doc, qa):
     def key(name):
         return (0 if qa.get(name, {}).get("flags") else 1, name)
@@ -597,6 +670,8 @@ def expected_sheets(doc, trace, qa, root=None):
     pelvis_per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
     expected.update(f"hips_{i:02d}.png" for i in range((len(rows) + pelvis_per_sheet - 1) // pelvis_per_sheet))
     expected.update(f'garment_edges_{i:02d}.png' for i in range((len(garment_rows(doc,trace))+1)//2))
+    if run_support_required(doc,trace):
+        expected.add('run_support_00.png')
     for kind in ('neck', 'hands'):
         count = len(detail_rows(doc, trace, kind))
         expected.update(f'{kind}_{i:02d}.png' for i in range((count + DETAIL_PER_SHEET - 1) // DETAIL_PER_SHEET))
@@ -649,6 +724,7 @@ def build(root):
         index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True))
         index.extend(pelvic_sheets(root, doc, trace, out))
         index.extend(garment_sheets(root,doc,trace,out))
+        index.extend(run_support_sheets(root,doc,trace,out))
         for kind in ('neck', 'hands'):
             index.extend(detail_sheets(root, doc, trace, out, kind))
     index.extend(binding_sheets(root))
@@ -688,6 +764,8 @@ def checks_for_sheet(name):
         return CHECKS + NECK_CHECKS
     if name.startswith('hands_'):
         return CHECKS + HAND_CHECKS
+    if name.startswith('run_support_'):
+        return CHECKS + ('support_rhythm',)
     return CHECKS + PELVIS_CHECKS if name.startswith(("hips_","garment_edges_")) else CHECKS
 
 
@@ -786,6 +864,13 @@ def validate_index(root, index):
         got = [(p['clip'],p['frame'],p['reasons']) for p in entry.get('poses',[])]
         if got != want:
             raise ValueError(f'{name}: missing or altered required garment-edge pose coverage')
+    if run_support_required(doc,trace):
+        name='run_support_00.png';entry=next(row for row in entries if row['sheet']==name)
+        if entry.get('poses')!=run_support_poses(doc):
+            raise ValueError(f'{name}: incomplete full-cycle support pose coverage')
+        media=run_support_media(doc)
+        if entry.get('playback')!=[media] or not os.path.isfile(os.path.join(root,'review',media['file'])):
+            raise ValueError(f'{name}: missing complete fixed-canvas support playback')
     for kind in ('neck', 'hands'):
         rows = detail_rows(doc, trace, kind)
         scope = list(detail_scope(doc, trace, kind))

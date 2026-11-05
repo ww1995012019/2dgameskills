@@ -27,36 +27,36 @@ class OrdinaryRunEnvelope(unittest.TestCase):
         for body in (Body(),Body(thigh=11.,shin=13.,chest_len=26.,head_size=1.3)):
             with self.subTest(body=body):
                 clip=OrdinaryRun(body)
-                report=pc.ordinary_run_report(clip,body,21,30)
-                self.assertEqual(ordinary_run_faults(report,21),[])
+                report=pc.ordinary_run_report(clip,body,22,30)
+                self.assertEqual(ordinary_run_faults(report,22),[])
                 self.assertAlmostEqual(clip.speed,clip.L/(clip.duty*clip.T))
                 self.assertLess(report['stride_ratio'],1.)
                 self.assertTrue(any(not any(clip.contacts(i*.001).values()) for i in range(700)))
 
     def test_sprint_sized_stride_is_rejected_at_the_measured_peak_frame(self):
         body=Body();clip=OrdinaryRun(body);clip.stride(1.5*(body.thigh+body.shin))
-        report=pc.ordinary_run_report(clip,body,21,30)
-        faults=ordinary_run_faults(report,21)
-        peak=max(range(21),key=lambda i:report['samples'][i]['foot_span_ratio'])
+        report=pc.ordinary_run_report(clip,body,22,30)
+        faults=ordinary_run_faults(report,22)
+        peak=max(range(22),key=lambda i:report['samples'][i]['foot_span_ratio'])
         self.assertTrue(any(f['frame']==peak and 'stride_ratio' in f['what'] for f in faults),faults)
 
     def test_excessive_lift_is_rejected_without_reclassifying_the_style(self):
         body=Body();clip=OrdinaryRun(body);clip.lift=.6*(body.thigh+body.shin)
-        report=pc.ordinary_run_report(clip,body,21,30)
-        faults=ordinary_run_faults(report,21)
+        report=pc.ordinary_run_report(clip,body,22,30)
+        faults=ordinary_run_faults(report,22)
         self.assertTrue(any('lift_ratio' in f['what'] and f['frame']>0 for f in faults),faults)
 
     def test_sparse_or_replaced_style_evidence_cannot_pass(self):
-        body=Body();report=pc.ordinary_run_report(OrdinaryRun(body),body,21,30)
+        body=Body();report=pc.ordinary_run_report(OrdinaryRun(body),body,22,30)
         report['profile']='legacy_run'
-        self.assertTrue(ordinary_run_faults(report,21))
+        self.assertTrue(ordinary_run_faults(report,22))
         report['samples'].pop()
-        with self.assertRaisesRegex(ValueError,'coverage'):ordinary_run_faults(report,21)
+        with self.assertRaisesRegex(ValueError,'coverage'):ordinary_run_faults(report,22)
 
     def test_legacy_default_is_preserved_and_basic_profile_is_explicit(self):
         legacy=build_clips()['run']
         self.assertEqual((legacy.L,legacy.lift),(48,19))
-        selected=build_clips(gait={'run':{'profile':'ordinary_run_v1'}})['run']
+        selected=build_clips(gait={'run':{'profile':'ordinary_run_v2'}})['run']
         self.assertIsInstance(selected,OrdinaryRun)
         self.assertLess(selected.L,legacy.L)
         with self.assertRaisesRegex(ValueError,'profile'):
@@ -86,6 +86,21 @@ class GarmentMaterial(unittest.TestCase):
             np.testing.assert_allclose(solved,target,atol=1e-7)
             fixed=~solver.movable.reshape(layer.vx.shape)
             np.testing.assert_array_equal(solved[fixed],target[fixed])
+
+    def test_free_band_unfolds_a_reflected_corner_with_both_boundary_owners_fixed(self):
+        layer,vertices=original.ThighMaterial('runTest').fixture()
+        layer.used=np.ones(layer.vx.shape,bool)
+        weights=np.clip((170-layer.vy)/120.,0.,1.)
+        solver=pp.GarmentBand(layer,weights)
+        damaged=vertices.copy()
+        free=np.argwhere(solver.movable.reshape(layer.vx.shape))
+        j,i=free[len(free)//2];damaged[j,i]+=(45.,-25.)
+        self.assertTrue(pp.flipped(damaged,layer.cells).any())
+        repaired=solver.solve(damaged,1.)
+        source,dest,centers,solid=pc.material_triangles(layer,repaired)
+        self.assertEqual(pc.material_strain(source,dest,solid,1.)['bad_share'],0.)
+        fixed=~solver.movable.reshape(layer.vx.shape)
+        np.testing.assert_array_equal(repaired[fixed],damaged[fixed])
 
 
 class HiddenGarmentEdges(unittest.TestCase):

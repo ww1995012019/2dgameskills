@@ -262,34 +262,40 @@ class GarmentBand:
         # ARAP alone can converge to a folded local minimum in a wide garment.
         # Project actual material strain as well, keeping both boundary owners
         # fixed. These are solver targets; the independent QA limits are unchanged.
-        for _ in range(80):
-            changed = False
-            # Same-colour triangles share no vertices. Sequential colour groups
-            # avoid cancelling opposite corrections at a compressed cloth fold.
-            for group in self.triangle_groups:
-                if not len(group):
-                    continue
-                ids = self.triangles[group]
-                points = flat[ids]
-                de = np.stack((points[:,1]-points[:,0],points[:,2]-points[:,0]),-1)
-                jac = de@self.triangle_inverse[group]/scale
-                u,s,vh = np.linalg.svd(jac)
-                reflected = np.linalg.det(u@vh)<0
-                bad = reflected|(s[:,1]<.5)|(s[:,0]>1.8)
-                if not bad.any():
-                    continue
-                changed = True
-                u,s,vh = u[bad],s[bad],vh[bad]
-                u[reflected[bad],:,-1] *= -1
-                corrected = (u*np.clip(s,.6,1.6)[:,None,:])@vh
-                source = self.triangle_source[group[bad]]
-                target = ((source-source.mean(1,keepdims=True))*scale)@corrected.transpose(0,2,1)
-                target += points[bad].mean(1,keepdims=True)
-                ids = ids[bad]
-                delta = (target-points[bad])*self.movable[ids][...,None]
-                flat[ids.ravel()] += .8*delta.reshape(-1,2)
-            if not changed:
-                break
+        # The final feasibility pass moves only distressed triangles. Repeatedly
+        # expanding every mildly compressed neighbour can keep re-folding the
+        # same corner. Both passes preserve the fixed rim and distal leg.
+        for rounds,lower,upper,area_floor,target_floor in ((80,.5,1.8,0.,.6),(160,.28,2.8,.18,.45)):
+            for _ in range(rounds):
+                changed = False
+                # Same-colour triangles share no vertices.
+                for group in self.triangle_groups:
+                    if not len(group):
+                        continue
+                    ids = self.triangles[group]
+                    points = flat[ids]
+                    de = np.stack((points[:,1]-points[:,0],points[:,2]-points[:,0]),-1)
+                    jac = de@self.triangle_inverse[group]/scale
+                    u,s,vh = np.linalg.svd(jac)
+                    reflected = np.linalg.det(u@vh)<0
+                    bad = reflected|(s[:,1]<lower)|(s[:,0]>upper)
+                    if area_floor:
+                        area = np.linalg.det(jac)
+                        bad |= (area<area_floor)|(area>upper)
+                    if not bad.any():
+                        continue
+                    changed = True
+                    u,s,vh = u[bad],s[bad],vh[bad]
+                    u[reflected[bad],:,-1] *= -1
+                    corrected = (u*np.clip(s,target_floor,1.6)[:,None,:])@vh
+                    source = self.triangle_source[group[bad]]
+                    target = ((source-source.mean(1,keepdims=True))*scale)@corrected.transpose(0,2,1)
+                    target += points[bad].mean(1,keepdims=True)
+                    ids = ids[bad]
+                    delta = (target-points[bad])*self.movable[ids][...,None]
+                    flat[ids.ravel()] += .8*delta.reshape(-1,2)
+                if not changed:
+                    break
         return flat.reshape(vertices.shape)
 
 

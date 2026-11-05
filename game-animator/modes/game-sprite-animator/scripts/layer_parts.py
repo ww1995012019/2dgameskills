@@ -1236,7 +1236,7 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
         gait.setdefault(clip, {})['head_response'] = 'neck_inertia_v1'
     if registered_connections:
         gait['walk']['planar_hips'] = True
-        gait['run']['profile'] = 'ordinary_run_v1'
+        gait['run']['profile'] = 'ordinary_run_v2'
     puppet = dict(px_per_unit=round(float(ppu), 4), joints={k: [round(float(x), 2) for x in v] for k, v in joints.items()},
                   rest_angles={k: round(float(v), 3) for k, v in rest_angles.items()}, skirt_len=round(float(skirt_len / ppu), 3),
                   core_radius=round(core_px / ppu, 3),

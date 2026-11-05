@@ -150,11 +150,19 @@ Look at each clip for these, in this order. Name the clip and frame when somethi
   A rotating cap is not sufficient proof that a trouser rim or pocket top remains hidden.
 - Complete `hidden_garment_edges` and `motion_style_match` for each required pose. Open the blue
   `garment_edges_*.png` waist macros, where a small folded corner is large enough to inspect.
-- The explicit `ordinary_run_v1` profile is body-scaled; ordinary-run evidence limits stride to
+- The explicit `ordinary_run_v2` profile is body-scaled; ordinary-run evidence limits stride to
   1 leg length, lift to 0.3 legs, horizontal ankle separation to 1 leg, thigh angle to 65 degrees,
   torso lean to 15 degrees and bob to 0.05 legs. These are conservative bounds for ordinary running,
   not universal limits for a sprint or an action pose. Watch the actual cycle and compare the user's
   intent; a fixed large-step template can pass skeletal integrity and still be the wrong motion.
+- A declared small bob did not measure v1's per-frame support-height override. Current evidence
+  also measures actual pelvis/head height range, half-step mismatch, vertical frame displacement,
+  and phase derivatives; the native PNG head silhouette is checked independently. The body
+  apex must occur in flight. Both steps need equal frame counts and matching GIF timing patterns.
+  Open `run_support_00.png` and `run_support_motion_000.gif`: the entire cycle uses one fixed
+  canvas and fixed head/ground guides, with no per-frame recentering. Record `support_rhythm`
+  for every frame and the full playback. Foot contact and a closed loop do not establish an
+  even running rhythm; a sudden drop or alternating high/low step must block release.
 - Revoke the actual current visual pass when a user identifies an omitted defect. Preserve the
   failure and show changed-frame evidence for that same issue before accepting another result.
 

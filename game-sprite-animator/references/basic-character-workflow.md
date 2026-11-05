@@ -165,11 +165,17 @@ and keep world scale identical; do not describe those comparisons as identical t
 Inspect `garment_edges_*.png` waist macros separately and complete `hidden_garment_edges` and
 `motion_style_match`; an intact alpha silhouette can still show an exposed internal cut.
 
-Basic ordinary running uses `gait.run.profile = ordinary_run_v1`, derived from leg length:
-stride 0.75 legs, lift 0.22 legs, period 0.7 seconds at default speed, duty 0.44. Explicit planar
+Basic ordinary running uses `gait.run.profile = ordinary_run_v2`, derived from leg length:
+stride 0.7 legs, lift 0.16 legs, period 0.7 seconds at default speed, duty 0.44. Explicit planar
 hip motion preserves a single garment owner. Native measurements and the recorded output scope
 must include every delivered run frame. This profile is not a sprint; matching the user's motion
 intent, natural recovery and cloth appearance still require full playback review.
+The pelvis height is a shared smooth two-step curve fitted once below the full-cycle reach
+envelope. Never solve a new maximum hip height from the swing foot on each frame. The earlier
+v1 method produced large, asymmetric vertical drops despite a small declared bob. Required
+evidence now measures actual height and its derivatives plus the native PNG silhouette, uses
+paired frame sampling, and quantizes equal GIF step timings. Review the full fixed-canvas
+`run_support` plot/playback and every `support_rhythm` observation before release.
 
 ## 4. Bounded repairs
 
