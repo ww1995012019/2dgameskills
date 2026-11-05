@@ -27,7 +27,7 @@ from PIL import Image, ImageDraw
 
 CELL = 180
 PELVIS_CELL = 256
-REVIEW_SCHEMA = 2
+REVIEW_SCHEMA = 3
 PER_SHEET = 6
 MAX_POSES = 8
 CROP_PAD = 4      # frame pixels kept around the art
@@ -37,6 +37,146 @@ GROUND = (240, 184, 74, 255)
 BG = (58, 62, 74, 255)
 PELVIS_JOINTS = ("waist", "neck", "hip_n", "hip_f", "kn_n", "kn_f", "an_n", "an_f")
 PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity")
+NECK_CHECKS = ("neck_continuity", "head_motion_naturalness")
+HAND_CHECKS = ("hand_pose_naturalness", "wrist_continuity")
+POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS
+TEMPORAL_CHECKS = ("head_motion_naturalness", "hand_pose_naturalness")
+DETAIL_CELL = 256
+DETAIL_PER_SHEET = 2
+
+
+def detail_scope(doc, trace, kind):
+    """Use measured humanoid joints; never apply side-view neck rules to other anatomies."""
+    required = ('neck', 'waist') if kind == 'neck' else ('el_n', 'wr_n', 'el_f', 'wr_f')
+    scope = {}
+    for name, clip in doc.get('clips', {}).items():
+        if clip_layer(clip) == 'lower':
+            continue
+        count = len(clip.get('frames', []))
+        sk = trace.get('traces', {}).get(name, {}).get('skeleton', {})
+        if not any(key in sk for key in required):
+            if trace.get('portrait_review_required'):
+                raise ValueError(f'{name}: missing required {kind} rendered joint trace')
+            continue
+        for key in required:
+            points = np.asarray(sk.get(key, []), dtype=float)
+            if points.shape != (count, 2) or not count or not np.isfinite(points).all():
+                raise ValueError(f'{name}: incomplete {kind} rendered joint trace: {key}')
+        scope[name] = sk
+    return scope
+
+
+def detail_frames(sk, trace_clip, count, kind):
+    reasons = {}
+    def add(frame, why):
+        reasons.setdefault(int(frame), set()).add(why)
+    for i in np.linspace(0, count - 1, min(5, count)).round().astype(int):
+        add(i, 'cycle/rest/recovery sample')
+    if kind == 'neck':
+        motion = trace_clip.get('head_motion', {})
+        for key in ('head_world_deg', 'chest_world_deg', 'relative_deg'):
+            if key not in motion:
+                continue  # Legacy traces still require the full temporal review.
+            values = np.asarray(motion[key], dtype=float)
+            if values.shape != (count,) or not np.isfinite(values).all():
+                raise ValueError(f'head_motion.{key}: invalid rendered angle track')
+            add(np.argmin(values), f'minimum {key}'); add(np.argmax(values), f'maximum {key}')
+    else:
+        for side in 'nf':
+            for axis in (0, 1):
+                values = np.asarray(sk['wr_' + side])[:, axis]
+                add(np.argmin(values), f'{side} wrist minimum axis {axis}')
+                add(np.argmax(values), f'{side} wrist maximum axis {axis}')
+    return [dict(frame=i, reasons=sorted(why)) for i, why in sorted(reasons.items())]
+
+
+def detail_rows(doc, trace, kind):
+    rows = []
+    for name, sk in detail_scope(doc, trace, kind).items():
+        poses = detail_frames(sk, trace.get('traces', {}).get(name, {}), len(doc['clips'][name]['frames']), kind)
+        for start in range(0, len(poses), MAX_POSES):
+            rows.append((name, sk, poses[start:start + MAX_POSES]))
+    return rows
+
+
+def detail_boxes(sk, trace, kind, frame=None):
+    """Local still close-ups; fixed whole-clip playback boxes retain bob and wrist travel."""
+    if frame is not None:
+        sk = {key: values[frame:frame + 1] for key, values in sk.items()}
+    unit = float(trace.get('unit_px', 1))
+    if kind == 'neck':
+        radius = (30 * float(trace.get('head_size', 1)) + 8) * unit
+        points = np.asarray(sk['neck'], dtype=float).copy()
+        points[:, 1] -= radius * .25
+        groups = [(points, radius), (np.asarray(sk['neck'], dtype=float), radius * .35)]
+    else:
+        groups = []
+        for side in 'nf':
+            wrist, elbow = np.asarray(sk['wr_' + side], float), np.asarray(sk['el_' + side], float)
+            radius = max(6 * unit, float(np.linalg.norm(wrist - elbow, axis=1).max()) * .8)
+            groups.append((wrist + (wrist - elbow) * .2, radius))
+    return [tuple(np.concatenate((np.floor(points.min(0) - max(radius, 2)),
+                                   np.ceil(points.max(0) + max(radius, 2)))).astype(int))
+            for points, radius in groups]
+
+
+def detail_sheets(root, doc, trace, out, kind):
+    rows, files, media = detail_rows(doc, trace, kind), [], {}
+    scopes = detail_scope(doc, trace, kind)
+    boxes = {name: detail_boxes(sk, trace, kind) for name, sk in scopes.items()}
+    for number, name in enumerate(scopes):
+        clip = doc['clips'][name]
+        frames = []
+        for frame in range(len(clip['frames'])):
+            original = composite(root, doc, name, frame)
+            cell = Image.new('RGB', (DETAIL_CELL * len(boxes[name]), DETAIL_CELL), BG[:3])
+            for col, box in enumerate(boxes[name]):
+                art = original.crop(box).resize((DETAIL_CELL, DETAIL_CELL), Image.Resampling.NEAREST)
+                cell.paste(art, (col * DETAIL_CELL, 0), art)
+            # Keep every frame, including identical holds; duration is the exported FPS.
+            frames.append(cell)
+        filename = f'{kind}_motion_{number:03d}.gif'
+        # Integer-centisecond GIF timing uses cumulative rounding rather than speeding up 30fps.
+        durations = [max(10, (round((i + 1) * 100 / clip['fps']) - round(i * 100 / clip['fps'])) * 10)
+                     for i in range(len(frames))]
+        frames[0].save(os.path.join(out, filename), save_all=True, append_images=frames[1:],
+                       duration=durations, loop=0, disposal=2, optimize=False)
+        media[name] = dict(clip=name, file=filename, frame_count=len(frames), fps=clip['fps'],
+                           loop=bool(clip['loop']), duration_ms=sum(durations))
+    for start in range(0, len(rows), DETAIL_PER_SHEET):
+        group = rows[start:start + DETAIL_PER_SHEET]
+        sheet = Image.new('RGBA', (DETAIL_CELL * MAX_POSES, (28 + 2 * DETAIL_CELL) * len(group)), BG)
+        draw = ImageDraw.Draw(sheet)
+        poses = []
+        for row, (name, sk, picks) in enumerate(group):
+            top = row * (28 + 2 * DETAIL_CELL)
+            labels = 'head context / enlarged neck root + driving bones' if kind == 'neck' else 'near hand / far hand'
+            draw.text((4, top + 3), f'{name}: {labels}; PLAY {media[name]["file"]}', fill='white')
+            for col, pose in enumerate(picks):
+                frame, x = pose['frame'], col * DETAIL_CELL
+                original = composite(root, doc, name, frame)
+                closeups = detail_boxes(sk, trace, kind, frame)
+                for band in range(2):
+                    box = closeups[band]
+                    art = original.crop(box).resize((DETAIL_CELL, DETAIL_CELL), Image.Resampling.NEAREST)
+                    sheet.alpha_composite(art, (x, top + 28 + band * DETAIL_CELL))
+                    if kind == 'neck' and band:
+                        overlay = Image.new('RGBA', (DETAIL_CELL, DETAIL_CELL))
+                        bones = ImageDraw.Draw(overlay)
+                        def point(key):
+                            xx, yy = sk[key][frame]
+                            return ((xx - box[0]) * DETAIL_CELL / (box[2] - box[0]),
+                                    (yy - box[1]) * DETAIL_CELL / (box[3] - box[1]))
+                        bones.line((point('waist'), point('neck')), fill=(40, 235, 225), width=2)
+                        sheet.alpha_composite(overlay, (x, top + 28 + DETAIL_CELL))
+                    draw.text((x + 4, top + 31 + band * DETAIL_CELL), f'#{frame}', fill='white')
+                poses.append(dict(clip=name, **pose))
+        filename = f'{kind}_{len(files):02d}.png'
+        sheet.convert('RGB').save(os.path.join(out, filename))
+        clips = sorted({name for name, _, _ in group})
+        files.append(dict(sheet=filename, kind=kind, clips=clips, poses=poses,
+                          playback=[media[name] for name in clips]))
+    return files
 
 
 def pick_frames(n, flagged):
@@ -405,6 +545,9 @@ def expected_sheets(doc, trace, qa, root=None):
         expected.update(f"{prefix}_{i:02d}.png" for i in range((count + PER_SHEET - 1) // PER_SHEET))
     rows = pelvic_rows(doc, trace)
     expected.update(f"hips_{i:02d}.png" for i in range((len(rows) + PER_SHEET - 1) // PER_SHEET))
+    for kind in ('neck', 'hands'):
+        count = len(detail_rows(doc, trace, kind))
+        expected.update(f'{kind}_{i:02d}.png' for i in range((count + DETAIL_PER_SHEET - 1) // DETAIL_PER_SHEET))
     if root is not None:
         expected.update(entry["sheet"] for entry in binding_sheets(root))
     return expected
@@ -429,7 +572,7 @@ def build(root):
     humanoid_scope(doc, trace)
     out = os.path.join(root, "review")
     os.makedirs(out, exist_ok=True)
-    for old in glob.glob(os.path.join(out, "*.png")):
+    for old in (*glob.glob(os.path.join(out, "*.png")), *glob.glob(os.path.join(out, "*_motion_*.gif"))):
         os.remove(old)
 
     names = selected_clips(doc, qa)
@@ -453,6 +596,8 @@ def build(root):
         index.extend(shoulder_sheets(root, doc, trace, out))
         index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True))
         index.extend(pelvic_sheets(root, doc, trace, out))
+        for kind in ('neck', 'hands'):
+            index.extend(detail_sheets(root, doc, trace, out, kind))
     index.extend(binding_sheets(root))
     value = dict(schema_version=REVIEW_SCHEMA, sheets=index, required_sheets=sorted(expected_sheets(doc, trace, qa, root)),
                  skipped=sorted(set(doc["clips"]) - set(names)),
@@ -465,7 +610,9 @@ def build(root):
     template = dict(reviewer="", review_id=review_id(review_assets(root)), sheets={
         e["sheet"]: dict(verdict="fail", checks={name: dict(status="pending", evidence="", **(
             {"observations": [dict(clip=p["clip"], frame=p["frame"], evidence="") for p in e.get("poses", [])]}
-            if name in PELVIS_CHECKS else {})) for name in checks_for_sheet(e["sheet"])}, issues=[])
+            if name in POSE_CHECKS else {}), **(
+            {"playback": [dict(clip=p['clip'], file=p['file'], evidence='') for p in e.get('playback', [])]}
+            if name in TEMPORAL_CHECKS else {})) for name in checks_for_sheet(e["sheet"])}, issues=[])
         for e in index})
     with open(os.path.join(out, "verdict_template.json"), "w", encoding="utf-8") as target:
         json.dump(template, target, ensure_ascii=False, indent=1)
@@ -478,11 +625,16 @@ def build(root):
 CHECKS = ("complete_limbs", "continuous_garments", "no_ghosting", "expected_weapons", "anatomy", "readable_motion")
 CATEGORIES = {"missing_limb", "broken_garment", "ghosting", "extra_weapon", "anatomy", "unreadable_motion", "cosmetic"}
 CATEGORIES.update(("pelvis_gap", "rig_misalignment"))
+CATEGORIES.update(("neck_seam", "stiff_head", "unnatural_hand", "broken_wrist"))
 
 
 def checks_for_sheet(name):
     if name.startswith("binding_review_"):
         return ("binding_registration",)
+    if name.startswith('neck_'):
+        return CHECKS + NECK_CHECKS
+    if name.startswith('hands_'):
+        return CHECKS + HAND_CHECKS
     return CHECKS + PELVIS_CHECKS if name.startswith("hips_") else CHECKS
 
 
@@ -508,7 +660,7 @@ def pixel_hash(path):
 def review_assets(root):
     """Bind a verdict to the exact frames, sheets and QA it actually reviewed."""
     paths = []
-    for pattern in ("frames/*/*.png", "review/*.png", "review/index.json", "animations.json", "rig_trace.json", "qa_report.json",
+    for pattern in ("frames/*/*.png", "review/*.png", "review/*_motion_*.gif", "review/index.json", "animations.json", "rig_trace.json", "qa_report.json",
                     "atlas*.png", "atlas*.json", "sheets/*.png", "preview.html", "fx*.png", "fx*.json", "engine/**/*",
                     "binding_audit.json", "binding_review_*.png", "occlusion_review.json", "occlusion_decisions.json"):
         paths.extend(glob.glob(os.path.join(root, pattern), recursive=True))
@@ -572,6 +724,28 @@ def validate_index(root, index):
         got = [(pose["clip"], pose["frame"], pose["reasons"]) for pose in entry.get("poses", [])]
         if got != want:
             raise ValueError(f"{name}: missing or altered required pelvis pose coverage")
+    for kind in ('neck', 'hands'):
+        rows = detail_rows(doc, trace, kind)
+        scope = list(detail_scope(doc, trace, kind))
+        for start in range(0, len(rows), DETAIL_PER_SHEET):
+            name = f'{kind}_{start // DETAIL_PER_SHEET:02d}.png'
+            entry = next(row for row in entries if row['sheet'] == name)
+            group = rows[start:start + DETAIL_PER_SHEET]
+            want = [dict(clip=clip, **pose) for clip, _, poses in group for pose in poses]
+            if entry.get('poses') != want:
+                raise ValueError(f'{name}: missing or altered required {kind} pose coverage')
+            expected_media = []
+            for clip in sorted({clip for clip, _, _ in group}):
+                meta = doc['clips'][clip]
+                count = len(meta['frames'])
+                filename = f'{kind}_motion_{scope.index(clip):03d}.gif'
+                expected_media.append(dict(clip=clip, file=filename, frame_count=count, fps=meta['fps'],
+                                           loop=bool(meta['loop']), duration_ms=sum(
+                    max(10, (round((i + 1) * 100 / meta['fps']) - round(i * 100 / meta['fps'])) * 10) for i in range(count))))
+                if not os.path.isfile(os.path.join(root, 'review', filename)):
+                    raise ValueError(f'{name}: missing required playback: {filename}')
+            if entry.get('playback') != expected_media:
+                raise ValueError(f'{name}: missing or altered required playback coverage')
     return {entry["sheet"]: entry for entry in entries}
 
 
@@ -586,7 +760,7 @@ def validate_checklist(sheet, row, entry):
             raise ValueError(f"{sheet}: {name} cannot be skipped")
         if check["status"] == "fail" and row["verdict"] != "fail":
             raise ValueError(f"{sheet}: failed {name} cannot have a pass verdict")
-        if name in PELVIS_CHECKS:
+        if name in POSE_CHECKS:
             observations = check.get("observations", [])
             expected = {(pose["clip"], pose["frame"]) for pose in entry["poses"]}
             cited = []
@@ -595,7 +769,15 @@ def validate_checklist(sheet, row, entry):
                     raise ValueError(f"{sheet}: {name} needs concrete evidence for each required clip/frame")
                 cited.append((pose.get("clip"), pose["frame"]))
             if len(cited) != len(set(cited)) or set(cited) != expected:
-                raise ValueError(f"{sheet}: {name} must cover every required pelvis pose exactly once")
+                raise ValueError(f"{sheet}: {name} must cover every required pose exactly once")
+        if name in TEMPORAL_CHECKS:
+            want = {(p['clip'], p['file']) for p in entry.get('playback', [])}
+            observations = check.get('playback', [])
+            if any(not isinstance(p.get('evidence'), str) or not p['evidence'].strip() for p in observations):
+                raise ValueError(f'{sheet}: {name} needs playback evidence for every clip')
+            got = [(p.get('clip'), p.get('file')) for p in observations]
+            if len(got) != len(set(got)) or set(got) != want or not want:
+                raise ValueError(f'{sheet}: {name} must review every required playback exactly once')
 
 
 def binding_gate(root):

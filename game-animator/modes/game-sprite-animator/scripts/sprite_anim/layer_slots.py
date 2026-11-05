@@ -3,6 +3,46 @@ that produces each one. Every character uses this same list, so nothing here may
 
 KEY_COLOR = (255, 0, 255)   # flat background of every layer picture
 
+# Apply at reference/arm generation, before landmark-only hand hints. These are
+# species-aware requirements, not an instruction to redraw an accepted layer.
+NATURAL_HANDS = """Hands: anatomically coherent, proportionate palms and fingers appropriate to the
+character's species. Empty hands rest in a relaxed semi-closed pose: gently curved fingers,
+small uneven finger spacing, a readable thumb and a neutral wrist continuing the forearm.
+Clawed hands keep their species' claws but relax the finger joints; claws alone do not require
+a threatening grasp. Avoid rigid open palms, fan-splayed fingers, spider-leg fingers, excessive
+hooking, hyperextended wrists, fused or extra digits and tiny substitute hands. Preserve the
+visible digit count of the identity reference; do not force five human fingers onto a creature.
+A weapon hand has a secure closed grip with the thumb opposing the fingers, wrist aligned
+with the forearm. Do not relax or open a holding hand. An explicitly requested expressive hand
+pose takes precedence, but must still have coherent anatomy."""
+
+NATURAL_NECK = """Head and neck: the jaw, neck column and shoulders form one anatomically continuous
+structure. Preserve the head's identity and proportions. The neck enters the collar naturally;
+no pasted-on head, floating skull, flared triangular skin flap, shelf-shaped neck base, hard
+horizontal/diagonal cut line or duplicated neck. An internal overlap is unoutlined and hidden
+inside the matching torso neck, never laid over the outside/front of a collar or scarf.
+Do not repaint a removed collar as skin or scales. If the source neck/hand pose is defective,
+reject the source and repair that stage; do not change accepted registration to hide it.
+When separating the head, COPY the VISIBLE neck contour from the registration plate. Its
+bottom follows the existing skin/scales-to-collar boundary, including the original diagonal
+or curved contour. Do not replace it with a straight rectangular stump or extend neck colour
+over any fabric visible in the final composite. The torso already supplies hidden neck overlap.
+Any hidden extension stays within the existing torso footprint and must be behind the original
+source-verified front collar; its cut edge must never become visible. Do not enlarge a collar
+or add a patch to conceal a detached or incorrectly skinned neck."""
+
+REFERENCE_HAND_REPAIR = """Repair the EMPTY HAND gestures in this full-body registration plate.
+Keep the same full canvas, side-view pose, scale, head, face, neck, torso, limbs, armour,
+clothing, feet, accessories, colours and background. Keep each wrist in its original position
+and keep both complete arm chains. Change only the finger curl of an empty hand into a
+comfortable relaxed semi-closed resting gesture. The fingers settle close together with small
+uneven bends; the thumb rests naturally beside the palm. Keep species-specific claws and
+their original length without a threatening spread or a grasp around an invisible object.
+Any hand actually holding a weapon keeps its original secure grip and weapon unchanged.
+Do not make a new character illustration or change the body pose. Keep all empty canvas.
+Output the complete corrected registration plate, not an enlarged hand or a contact sheet.
+""" + NATURAL_HANDS
+
 # Asks for a picture that passes the contract, from a description or from any earlier picture.
 REFERENCE = """Full-body 2D game character: {who}. {style}.
 
@@ -10,7 +50,8 @@ Pose, fixed for every character: strict side view facing right, standing in a sm
 
 Framing: the whole figure in frame, about 85 percent of the canvas height, with margin on every side and nothing cropped.
 Lighting: even flat lighting, no glow, no cast shadow, no ground, no text.
-Background: one flat pure magenta #FF00FF. The character uses no magenta or pink-purple colours."""
+Background: one flat pure magenta #FF00FF. The character uses no magenta or pink-purple colours.
+""" + "\n" + NATURAL_NECK + "\n" + NATURAL_HANDS
 
 COMMON = """This is a production layer-separation task for a 2D game puppet. Output exactly one layer of this character.
 
@@ -28,6 +69,8 @@ Rules:
 # name: (what to keep, what to remove, required). Back to front, as the puppet draws them.
 # An optional layer is left out for a character that has nothing of that kind.
 SLOTS = {
+    "appendage_back": ("ONE complete biological appendage attached behind the pelvis, from its narrow reconstructed hidden root through its complete original curved silhouette to its whole tip. Keep the appendage's own scales, spines, tip armour and painted details. Reconstruct only enough scaled root beneath the rear pelvis for a covered overlap, without retaining the body mass it emerges from. The pelvic body, buttock muscle and hip armour are NOT its root. No outlined cut edge. This is one whole rear appendage, not fabric, and will remain a rigid source shape following the pelvis",
+                       "the head, hair, neck, chest, belt, the entire pelvis and buttocks, all hip and thigh armour belonging to the body, hips garment, both arms and hands, both whole legs and feet, every piece of cloth, every weapon and every other object. Keep no duplicate body mass, thigh-shaped branch or detached fragment", False),
     "hair_back": ("all the long hair that hangs behind the head and back, complete from the scalp down to its tips, plus any hair ribbons hanging behind the head",
                   "the face, the top of the head, every hair ornament, the whole body, all clothing, both arms, both legs and the weapon", False),
     "cloth_back": ("only the loose cloth trailing BEHIND the body: the rear robe tail, rear sash or cape, from its rear attachment seam to its tips. Keep only the REARMOST trailing fabric, behind the rear leg and rear hip, on the LEFT of the body. The central front apron is NOT part of this layer, even where a walking stride makes its lower hem extend left of the hip. Preserve the COMPLETE rear train silhouette, including ALL of its inner lining and underside fabric visible along the leftmost and bottommost rear hems. A pale or white lining sewn to the rear train is rear cloth, not trousers or a front apron: keep it in full with its original folds and colour. Reconstruct the hidden attachment, but exclude the separate central front apron. When a finished torso layer is supplied as an additional reference, it is an EXCLUSION GUIDE: remove every skirt panel and embroidered hem already present in that torso. Keep only the remaining rear train and its lining. Do not redraw the torso guide into this output. End the attachment at the back of the hip, not around the whole waist. Omit the entire wraparound skirt: no front-facing panel, no rightward-pointing flap and no white fabric between the thighs. Reconstruct only the hidden rear attachment as matching fabric",
@@ -69,7 +112,14 @@ def hand_prompt():
 
 def prompt(slot):
     keep, remove, _ = SLOTS[slot]
-    return COMMON.format(keep=keep, remove=remove)
+    if slot != "appendage_back":
+        remove += ", the complete separate rear biological appendage including its hidden root, scales, spikes and tip"
+    result = COMMON.format(keep=keep, remove=remove)
+    if slot in ('head', 'torso'):
+        result += '\n' + NATURAL_NECK
+    if slot in ('arm_near', 'arm_far'):
+        result += '\n' + NATURAL_HANDS + '\nPreserve the accepted reference hand pose exactly; reconstruct only hidden anatomy. Do not re-pose fingers during separation.'
+    return result
 
 # The supported first production profile. The older SLOTS/prompts remain an
 # experimental route; do not silently send a basic job through that route.
@@ -111,10 +161,11 @@ or the guide's flat placeholder colours in the final art.
 Use a portrait 1024 x 1536 canvas, figure about 85% of its height, all edges inside a generous margin.
 Even flat/cel lighting and crisp opaque artwork, no blur or motion smear. No text, labels, guides,
 shadow, glow, floor or scenery. Outside the figure is solid pure magenta #FF00FF. No magenta or
-pink-purple in the character. Output a single static image, not a sheet or collage."""
+pink-purple in the character. Output a single static image, not a sheet or collage.
+""" + "\n" + NATURAL_NECK + "\n" + NATURAL_HANDS
 
 BASIC_KEEP = {
-    'torso': ('ONE SLEEVELESS short vest/body garment only: bare neck column, collar, closed chest, belly, waist belt and hip-length hem. Reconstruct plain matching sharp navy chest fabric UNDER where the removed arm/shoulder cap was. The result has NO sleeve, NO shoulder shield/pauldron and NO upper-arm cap. Preserve the original small whole-canvas placement',
+    'torso': ('ONE SLEEVELESS short vest/body garment only: bare neck column, collar, closed chest, belly, waist belt and hip-length hem. Reconstruct the matching sharp source material and colour UNDER where the removed arm/shoulder cap was, preserving exposed skin/scales when present. The result has NO sleeve, NO shoulder shield/pauldron and NO upper-arm cap. Preserve the original small whole-canvas placement',
               'head, face, hair, BOTH WHOLE ARMS including every sleeve and every shoulder plate/pauldron, hands, legs, weapons and all fabric below the hips. The ornate rounded shoulder/upper-arm shield is an ARM part: remove it completely even if it overlaps the chest; do not leave a duplicate emblem-shaped plate on this vest'),
     'leg_far': ('exactly ONE complete REAR LEG ending in the LEFTMOST boot, from its own hip root through its own thigh, knee and shin to the whole heel/sole/toe. One unbranched limb only. Reconstruct its hidden upper thigh, not a shared pelvis or a pair of shorts',
                 'the other leg COMPLETELY, including its upper thigh and knee even if only a short cut-off stump is visible. No Y-shaped trouser branch, no second thigh, no shared waistband/crotch spanning both legs. Remove torso, belt, hips garment, arms, head and weapon'),
@@ -136,6 +187,8 @@ REPAIR_RULES = {
     'blur': 'Repaint crisp matching seams, fingers, fabric folds and contours. No blur, translucent smear, stretched texture or ghost outline.',
     'registration': 'Restore the exact full canvas, original pose, position and scale. Never zoom or recenter an isolated small part.',
     'reference': 'Regenerate the complete standard reference following every pose, clothing, weapon-count and visibility requirement. Do not work around a failed reference by changing rig parameters.',
+    'neck': NATURAL_NECK,
+    'hand_pose': NATURAL_HANDS + '\nRepair the original reference if its hand pose is wrong. If separation alone damaged it, restore the accepted reference pose in the arm layer. Regenerate its hand hint only from the repaired finished arm, never use a hint to re-pose the hand.',
 }
 
 
@@ -153,7 +206,10 @@ def basic_prompt(slot):
     if slot in HAND_HINTS:
         return hand_prompt() + '\nThe source is the FINISHED ' + HAND_HINTS[slot] + ' layer, not the full character. Keep the exact wrist and fingers; never invent a different hand.\n'
     keep, remove = BASIC_KEEP.get(slot, SLOTS[slot][:2])
-    return COMMON.format(keep=keep, remove=remove) + """
+    anatomy = ('\n' + NATURAL_NECK if slot in ('head', 'torso') else
+               '\n' + NATURAL_HANDS + '\nPreserve the accepted reference hand pose exactly; do not re-pose during separation.'
+               if slot in ('arm_near', 'arm_far') else '')
+    return COMMON.format(keep=keep, remove=remove) + anatomy + """
 
 BASIC-SIDE-V1 acceptance: one complete connected requested part only. Preserve sharp drawn detail;
 no stump limbs, detached fragments, ghost art, duplicate garment pieces or extra equipment.

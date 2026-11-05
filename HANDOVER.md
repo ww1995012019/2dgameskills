@@ -1,5 +1,228 @@
 # 交接文档
 
+## 2026-11-04 先提交，再返修头颈与手型，合并预览
+
+- 按用户要求先将上一轮提示词及视觉门禁独立提交为 `b5fa487`，再进行本轮返修；
+  Skill 仓库未推送。当前是返修预览，用户动态认可与正式 schema 3 视觉结论仍 pending，
+  不恢复旧版本已撤回的 pass，也不将浏览器遍历帧数当成自然度证明。
+- 通用绑定新增 `head.neck_skin="torso"`：颈根网格跟随最终胸部三角形，向上渐变至刚性头骨；
+  原图的颜色与 alpha 保留。原登记图中已有的领口按材质证据生成深度 mask，只有原领口
+  像素重绘在隐藏颈根前，重复裸颈仍在头后。mask 按统一规则推导，没有逐角色绘制补丁、
+  放大领口或手调关节。材质推断可能不适用其他素材，必须保留头颈静态/动态复核。
+- 新 bind 默认给 idle/walk/run 使用 `neck_inertia_v1`，按胸部延迟及垂直加速度增加有界头部
+  响应；只改变头通道，攻击作者曲线和共享恢复姿态保留。旧 binding/profile 默认行为不变。
+  `check_neck` 对每个导出帧的真实网格三角形检查共享源点，独立于可选肢体检查，1 输出像素
+  限值未放宽；注入 run 第 4 帧僵硬颈根的测试能定位动作和帧。此项不识别画出的解剖切边。
+- 固定 hand_pose 参考返修提示保留整图登记、手腕位置和持物手，只放松空手指节；先重画完整
+  受影响手臂，再生成 hint。怪物沿用原额度新增 7 次：reference2、head2失败/head3、
+  arm_near2、arm_far3、双手 hint 各2；累计23次，head/far arm/torso/tail 已各用满3次。
+  剑客只新增 head 第2次，累计13次；没有重开预算。失败输出与固定提示保留在 work。
+- 两个实际案例分别在 `ember-horn-20261105/job/repair_v2` 与
+  `jade-swordsman-20261104/job/repair_v6`，原角色与动作完整保留。新绑定重新自动测量几何，
+  沿用已有动作作者参数。怪物82帧idle/19帧run，剑客72/17/34/46帧，共270帧；
+  数值0 FAIL/0 WARN，实际颈根最大漂移分别0.0425px/0.0136px。怪物101帧四肢隔离连接、
+  尾根接触和尾巴离地检查无故障，长尾仍为已授权的整段刚性随骨盆试验。
+- 已查看当前全身、关节、肩臂、腰胯、头颈和双手放大静态图，观察单独保存为
+  `review_observations.json`，未填写虚假的动态视觉 pass。当前原附件字节仍不可取，
+  generated_identity_proxy 身份来源未升级为原上传图证明。
+- 验证汇总 `/workspace/work/character-repair-v2`：完整81模块初跑，之后修正 body-only
+  测试夹具兼容性，并针对最终颈根/材质路径重跑；按最新 discover 核对672个唯一 ID，
+  664 pass、8 expectedFailure、0 failure/error/skip、0遗漏。初始三角形插值漂移、
+  夹具缺属性和逐像素材质 mask 的问题均修根因，原日志保留，未放宽限制。
+  26套全量回归0 FAIL；cutout_demo原HD8/pixel7 WARN保留。与b5fa对应完整产物相比，
+  20,555个PNG及动画清单逐字节一致，状态与数值无新增漂移。历史baseline仍0回退、
+  116 changed/102 drifted，未更新基线。两个案例270帧图集alpha及可见RGB还原完全一致。
+- 原怪物 Site 增加角色/原版返修版切换、头部/颈根/近远手聚焦；剑客四动作仍可查看。
+  Chromium实际遍历前后两版全部540帧、多次循环及重播，暂停、慢放、前后逐帧、seek、
+  翻转、三背景、GIF下载和重斩直达参数通过；390px无横向溢出、0页面异常，桌面和手机
+  截图已看。原址发布succeeded： https://ember-horn-preview-7e2c9a.ww1995012019.chatgpt.site 。
+  网页源码提交712241d9671c3cb3d86664714831a1d089a95258，发布状态见案例
+  `website_deployment.json`；原 owner-private 访问范围保留。
+
+## 2026-11-04 用户否决头颈/手势；通用验收补漏（提交 b5fa487，历史）
+
+- 用户明确指出长角怪物的颈部像分离件、人形和怪物头部僵硬、空手姿态不自然。
+  **撤回这些项目此前的视觉通过结论**；历史数值结果只说明其原有测量项，不能当成用户验收。
+  放大登记图确认怪物头层底部的外翻三角颈覆盖围巾；这是可见内部切边，alpha 相连仍会漏检。
+- 固定参考图/头颈/双臂提示词新增物种适用的连续颈部、放松空手、正常腕线和安全闭合握持要求，
+  禁止三角颈片、贴头、夸张张爪和蜘蛛状手指。移除 basic torso 中误带的 navy 专用颜色。
+  参考语义复核新增 natural_neck_attachment/natural_hand_pose；相关图层也必须单独审核，
+  手提示图保留完成臂层姿态，不用提示图重新摆手。neck/hand_pose 固定返修复用原三次额度。
+- shared visual review schema 3：所有适用动作新增 neck_*/hands_* 放大图、整段循环 GIF，
+  按实际头/胸相对角和双腕极值选帧。每个 indexed pose 及每个动作的播放都必须有明确观察；
+  缺证据、缺文件、改覆盖/时长/FPS、旧 schema 或替换文件会失效。新缺陷类别全部为 blocker。
+- 这次补的是通用生成约束、证据生成和阻断漏审；**没有新增自动语义视觉模型，也没有实现软颈蒙皮**。
+  头部/手势自然度需真实动态复核，旧角色不能因 Skill 更新自动改称已修好。项目原图与试验文件
+  留在 /workspace/work/skill-repair-neck-hands，未入公开仓库，生图额度没有重置、没有新增生图。
+- 验证：80 个测试模块独立进程运行，按完整 discover 的 659 个唯一 ID 核对，651 pass、
+  8 expectedFailure、0 failure/error/skip，0 漏项。原有 6 个已知缺口保留；本次新增 19 个
+  通过的验收测试，另用 2 个 expectedFailure 明示 alpha 接触不能识别画出的颈部切边、
+  手部边缘能量不能识别异常手势。初跑 5 项浏览器测试受沙箱 socket 限制失败，授予浏览器
+  启动所需网络权限后全部复跑通过，原始失败日志保留，未修改测试来回避问题。
+- 26 套全量回归退出 0、0 FAIL；cutout_demo 的 HD 8 / pixel 7 个原有 WARN 不变。
+  相比上次提交对应的完整产物，20,555 个 PNG 文件和全部 animations.json 逐字节一致，
+  QA 状态/数值也无漂移；历史 baseline 仍为 0 回退、116 changed、102 drifted，未更新基线。
+  shared/modes 同步及全部安装包 freshness 检查通过，三个受影响的 .skill 已重打包。
+- 两个真实案例的 6 个动作、270 帧生成了新版头颈/双手放大图和完整播放证据。
+  当前旧视觉 pass 已撤回并归档，build/quality_revocation.json 保留用户否决及具体问题；
+  新版观察仍待完成，**没有将旧图或新流程标成自然度验收通过**。验证汇总位于上述 work 目录的
+  validation/suite/verified-summary.json、validation/regression-verified.json 与 real-case-validation.json。
+
+## 魔角战士：长尾试作、待机/跑步与独立预览
+
+用户换了一张紫灰鳞甲、熔岩纹、巨角、骨甲、长尾的恶魔人形参考，要求先看idle/run；随后明确选择
+“保留长尾试做，收短布条；尾巴按实验方案处理”。本次在开始前说明基础范围冲突，再按该授权
+使用实验路径；没有开一个被拒的basic任务后绕过拒绝。尾巴首版是完整曲线整段跟随骨盆，
+不是逐节尾巴或通用生物运动的生产验收。案例 `/workspace/work/character-cases/ember-horn-20261105`。
+
+- 原图仅在聊天和生图工具可见，没有原文件字节/ID。标准侧视图同时登记为generated_identity_proxy；
+  不把生成图哈希当原附件的证明。保留脸型、角、骨甲、紫灰/骨白/红色；红布收短，去掉长吊链、
+  长辫等。`identity_notes.md`明确可见特征、隐藏解剖的不确定性和造型改动。
+- `generation_ledger.json`记录实际16次生图：reference1、arm_near1、arm_far2、leg_near1、
+  leg_far1、hips1、head1、torso3、appendage_back3、双手hint各1。逐阶段最多3次没有重置。
+  失败图、原因及固定修复提示保存在job/art-history和prompts。躯干前两次误增长裙，第三次
+  改回原短布条；后臂第二次修清肩根；尾巴第三次去掉误复制的臀/髋甲。双手hint是标记不绘制；
+  后臂仅肩根返修后重新复核旧hint，当前alpha重合97.5%，不谎称重画了hint。
+- 通用可选`appendage_back`在layer_slots/layer_parts内，basic层白名单不包含它。调用已有rigid
+  renderer按自动测量的hip/body_rot承载完整原图曲线，不新增物种代码、不手改图片或关节。
+  独立源接触门禁要求尾根与torso/hips交叠且位于测量腿长1/4的骨盆邻域；本例根距离腿长0.00061。
+  初版把服装重复归属的alpha比例误用于被衣服遮挡的生物根部，两个体型的合法短尾也复现误拒；
+  恢复该短尾fixture，按现有臂根归属的原则区分被遮挡的根部与重复衣服，旧服装阈值未改。
+  当前追加3项合成体型/尺度/漂浮和非骨盆接触故障测试，不将合成测试称两种真实生物验收。
+- 正式bind通过、覆盖95.4%、spill0.7%；所有当前原始部件、layers_check和bind_joints均复核。
+  `job/layer_verdict.json`覆盖10个原图/手hint的五项语义检查，绑定源和当前图层哈希。
+  `motion_v1`的body/puppet与正式bind完全相同，只经已有gait/style接口作者更慢的呼吸与重体跑步；
+  步幅为测量腿长0.90倍、起伏0.02倍。没有改变身体比例或绑定坐标。
+- 原渲染器按全部27动作算画幅，未请求的roll将本例fit压到0.562，导致idle/run太小。
+  新增可选`--fit-selected-clips`给generate/contact_sheet；完整registry仍保留模拟和衔接依赖，
+  仅请求动作和对应布料计算公共画幅。默认路径保持原结果，trace记录framing_scope；本例fit1.737、
+  unit4.68157。未输出动作没有此画幅保证。两种体型及含远处未选动作/披风的测试验证该范围。
+- 当前512px/30fps，idle82帧/2.7333秒，run19帧/0.6333秒，共101帧。两动作数值0 FAIL/0 WARN；
+  看完五张必需审查图、12个indexed腰胯pose的干净图和实际骨线、run0/2/8/12/18原帧；
+  当前版本化视觉pass、0开放问题，--check通过。独立隔离alpha检查101时间点的四肢根部/近端
+  和尾根实际接触、尾巴地面净空，0故障；这是测量加人工复核，不是自动语义识别。
+  独立检查脚本最初误把网格当二维点表，修为展平坐标后重跑；没有改动动画或阈值。
+- 图集101帧alpha与可见RGB还原完全一致。idle精灵图4096x5632有手机4096尺寸提示，网页使用
+  3943x3595图集，不用该CSS精灵图。两个GIF按10ms时钟量化，原PNG/图集未改写。
+- 独立owner-private网页已发布succeeded：
+  https://ember-horn-preview-7e2c9a.ww1995012019.chatgpt.site 。
+  源码 `/workspace/work/sites/ember-horn-preview-20261105`，project_id保存在.openai/hosting.json；
+  提交fb0930305edf06240b7c5688b3d180ebdc1f6954已推送，发布记录在motion_v1/website_deployment.json。
+  Chromium实际播放全部82/19帧和多次循环，暂停、调速、逐帧、拖动、翻转、三背景、GIF下载及
+  ?clip=run入口通过；双朝向完整边界通过，390px无横向溢出、0页面异常，桌面/手机截图已看。
+  剑客原网页没有覆盖；用户对新角色动态观感的认可仍pending。本例未做Godot/Unity等引擎导入验收。
+
+本轮通用改动的最终验证保存在案例根目录：独立79模块发现638个唯一测试ID，实际综合覆盖
+632通过、6项既有expectedFailure，0遗漏/额外ID/剩余失败/跳过，见complete-suite-verified.json。
+首次全量运行实际637项（新画幅测试在发现之后加入），有9项环境失败：未设置系统Chromium
+路径，Godot尝试向只读用户目录写日志；补任务专用XDG目录和Chromium路径后引擎6项及CSS3项
+完整重跑通过，原失败日志保留。最终运行库相关10项又针对当前源哈希通过，包含新画幅与
+两体型后附肢检查。初次定向命令缺dev/tests导入路径的日志保留，未冒充通过。
+26套最终重跑0 FAIL；cutout_demo保持原HD8/像素7 WARN，其余0 WARN。与上一剑客验证的
+26套相比，19214帧PNG文件集合/逐字节、所有图集页及动画清单均完全一致；普通baseline仍为
+0状态回退、历史116 changed/102 drifted未变，未更新基准，也不称历史严格baseline通过。
+源/模式/5个安装包同步及新鲜度、diff空白检查通过。本次本地Git提交包含握剑绑定修正、
+实验性后附肢、所选动作画幅、两个新增测试文件、同步副本、安装包及交接文档；Skill提交尚未推送。
+两个新增测试文件已由独立发现和实际运行覆盖。网页独立源码已按上文SHA推送发布。
+
+## 白绿金剑客：新增大幅重斩与网页更新（2026-11-05）
+
+用户要求“那就加个大幅攻击的状态看看”，本次同一剑客新增heavy_slash，更新原网页。
+案例 `/workspace/work/character-cases/jade-swordsman-20261104/job/motion_v5_heavy`：
+
+- 复用正式绑定和美术，0次新生图。body/puppet、原有gait及thrust数据与motion_v4_thrust
+  完全相同，仅使用已有custom_clips接口作者举剑过头蓄势、向前下劈、低位跟随、收剑复位。
+  重心移动按绑定腿长比例，双脚目标固定；没有改动skill运行库或手调绑定几何。
+- 512px/30fps，46帧单次动作，源1.5秒，清单播放1.5333秒，next/prev均idle。
+  hit_on/off为15/22帧，仅提供元数据。四动作169帧与4项攻击/待机衔接数值0 FAIL/0 WARN。
+  实际单位比例与v4相同，原idle72/run17/thrust34帧PNG逐字节一致。
+- 看完全部五张必需视觉图（含23个indexed腰胯pose及骨线）与重斩11/15/17/22原始RGBA帧，
+  版本化视觉pass、0开放问题，--check通过。独立隔离alpha连接检查按实际生成器的全部clips
+  初始化Renderer，精确匹配unit_px，检查重斩46个时间点的近远臂/腿，0故障、阈值未改。
+  最初检查夹具只给Renderer四动作，导致fit单位不同而断言退出；改用生成器实际全部clips后
+  重跑通过，没有改变动画或阈值。图集169帧的alpha及可见RGB全部还原一致。
+- 网页四按钮并默认重斩，沿用单次结束停留600ms再自动重播，支持暂停/慢放/双向逐帧与下载。
+  Chromium实际看到全部72/17/34/46帧和各动作多次重播；两攻击的末帧停留及手动重播均通过。
+  手机390px无横向溢出，双朝向所有帧边界通过，0页面异常；桌面/手机截图已看，见website-check.json。
+- Site源码提交486aa36fb4d3fc3d5eb3decb07c38c9555f9e4d2已推送并原址发布succeeded：
+  https://jade-swordsman-preview-f13a8d.ww1995012019.chatgpt.site 。owner-private访问范围未变。
+  deployment/version/source记录在本例website_deployment.json。用户对动态观感的认可仍pending。
+  本次只做动作数据/网页，未把前轮634项/26套测试当作本次新运行的结果。
+
+## 白绿金剑客：新增刺剑与网页更新（2026-11-05）
+
+用户明确要求“再做一个 刺剑的动作”，本轮在同一角色上增加thrust，并更新原owner-private网页。
+此前只做idle/run的范围是历史快照，不能继续用来拒绝本次已明确授权的攻击动作。
+案例 `/workspace/work/character-cases/jade-swordsman-20261104/job/motion_v4_thrust`：
+
+- 复用已审核的图层与绑定，0次新生图，body/puppet及已有gait与motion_v3完全相同。
+  只用文档已有custom_clips接口作者单手刺剑：待机、收臂蓄势、送剑、短暂伸展、收剑复位。
+  前移与下沉按绑定腿长比例定义，脚部目标固定；没有修改绑定关节或skill运行库。
+  `author_thrust.py`、`thrust.motion.json`及provenance保存动作来源。
+- 512px/30fps，thrust为34帧单次动作，源曲线1.1秒，清单播放时长1.1333秒，next为idle。
+  hit_on/off元数据在9/14帧；本轮不声称接入游戏命中逻辑。三动作共123帧，动作及
+  idle->thrust->idle两项衔接数值0 FAIL/0 WARN。原72帧idle及17帧run的PNG逐字节相同。
+- 当前五张必需视觉图（含每个indexed pose的腰胯干净图/实际骨线）和刺剑6/11/13帧
+  RGBA原帧均已复核，版本化视觉pass、0开放问题，--check通过。图集还原123帧的alpha
+  与可见像素全部一致。用户动态认可仍为pending，未当作用户已经接受新动作。
+- 原网页增加刺剑按钮并默认展示该动作，单次结束停留600ms后重播，支持末帧重新播放、
+  前后逐帧与拖动。GIF也加600ms复位停留，清单仍是单次动作。三按钮手机布局与双朝向
+  画幅检查通过，缓存版本随本次更新。当前浏览器实际看到了72/17/34帧及重复播放，
+  暂停/调速/翻转/背景/下载均通过，390px无横向溢出，0页面错误；见website-check.json。
+  首次浏览器计时夹具在已有RAF之后安装虚拟钟导致收集不足，修正为导航前安装后完整重测。
+- 同一个Site静态源码提交 `9bcec0b1f48f8855ee8812e0384e674963dddcb7` 已推送并发布成功：
+  https://jade-swordsman-preview-f13a8d.ww1995012019.chatgpt.site 。仍为owner-private，
+  访问范围未变，显示标题改为“剑客 · 动作预览”。发布ID/版本/源SHA见本例website_deployment.json。
+  本轮没有改动skill运行库，也没有把前一轮634项/26套的验证冒充本轮新跑结果。
+
+## 白绿金剑客：待机与跑步初稿（2026-11-04）
+
+用户提供长发、宽袖、长袍持剑男性参考，随后明确选择保留脸型、白绿金配色和佩剑，
+改为束发、收袖、短下摆，先做待机与跑步。本轮没有扩展其他动作。案例在
+`/workspace/work/character-cases/jade-swordsman-20261104/job`，素材与动画不在 Git 中。
+原附件仅在聊天可见，没有归档原始字节；工作参考明确登记为 generated_identity_proxy，
+不将生成副本当作上传原图。`generation_ledger.json` 记录12次实际生图：参考1次、躯干2次，
+其余7个美术层与双手提示图各1次。第一版躯干缺少裸颈，按固定修复提示重画；未手调关节坐标。
+
+- 使用 basic-side-v1 的固定提示词、参考/逐层复核、双手提示图与正式自动绑定。用户明确要求
+  run，所以绑定后只通过已有的 motion/gait 数据接口导出 idle/run，不将默认 idle/walk
+  命令的限制当作本轮拒绝 run 的理由，也不称为默认 basic 流程的全动作验收。
+- 发现自动绑定仍用前臂14%的猜测握点，真实手掌与剑柄接触时可能被拒。`layer_parts.py`
+  现在仅在存在已复核、已配准的 near hand hint 时，取真实手/剑/近腕区域交集中的占据像素，
+  导出已有 runtime 支持的沿臂/横臂握点偏移与源相对腕角，并锁定持剑手网格末端。
+  无提示图时原固定握点与拒绝规则保留。它测量像素接触，不自动识别剑柄；仍须看原图、
+  独立剑和手。新增两种手形、两个尺度及错位/前臂接触的故障测试，更新正式流程集成断言。
+- 正式绑定后的 body/puppet 未手改。motion_v2/v3 只作者 run 的步幅、起伏与双臂/武器通道；
+  步幅为绑定腿长的1.05倍，起伏为0.025倍。第一版默认 run 腕角超限，第二版空手与握剑手
+  过近，失败报告、帧和复核历史保留。第三版降低空手前摆，四条问题记录均以改变帧证据解决。
+- 当前 `build`：512px、30fps，idle 72帧/2.4秒、run 17帧/0.5667秒，共89帧。
+  两动作数值0 FAIL/0 WARN；五张当前视觉图（含逐pose腰胯干净图及实际骨线）复核通过，
+  `visual_review.py --check` 通过。这是审核者对本例画面的判断，用户动态认可仍为 pending。
+- Chromium 实际加载当前自包含预览与图集，虚拟时钟驱动真实播放器，见到全部89帧，
+  run 3次、idle 2次回绕；暂停、逐帧、翻转、调速正常，390px窗口无横向溢出，0页面错误。
+  证据 `motion_v3/browser-check.json`。本例没有另外做 Godot/Unity 等引擎的导入验收。
+- `motion_v3/preview-media` 保存GIF和透明动画WebP。GIF时钟按10ms量化，run为570ms；
+  WebP的可见像素和alpha逐帧相同，编码器改写了全透明处RGB，不能称原RGBA逐像素相同。
+  原始PNG帧、图集、QA和审核资产没有为聊天预览改写。
+
+通用修正的全库检查记录在案例父目录的 `code-checks/`：77模块实际覆盖634项，
+628通过、6项既有expectedFailure，0错误/失败/跳过。按独立新发现的634个测试ID核对，
+没有缺漏、重复或额外项，见 `complete-suite-verified.json`。并行运行器的父进程最初因
+导入顺序将两个模块计为1项，原summary的612不是实际执行数；两个模块在独立子进程
+分别执行9/15项通过，最后以实际日志和新发现ID完成核对。首次单进程中断日志保留，
+不称为通过。26套回归整体退出0，cutout_demo仍为HD8 WARN/像素7 WARN，其余无警告；
+普通baseline比较0状态回退，历史116 changed/102 drifted仍存在，未更新baseline，
+未宣称历史严格像素比较通过。共用/模式同步、5个安装包新鲜度与diff空白检查通过。
+Skill修正代码未提交、未推送。用户随后要求“挂个网页看看”，已用Sites发布仅owner可访问的预览：
+https://jade-swordsman-preview-f13a8d.ww1995012019.chatgpt.site 。
+源码在 `/workspace/work/sites/jade-swordsman-preview-20261104`，project_id保存在其
+`.openai/hosting.json`。网页只复用本例已审核的两动作图集与播放器，没有新增动作；支持动作切换、
+暂停、上一/下一帧、拖动时间轴、调速、翻转、三种背景和GIF下载。画幅按两朝向的全部帧边界
+共同计算，不逐帧缩放。Chromium实际看到全部89帧及循环，手机390px无横向溢出、0页面异常。
+`motion_v3/website-check.json`、桌面/手机截图与 `website_deployment.json` 保存当前证据。
+Site源码提交 `78b4942671c3c673cefbefd250f1db195a8a2f6f` 已推送，静态包发布返回succeeded；
+未修改访问范围。用户对动作本身的动态认可仍为pending。
+
 ## 骨骼配准与腰胯接缝漏审（2026-11-04）
 
 用户明确暂停游戏开发，先修 skill。街头对决 `3640b6a` 的手写蒙皮把整条裤子沿中线切成独立双腿，

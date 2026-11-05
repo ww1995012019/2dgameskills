@@ -98,6 +98,30 @@ class CharacterWorkflow(unittest.TestCase):
                 with self.assertRaisesRegex(cw.lp.Rejected, 'exported rig was changed'):
                     cw.preview_job(self.job)
 
+    def test_reference_without_specific_neck_or_hand_review_is_refused(self):
+        self.prepare()
+        layers, hip = self.fixture()
+        self.reference(layers)
+        original = cw.read_json(self.job/'reference_review.json')
+        for check in ('natural_neck_attachment', 'natural_hand_pose'):
+            review = json.loads(json.dumps(original))
+            del review['checks'][check]
+            cw.write_json(self.job/'reference_review.json', review)
+            with self.subTest(check=check), self.assertRaisesRegex(cw.lp.Rejected, check):
+                cw.accepted_reference(self.job)
+
+    def test_layer_neck_cut_and_unnatural_hand_cannot_inherit_base_check_passes(self):
+        self.prepare()
+        layers, hip = self.fixture()
+        self.reference(layers); self.layers(layers, hip)
+        original = cw.read_json(self.job/'layer_review.json')
+        for slot, check in (('head', 'natural_neck_attachment'), ('torso', 'natural_neck_attachment'),
+                            ('arm_near', 'natural_hand_pose'), ('hand_far_hint', 'natural_hand_pose')):
+            review = json.loads(json.dumps(original))
+            del review['layers'][slot]['checks'][check]
+            with self.subTest(slot=slot), self.assertRaisesRegex(cw.lp.Rejected, slot + ': ' + check):
+                cw.accepted_layers(self.job, cw.read_json(self.job/'job.json'), review)
+
     def test_simple_sword_uses_one_separate_weapon_and_measured_hand_contact(self):
         self.prepare('sword')
         layers, hip = self.fixture()
@@ -119,7 +143,14 @@ class CharacterWorkflow(unittest.TestCase):
         spec = cw.read_json(self.job/'rig/character.json')
         self.assertEqual(spec['weapon'],'sword')
         self.assertIn('weapon',spec['puppet']['layers'])
-        np.testing.assert_allclose(spec['puppet']['layers']['weapon']['anchor'],grip,atol=0.02)
+        measured = np.asarray(spec['puppet']['layers']['weapon']['anchor'])
+        weapon = keyed(sword)[...,3] > 128
+        self.assertTrue((arm & hint & weapon)[round(measured[1]), round(measured[0])])
+        self.assertTrue(spec['puppet']['layers']['arm_near']['tip_lock'])
+        self.assertIn('weapon_hand_angle',spec['body'])
+        frame = cw.lp.measured_grip_frame(measured, measured+axis*100, joints)
+        for key in ('weapon_grip_along','weapon_grip_across'):
+            self.assertAlmostEqual(spec['body'][key],frame[key],places=5)
 
     def test_installable_packages_include_the_same_default_workflow(self):
         import zipfile

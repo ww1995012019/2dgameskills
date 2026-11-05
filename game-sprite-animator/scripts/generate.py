@@ -24,7 +24,7 @@ from sprite_anim.motions import SEAMS, Gait, NaturalWalk, GroundedGaitHold, buil
 from sprite_anim.integrity import HUMANOID_BONES  # noqa: E402
 from sprite_anim.part_check import check_parts  # noqa: E402
 from sprite_anim.occlusion_review import clip_candidates, write_report as write_occlusion_report  # noqa: E402
-from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion, check_attachments  # noqa: E402
+from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion, check_attachments, check_neck  # noqa: E402
 from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_count, frame_time, playback_speed, walk_hold_phase, to_u8  # noqa: E402
 from sprite_anim.rig import Body  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
@@ -48,6 +48,7 @@ def rig_trace(clip, n, fps, art, unit_px, size):
     recorder = JointRecorder(TRACE_JOINTS, unit_px)
     tr = recorder.joints
     metrics = []
+    head_motion = dict(head_world_deg=[], chest_world_deg=[], relative_deg=[])
     feet = {"n": dict(heel=[], ball=[]), "f": dict(heel=[], ball=[])}
     contacts = {"n": [], "f": []}
     # Where each joint lands in the frame, squash included, for the bone-coverage check.
@@ -58,6 +59,9 @@ def rig_trace(clip, n, fps, art, unit_px, size):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t))
         sk = solve(pose, body)
+        for key, value in (('head_world_deg', sk['head_rot']), ('chest_world_deg', sk['chest_rot']),
+                           ('relative_deg', sk['head_rot'] - sk['chest_rot'])):
+            head_motion[key].append(round(float(value), 6))
         recorder.append(sk)
         cv.set_squash(pose["squash"], 0.0)
         for j, track in skeleton.items():
@@ -70,6 +74,7 @@ def rig_trace(clip, n, fps, art, unit_px, size):
                 feet[s][key].append([round(pt[0] * unit_px, 3), round(pt[1] * unit_px, 3)])
             contacts[s].append(bool(c.get(s, False)))
     return dict(joints=tr, skeleton=skeleton, smear=smear, feet=feet, contacts=contacts, metrics=metrics,
+                head_motion=head_motion,
                 frame_dt=1.0 / fps)
 
 
@@ -82,6 +87,7 @@ def main():
     ap.add_argument("--fps-override", help="per-clip fps, e.g. idle=15,crouch_idle=15")
     ap.add_argument("--pixel", action="store_true", help="force pixel-art output")
     ap.add_argument("--clips", default="all", help="comma list; default all")
+    ap.add_argument("--fit-selected-clips", action="store_true", help="frame only the exported clips; other clips retain simulation dependencies but are not included in the viewport guarantee")
     ap.add_argument("--motion-blur", type=int, default=1, help="temporal samples per frame (HD only)")
     ap.add_argument("--grounded-settle", action="store_true", help="bake contact-locked flat-foot standing banks for natural walk")
     ap.add_argument("--no-fx", action="store_true")
@@ -150,10 +156,12 @@ def main():
         os.makedirs(os.path.join(root, sub), exist_ok=True)
 
     t0 = time.time()
-    r = Renderer(spec, size, pixel, motion_blur=a.motion_blur, clips=clips)
+    r = Renderer(spec, size, pixel, motion_blur=a.motion_blur, clips=clips,
+                 fit_clips={n: clips[n] for n in names} if a.fit_selected_clips else None)
     print(f"[bake] cloth chains {[d.name for d in r.defs]} in {time.time() - t0:.1f}s")
     unit_px = r.unit
-    print(f"[fit] character scale {r.fit:.3f} to keep every action inside the frame")
+    fit_scope = "exported clips" if a.fit_selected_clips else "every available action"
+    print(f"[fit] character scale {r.fit:.3f} to keep {fit_scope} inside the frame")
     pivot = (size // 2, int(size * GROUND_FRAC))
 
     rendered, meta, sheets, traces = {}, {}, {}, {}
@@ -254,6 +262,7 @@ def main():
             problems += check_motion(r, clips[nm], len(rendered[nm]["frames"]), over.get(nm, fps))
             problems += check_hands(r, spec, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
             problems += check_core(r, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
+            problems += check_neck(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
             if spec.get('puppet', {}).get('attachment_checks', False):
                 problems += check_attachments(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
                 occlusion_candidates += clip_candidates(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
@@ -264,6 +273,11 @@ def main():
             print(f"[review] {occlusion_summary['check_command']}")
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
+                       **({'neck_skinning': dict(source_bindings={name:report for name, (_, _, report) in r.art.puppet.neck_bindings.items()},
+                                                 clips=getattr(r, 'neck_checks', {}))}
+                          if r.art.puppet and r.art.puppet.neck_bindings else {}),
+                       **({'portrait_review_required': True} if r.art.puppet else {}),
+                       **({"framing_scope": names} if a.fit_selected_clips else {}),
                        part_problems=problems, **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
                        head_size=r.art.body.head_size,

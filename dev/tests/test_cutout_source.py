@@ -201,7 +201,9 @@ class TestJointSheet(unittest.TestCase):
                 entry = next(e for e in index['sheets'] if e['sheet'] == name)
                 return {'verdict': 'pass', 'checks': {k: dict(status='pass', evidence='synthetic fixture inspected', **(
                     {'observations': [dict(clip=p['clip'], frame=p['frame'], evidence='Synthetic source waist/hip connection inspected') for p in entry.get('poses', [])]}
-                    if k in visual_review.PELVIS_CHECKS else {})) for k in visual_review.checks_for_sheet(name)}}
+                    if k in visual_review.POSE_CHECKS else {}), **(
+                    {'playback': [dict(clip=p['clip'], file=p['file'], evidence='Synthetic complete playback inspected') for p in entry.get('playback', [])]}
+                    if k in visual_review.TEMPORAL_CHECKS else {})) for k in visual_review.checks_for_sheet(name)}}
             with open(verdict, "w", encoding="utf-8") as fh:
                 json.dump({"reviewer": "test", "review_id": index["review_id"],
                            "sheets": {s: row(s) for s in sheets}}, fh)

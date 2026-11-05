@@ -533,6 +533,41 @@ def check_grip(arm, weapon, joints):
     return grip
 
 
+def measured_hand_grip(arm, weapon, joints, hand):
+    """Use registered hand/weapon contact when an inspected hand hint is available.
+
+    The legacy fixed palm offset is not a measurement of a drawn fist. Keep its
+    distal-hand contact constraint, but derive the pivot from actual overlapping
+    pixels. This does not identify a handle semantically: source/layer review must
+    still establish that the character holds the intended grip rather than a blade.
+    """
+    wrist, tip = (np.asarray(joints[k]) for k in ('wrist', 'tip'))
+    radius = max(2., float(np.linalg.norm(tip - wrist)))
+    yy, xx = np.indices(arm.shape)
+    distal = (xx - wrist[0]) ** 2 + (yy - wrist[1]) ** 2 <= radius ** 2
+    contact = arm & weapon & hand & distal
+    ys, xs = np.nonzero(contact)
+    if not len(xs):
+        raise Rejected("weapon: no contact with the registered hand; remake weapon/arm or supply hand_near_hint")
+    points = np.column_stack((xs, ys)).astype(float)
+    # Pick an occupied contact pixel: a centroid can fall in a gap between fingers.
+    centre = points.mean(axis=0)
+    return points[np.argmin(np.sum((points - centre) ** 2, axis=1))]
+
+
+def measured_grip_frame(grip, tip, joints):
+    """The existing runtime palm transform, measured in the source forearm frame."""
+    wrist, elbow = (np.asarray(joints[k]) for k in ('wrist', 'elbow'))
+    forearm = (wrist - elbow) * (1, -1)
+    offset = (grip - wrist) * (1, -1)
+    length_sq = float(forearm @ forearm)
+    if length_sq <= 0 or not np.isfinite(length_sq):
+        raise Rejected("weapon: invalid forearm for the measured grip")
+    return dict(weapon_grip_along=float(offset @ forearm / length_sq),
+                weapon_grip_across=float(offset @ np.array([-forearm[1], forearm[0]]) / length_sq),
+                weapon_hand_angle=angle_down(grip, tip) - angle_down(elbow, wrist))
+
+
 def angle_down(a, b):
     """Degrees from straight down to a->b, forward positive. Picture pixels, y down."""
     return math.degrees(math.atan2(b[0] - a[0], b[1] - a[1]))
@@ -673,6 +708,67 @@ def check_neck_contact(masks):
         raise Rejected("head/torso: no continuous neck overlap after registration; remake the complete neck down to the collar")
 
 
+def neck_front_material_mask(head, torso, ref, seat, waist):
+    """Which existing material owns the registered neck overlap in the source?
+
+    A reconstructed neck may sit behind an existing collar. Do not paint a
+    patch, enlarge a collar or use depth to waive a broken geometric seam.
+    """
+    seat, waist = np.asarray(seat, float), np.asarray(waist, float)
+    length = float(np.linalg.norm(seat-waist))
+    mask=np.zeros(head.shape[:2],bool)
+    if not length:
+        return mask, dict(status='insufficient_source_evidence')
+    axis = (seat-waist)/length
+    yy, xx = np.indices(head.shape[:2]);delta=np.stack((xx-seat[0], yy-seat[1]), -1)
+    along=delta@axis;cross=delta@np.array([-axis[1], axis[0]])
+    region=(along>-.35*length)&(along<.02*length)&(np.abs(cross)<.4*length)
+    shared = (head[...,3]>128)&(torso[...,3]>128)&(ref[...,3]>128)&region
+    if shared.sum()<16:
+        return mask, dict(status='insufficient_source_evidence')
+    reference=ref[shared,:3].astype(float)
+    child=head[shared,:3].astype(float);parent=torso[shared,:3].astype(float)
+    a=np.abs(child-reference).mean(1);b=np.abs(parent-reference).mean(1)
+    def hs(rgb):
+        mx=rgb.max(1);mn=rgb.min(1);span=mx-mn;s=span/np.maximum(mx,1.)
+        safe=np.maximum(span,1.);r,g,blue=rgb.T
+        h=np.choose(rgb.argmax(1),[(g-blue)/safe,(blue-r)/safe+2.,(r-g)/safe+4.])/6.
+        return h%1.,s
+    skin_pixels=head[shared&(along<=0),:3]
+    if not len(skin_pixels):
+        return mask,dict(status='insufficient_source_evidence')
+    skin=np.median(skin_pixels,axis=0)
+    sh,ss=hs(skin[None]);valid=(torso[...,3]>250)&(ref[...,3]>250)&region
+    rgb=torso[valid,:3].astype(float);original=ref[valid,:3].astype(float)
+    ph,ps=hs(rgb);rh,rs=hs(original)
+    def different(h,s):
+        hue=np.abs(h-sh[0]);hue=np.minimum(hue,1-hue)
+        return (np.abs(s-ss[0])>.10)|((np.minimum(s,ss[0])>.12)&(hue>.10))
+    # Confident source-matching material seeds locate a continuous collar edge.
+    # Filling below that edge retains dark folds/highlights without speckled
+    # holes, while the duplicate bare-neck cap remains behind the head skin.
+    seeds=np.zeros(mask.shape,bool)
+    seeds[valid]=different(ph,ps)&different(rh,rs)&(rgb.max(1)>45)&(np.abs(rgb-original).mean(1)<38.)&(head[valid,3]>8)
+    bins=np.floor(cross).astype(int);minimum=int(bins[region].min());bins-=minimum
+    top=np.full(int(bins.max())+1,-np.inf)
+    np.maximum.at(top,bins[seeds],along[seeds])
+    known=np.flatnonzero(np.isfinite(top))
+    if len(known)>=3:
+        curve=np.interp(np.arange(len(top)),known,top[known])
+        padded=np.pad(curve,2,mode='edge');curve=np.median(np.stack([padded[i:i+len(curve)] for i in range(5)]),axis=0)
+        lookup=np.clip(bins,0,len(curve)-1)
+        mask=((torso[...,3]>250)&region&(bins>=known[0])&(bins<=known[-1])&(along<=curve[lookup]))
+    return mask,dict(status='source_compared',front='source_selected_collar',
+                     head_error=round(float(a.mean()),3),torso_error=round(float(b.mean()),3),
+                     pixels=int(shared.sum()),front_pixels=int(mask.sum()),material_seeds=int(seeds.sum()),
+                     method='source_material_collar_edge')
+
+
+def neck_material_depth(head,torso,ref,seat,waist):
+    mask,report=neck_front_material_mask(head,torso,ref,seat,waist)
+    return bool(mask.any()),report
+
+
 def registration(name, layer, ref, cache_dir=None):
     """Reuse only an identical input and algorithm, including after a refused bind.
 
@@ -718,6 +814,26 @@ def trailing_frame(root, hip, waist, neck, body_rest, chest_rest):
     if float((np.asarray(root) - waist) @ spine) > 0:
         return "waist", "chest_rot", waist, chest_rest
     return "hip", "body_rot", hip, body_rest
+
+
+def rear_appendage_binding(mask, parent, hip, leg_px):
+    """Carry a whole rear shape with a measured covered pelvic root.
+
+    Source curvature stays rigid; the existing pelvis frame supplies its motion.
+    This does not model a flexible tail or approve the appendage's anatomy.
+    """
+    ys, xs = np.nonzero(mask & parent)
+    if not len(xs):
+        raise Rejected("appendage_back: no overlapping pelvic root; reconstruct the hidden attachment")
+    distances = (xs - hip[0]) ** 2 + (ys - hip[1]) ** 2
+    index = int(np.argmin(distances))
+    distance = float(np.sqrt(distances[index]))
+    if distance > float(leg_px) * .25:
+        raise Rejected("appendage_back: contact is away from the pelvis; reconstruct the pelvic root")
+    layer = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
+    contact = dict(model="rigid_pelvis_follow", root_source_px=[int(xs[index]), int(ys[index])],
+                   root_distance_leg_share=round(distance / leg_px, 5), articulated=False)
+    return layer, contact
 
 
 def bind(ref, layers, fit_cache=None, diagnostics=None):
@@ -794,6 +910,10 @@ def _bind(ref, layers, fit_cache, diagnostics):
 
     masks = {n: a[..., 3] > 128 for n, a in out.items()}
     check_neck_contact(masks)
+    # Cloth slots must not repeat the same garment as torso. A rear biological
+    # root is deliberately covered by the torso/hip garment, like an arm root;
+    # alpha overlap there does not establish duplicated artwork. Its measured
+    # pelvic contact and explicit source/motion review are separate gates.
     for name in ("cloth_back", "hair_back", "robe"):
         if name in masks and (masks[name] & masks["torso"]).sum() > MAX_SHARED * masks[name].sum():
             raise Rejected(f"torso: it also holds the art of {name}, so that cloth would be drawn twice; make torso again")
@@ -936,20 +1056,36 @@ def _bind(ref, layers, fit_cache, diagnostics):
         robe_len = max(float(robe_ys.max()) - hip[1], 0.25 * near_px) * 1.1
         robe_hem = hip + thighs / (np.hypot(*thighs) or 1) * robe_len
         tube("robe", ["robe_hem", "hip", "waist"], [robe_hem, hip, waist])
-    data["head"] = dict(kind="rigid", follow=["head_base", "head_rot"], anchor=[round(float(v), 2) for v in head_base])
+    data["head"] = dict(kind="rigid", follow=["head_base", "head_rot"],
+                        anchor=[round(float(v), 2) for v in head_base], neck_skin='torso')
+    front_mask, depth = neck_front_material_mask(out['head'], out['torso'], ref, head_base, waist)
+    diagnostics['neck_material_depth'] = depth
+    if front_mask.any():
+        diagnostics['neck_front_mask']=front_mask.astype(np.uint8)*255
     data["hips"] = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
+    if "appendage_back" in out:
+        data["appendage_back"], contact = rear_appendage_binding(
+            masks["appendage_back"], masks["hips"] | masks["torso"], hip, (near_px + far_px) / 2)
+        diagnostics["rear_appendage"] = contact
 
     weapon_len = None
     weapon_back = 0.0
     wep_rest = None
     fa_n = angle_down(an["elbow"], an["wrist"])
     if "weapon" in out:
-        grip = check_grip(masks["arm_near"], masks["weapon"], an)
+        measured_hand = hand_masks.get("arm_near")
+        grip = (measured_hand_grip(masks["arm_near"], masks["weapon"], an, measured_hand)
+                if measured_hand is not None else check_grip(masks["arm_near"], masks["weapon"], an))
         ys, xs = np.nonzero(masks["weapon"])
         far = np.argmax((xs - grip[0]) ** 2 + (ys - grip[1]) ** 2)
         tip = np.array([float(xs[far]), float(ys[far])])
         weapon_len = float(np.hypot(*(tip - grip)) / ppu)
         wep_rest = angle_down(grip, tip)
+        if measured_hand is not None:
+            frame = measured_grip_frame(grip, tip, an)
+            body.update(frame)
+            data["arm_near"]["tip_lock"] = True
+            diagnostics["weapon_binding"] = dict(method="registered_hand_contact", grip_source_px=grip.tolist(), **frame)
         axis = (tip - grip) / (np.hypot(*(tip - grip)) or 1)
         weapon_back = max(float(-((xs - grip[0]) * axis[0] + (ys - grip[1]) * axis[1]).min()) / ppu, 0.0)
         data["weapon"] = dict(kind="rigid", follow=["wr_n", "wep_a"], anchor=[round(float(v), 2) for v in grip])
@@ -1002,6 +1138,8 @@ def _bind(ref, layers, fit_cache, diagnostics):
     if wep_rest is not None:
         gait["walk"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)     # a carried blade stays steady
         gait["idle"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)
+    for clip in ('idle', 'walk', 'run'):
+        gait.setdefault(clip, {})['head_response'] = 'neck_inertia_v1'
     puppet = dict(px_per_unit=round(float(ppu), 4), joints={k: [round(float(x), 2) for x in v] for k, v in joints.items()},
                   rest_angles={k: round(float(v), 3) for k, v in rest_angles.items()}, skirt_len=round(float(skirt_len / ppu), 3),
                   core_radius=round(core_px / ppu, 3),
@@ -1013,6 +1151,8 @@ def _bind(ref, layers, fit_cache, diagnostics):
     if weapon_len:
         puppet.update(weapon_length=round(weapon_len, 2), weapon_back=round(weapon_back, 2))
         body.update(weapon_front=round(weapon_len, 2), weapon_back=round(weapon_back, 2))
+    depth_order=list(out)
+    diagnostics['layer_depth_order']=depth_order
     return out, dict(puppet=puppet, body=body, gait=gait), dict(bone_pair_ratios=pair_ratios, fits=fits, cover=round(cover, 3), spill=round(spill, 3), px_per_unit=round(float(ppu), 3))
 
 
@@ -1020,8 +1160,13 @@ def save_diagnostics(folder, ref, state):
     """Always replace prior diagnostics; rejected runs never leave a stale success report."""
     os.makedirs(folder, exist_ok=True)
     canvas = Image.new("RGBA", (ref.shape[1], ref.shape[0]), (60, 62, 74, 255))
-    for arr in state.get("layers", {}).values():
+    layers=state.get('layers', {})
+    for name in state.get('layer_depth_order', list(layers)):
+        arr=layers[name]
         canvas.alpha_composite(Image.fromarray(arr, "RGBA"))
+        if name=='head' and 'neck_front_mask' in state:
+            front=layers['torso'].copy();front[...,3]=np.minimum(front[...,3],state['neck_front_mask'])
+            canvas.alpha_composite(Image.fromarray(front,'RGBA'))
     canvas.save(os.path.join(folder, "layers_check.png"))
     from PIL import ImageDraw
     draw = ImageDraw.Draw(canvas)
@@ -1032,7 +1177,9 @@ def save_diagnostics(folder, ref, state):
             draw.ellipse((x-5, y-5, x+5, y+5), fill=colour)
         draw.text(tuple(points[0]), name, fill=colour)
     canvas.save(os.path.join(folder, "bind_joints.png"))
-    report = {k: v for k, v in state.items() if k != "layers"}
+    report = {k: v for k, v in state.items() if k not in ("layers",'neck_front_mask')}
+    if 'neck_front_mask' in state:
+        Image.fromarray(state['neck_front_mask'],'L').save(os.path.join(folder,'neck_front_mask.png'))
     with open(os.path.join(folder, "bind_report.json"), "w", encoding="utf-8") as target:
         json.dump(report, target, ensure_ascii=False, indent=1)
 
@@ -1047,6 +1194,9 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
         box = Image.fromarray(arr[..., 3]).getbbox()
         Image.fromarray(arr, "RGBA").crop(box).save(os.path.join(folder, name + ".png"))
         spec["puppet"]["layers"][name].update(image=f"layers/{name}.png", offset=[box[0], box[1]])
+        if name=='torso' and 'neck_front_mask' in state:
+            Image.fromarray(state['neck_front_mask'],'L').crop(box).save(os.path.join(folder,'torso-neck-front.png'))
+            spec['puppet']['layers'][name]['front_mask']='layers/torso-neck-front.png'
     Image.fromarray(ref, "RGBA").save(os.path.join(out_dir, "source.png"))
     spec.update(name=character_name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
     with open(os.path.join(out_dir, "character.json"), "w", encoding="utf-8") as fh:
@@ -1058,7 +1208,8 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
 
 
 REFERENCE_CHECKS = ("right_side_view", "complete_separate_arms", "visible_separate_legs",
-                    "planted_feet", "unobscured_limbs", "separate_garments", "expected_weapons")
+                    "planted_feet", "unobscured_limbs", "separate_garments", "expected_weapons",
+                    "natural_neck_attachment", "natural_hand_pose")
 
 
 def reference_review_template(image):

@@ -268,6 +268,8 @@ class Gait(Clip):
         self.head, self.arm_n, self.arm_f, self.wep = head, arm_n, arm_f, wep
         self.peak, self.tan, self.sh, self.hp, self.surge = peak, tan, sh, hp, surge
         self.wep_sway = 4.0
+        self.head_response = None
+        self.head_lever = 10.0
         d = duty
         self.pitch = Curve(
             [0, 0.17 * d, 0.5 * d, d, d + 0.3 * (1 - d), d + 0.72 * (1 - d)],
@@ -312,10 +314,19 @@ class Gait(Clip):
         c1 = math.cos(TAU * ph)
         an, af = self.arm_n, self.arm_f
         head = -self.lean * 0.9 if self.head is None else self.head
+        head_sway = .9 * math.cos(TAU*2*(lag('head')-.12))
+        if self.head_response == 'neck_inertia_v1':
+            # Delayed chest counterrotation plus a bounded response to vertical
+            # acceleration. The lever is measured from this body's head size.
+            delayed = ph-LAG['head']/self.T
+            chest = .8*math.cos(TAU*2*(delayed-self.bob_at)) + .8*math.cos(TAU*2*(delayed-.1))
+            acceleration = self.bob*(2*TAU/self.T)**2
+            nod = min(3.5, math.degrees(acceleration*LAG['head']**2/max(self.head_lever, 1.)))
+            head_sway = -.65*chest + nod*math.cos(TAU*2*(delayed-self.bob_at))
         p = P(
             root_y=self.hip - self.bob * c2, root_x=self.surge * math.cos(TAU * 2 * (ph - 0.22)),
             pelvis=self.pelvis + 0.8 * c2, spine=self.lean + 0.8 * math.cos(TAU * 2 * (ph - 0.1)),
-            head=head + 0.9 * math.cos(TAU * 2 * (lag("head") - 0.12)),
+            head=head + head_sway,
             sh=self.sh * -c1, hp=self.hp * c1,
             arm_n_up=an[0] - an[1] * c1,
             arm_n_lo=an[2] + an[3] * math.cos(TAU * (lag("arm_n_lo") - 0.62)),
@@ -577,6 +588,10 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
     idle_arms = dict(arm_n=(-4, 1.6, 30, 2.4), arm_f=(14, 1.8, 26, 2.6))
     idle_carry = (gait or {}).get("idle", {})
     for key, values in idle_carry.items():
+        if key == 'head_response':
+            if values != 'neck_inertia_v1':
+                raise ValueError('gait.idle.head_response: unsupported response profile')
+            continue
         if key in ("wep", "wep_sway"):
             if (isinstance(values, bool) or not isinstance(values, (int, float))
                     or not math.isfinite(values) or key == "wep_sway" and values < 0):
@@ -661,6 +676,10 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
         p["spine"] += 1.1 * s(0.08) * bn
         p["pelvis"] += 0.3 * s(0.2)
         p["head"] += -0.9 * s(0.2)
+        if idle_carry.get('head_response') == 'neck_inertia_v1':
+            # Breathing response is zero at the shared rest/recovery pose;
+            # existing authored attacks retain their seam and head keys.
+            p['head'] += bn*(1.2*math.sin(TAU*ph) - .65*1.1*(s(.08)-math.sin(-TAU*.08)))
         p["arm_n_up"] += idle_arms["arm_n"][1] * s(0.16) * bn
         p["arm_n_lo"] += idle_arms["arm_n"][3] * s(0.26) * bn
         p["arm_f_up"] += idle_arms["arm_f"][1] * s(0.2) * bn
@@ -956,6 +975,11 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
                 out[name].low_weapon_carry()
             elif key == "stride":     # the feet must keep the ground speed, so the speed changes with it
                 out[name].stride(value)
+            elif key == 'head_response':
+                if value != 'neck_inertia_v1' or not isinstance(out[name], Gait):
+                    raise ValueError(f'gait.{name}.head_response: requires a gait and neck_inertia_v1')
+                out[name].head_response = value
+                out[name].head_lever = max(1., body.head_size*15.)
             elif key in ("arm_n", "arm_f", "wep", "wep_sway", "bob"):
                 setattr(out[name], key, tuple(value) if isinstance(value, list) else value)
             else:

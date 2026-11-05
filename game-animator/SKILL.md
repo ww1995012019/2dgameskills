@@ -5,6 +5,14 @@ description: Generate and inspect 2D game character sprite animations for side-v
 
 # Game Animator
 
+For humanoid art and animation, also enforce the selected mode's
+[head, neck and hand review](modes/game-sprite-animator/references/visual-review.md).
+Inspect the original head/torso and both complete hands before binding. Exposed neck cuts,
+a pasted-on head, rigid head/torso motion, unnatural finger splaying and broken wrists are blockers.
+Every applicable clip needs `neck_*.png`, `hands_*.png` and their complete motion playback,
+with current frame-specific and temporal observations. Pixel contact or a nonzero head angle
+cannot certify natural anatomy or motion. Do not carry forward older visual passes.
+
 For complete aligned layers with known joints, prefer the [zero-generation binding entry](modes/game-sprite-animator/references/known-joint-binding.md). Reuse existing pixels and joint metadata; hand-hint generation is unnecessary for this entry. Visual review remains required.
 
 For humanoid binding, read the selected mode's

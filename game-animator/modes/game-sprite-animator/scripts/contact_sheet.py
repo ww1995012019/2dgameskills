@@ -20,6 +20,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--character")
     ap.add_argument("--clips", default="idle,walk,run")
+    ap.add_argument("--fit-selected-clips", action="store_true", help="fit only the requested clip rows")
     ap.add_argument("--size", type=int, default=192)
     ap.add_argument("--pixel", action="store_true")
     ap.add_argument("--zoom", type=int, default=1)
@@ -33,11 +34,12 @@ def main():
         spec["_dir"] = os.path.dirname(os.path.abspath(a.character))
     clips = build_clips(spec.get("style"), spec.get("custom_clips"), spec.get("clip_key_overrides"),
                         gait=spec.get("gait"), body=Body.from_spec(spec.get("body")) if spec.get("puppet") else None)
-    r = Renderer(spec, a.size, a.pixel, clips=clips)
     names = [n for n in a.clips.split(",") if n] if a.clips != "all" else list(clips)
     unknown = [n for n in names if n not in clips]
     if unknown:
         sys.exit(f"unknown clips: {unknown}\navailable: {list(clips)}")
+    r = Renderer(spec, a.size, a.pixel, clips=clips,
+                 fit_clips={n: clips[n] for n in names} if a.fit_selected_clips else None)
     cell = a.size * a.zoom
     cols = a.cols or a.max_frames
     rows = len(names)

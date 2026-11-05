@@ -74,6 +74,14 @@ two separate legs/shoes on a ground line, empty background, and equipment count.
 with the source. Check the five basic-scope items too. No sleeve may hide a missing forearm; a complete
 hand at the end of a cuff does not establish a complete arm.
 
+The reference also requires `natural_neck_attachment` and `natural_hand_pose`. Enlarge the neck
+and BOTH hands: neck enters the collar without a skin/scales triangle, cut line or detached-head
+appearance; empty hands have gentle finger curvature, a coherent palm/thumb and neutral wrist.
+Keep species-specific claws and digit count without defaulting to a fan-splayed threatening grasp.
+A sword hand stays closed securely around its handle. User-requested expressive poses take
+precedence over the relaxed default but still require anatomical continuity. Fix a bad reference
+before separating layers; hints and binding cannot repair its gesture.
+
 Copy the template to a reviewer input such as `reference_verdict.json`, fill reviewer and every
 check with `status: pass` plus observed visual evidence only after inspection. Failed checks require
 a regenerated reference, not a passing value to unblock code.
@@ -102,7 +110,7 @@ python scripts/character_workflow.py layers --job hero
 
 Open `layer_review.png` for comparison, then EACH original full-size layer. The overview is not
 sufficient for judging fingers or seams. Complete `layer_review.template.json` into a reviewer input
-such as `layer_verdict.json`. Every layer and hand hint needs five explicit checks:
+such as `layer_verdict.json`. Every layer and hand hint needs these five base checks:
 
 | Check | Look for |
 |---|---|
@@ -111,6 +119,12 @@ such as `layer_verdict.json`. Every layer and hand hint needs five explicit chec
 | sharp_art | Crisp matching fingers, seams and contours; no smear, translucent ghost, stretched fill or blurry patch. |
 | unchanged_pose | Original canvas, pose, scale and location; no isolated part enlarged or centred. |
 | valid_attachment | Reconstructed hidden root and unoutlined overlapping cut, correct neck overlap, own shoulder, actual wrist hint; no separate floating attachment. |
+
+Head and torso additionally require `natural_neck_attachment`; arm layers and both hand hints
+require `natural_hand_pose`. Inspect the registered head/torso composite against the original:
+internal neck cuts must stay hidden INSIDE the matching neck, not overlap the front of the scarf
+or collar. A narrow alpha intersection alone is insufficient. Hints preserve the finished hand
+exactly; repair the source/reference or arm first rather than re-posing fingers in a hint.
 
 ```bash
 python scripts/character_workflow.py layers --job hero --review hero/layer_verdict.json
@@ -132,7 +146,7 @@ python scripts/character_workflow.py retry --job hero --stage arm_near --fault i
 ```
 
 `--stage` is `reference` or a required layer/hint. `--fault` is one of `reference`, `incomplete`,
-`extra_art`, `blur`, `registration`. This preserves the current image/reviews and the prompt used, records the observed
+`extra_art`, `blur`, `registration`, `neck`, `hand_pose`. This preserves the current image/reviews and the prompt used, records the observed
 fault, invalidates acceptance and writes `prompts/retry_<stage>.txt` combining the original fixed
 prompt, the observed failure as inspection data, and the fixed repair rule. The evidence must name
 the actual unwanted anatomy/object or missing segment; it is not a per-character joint offset. The agent uses that prompt on the appropriate original input and
@@ -143,6 +157,10 @@ stop and report the unresolved blocker and attempted repairs. Requesting a fourt
 a terminal `blocked` phase; other stage commands cannot silently reopen that job. Do not create a fresh job or rename a
 stage to reset the budget. Tools cannot observe image generations performed outside the workflow;
 the agent must log each attempt honestly. A reference retry requires inspecting all layers again.
+For `retry --stage reference --fault hand_pose`, the fixed `REFERENCE_HAND_REPAIR` prompt changes
+only empty-hand finger curl while preserving the full registration plate, wrist positions and
+any holding hand. Use the resulting reviewed reference to regenerate affected complete arms and
+then their hand hints within the SAME stage budgets. Do not relax fingers in a hint image.
 
 ## 5. Idle and walk, then user's quality gate
 

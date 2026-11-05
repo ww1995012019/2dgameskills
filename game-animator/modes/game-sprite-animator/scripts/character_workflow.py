@@ -13,9 +13,17 @@ from PIL import Image, ImageDraw
 import layer_parts as lp
 import visual_review as vr
 from sprite_anim.layer_slots import (BASIC_PROFILE, BASIC_SCOPE_CHECKS, BASIC_SLOTS, HAND_HINTS,
-                                    IDENTITY_PROMPT, REPAIR_RULES, basic_prompt, basic_reference_prompt)
+                                    IDENTITY_PROMPT, REPAIR_RULES, REFERENCE_HAND_REPAIR, basic_prompt, basic_reference_prompt)
 
 LAYER_CHECKS = ('complete_shape', 'exclusive_contents', 'sharp_art', 'unchanged_pose', 'valid_attachment')
+
+
+def layer_checks(name):
+    extra = (('natural_neck_attachment',) if name in ('head', 'torso') else
+             ('natural_hand_pose',) if name in ('arm_near', 'arm_far', *HAND_HINTS) else ())
+    return LAYER_CHECKS + extra
+
+
 MAX_ATTEMPTS = 3
 HERE = Path(__file__).resolve().parent
 
@@ -193,7 +201,7 @@ def layer_assets(root, job):
 
 def layer_template(root, job):
     return dict(profile=BASIC_PROFILE, reviewer='', assets=layer_assets(root, job), layers={
-        name: dict(checks={k: dict(status='pending', evidence='') for k in LAYER_CHECKS})
+        name: dict(checks={k: dict(status='pending', evidence='') for k in layer_checks(name)})
         for name in (*slots(job), *HAND_HINTS)})
 
 
@@ -206,7 +214,7 @@ def accepted_layers(root, job, path):
     if set(review.get('layers', {})) != set((*slots(job), *HAND_HINTS)):
         raise lp.Rejected('layer review must cover exactly every production layer and both hand hints')
     for name, row in review['layers'].items():
-        for check in LAYER_CHECKS:
+        for check in layer_checks(name):
             value = row.get('checks', {}).get(check, {})
             if value.get('status') != 'pass' or not isinstance(value.get('evidence'), str) or not value['evidence'].strip():
                 raise lp.Rejected(f'{name}: {check} not approved; use the fixed repair prompt or stop')
@@ -337,6 +345,8 @@ def retry(folder, stage, fault, reason):
         for name in (*slots(job), *HAND_HINTS):
             (root/'prompts'/f'{name}.txt').unlink(missing_ok=True)
     baseline = (root/'prompts/01_reference.txt').read_text(encoding='utf-8') if stage == 'reference' else basic_prompt(stage)
+    if stage == 'reference' and fault == 'hand_pose':
+        baseline = REFERENCE_HAND_REPAIR
     (root/'prompts'/f'retry_{stage}.txt').write_text(repair_prompt(baseline, fault, reason), encoding='utf-8')
     job['attempts'][stage] = attempt+1
     job['retries'].append(dict(stage=stage, attempt=attempt+1, fault=fault, evidence=reason))

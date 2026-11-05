@@ -57,6 +57,7 @@ and change nothing else.
 
 | Slot | Holds | Required |
 |---|---|---|
+| `appendage_back` | explicitly requested experimental rear biological appendage, kept as one rigid shape following the pelvis | no |
 | `hair_back` | long hair behind the head and back | no |
 | `cloth_back` | robe tail, sashes, cape | no |
 | `arm_far` | rear arm: hand further left, with sleeve | yes |
@@ -68,6 +69,22 @@ and change nothing else.
 | `head` | face, hair on the skull, and the exposed neck down to the collar, overlapping the torso's neck | yes |
 | `weapon` | the whole weapon | no |
 | `arm_near` | front arm: hand further right, with sleeve | yes |
+
+`appendage_back` is an opt-in experimental extension for a user who explicitly requests preservation
+of an unsupported rear appendage. It is not admitted by `basic-side-v1` and must not rescue a rejected
+basic job. It shares the existing `rigid` renderer and the measured pelvis frame: its complete source
+curve moves as one shape, without articulated or simulated tail bending. The binder requires alpha
+overlap with hips/torso within one quarter of measured leg length of the pelvis; this proves a covered
+source contact only. Review the full isolated appendage and its root contact in every delivered frame,
+including both facings and floor clearance. No species-specific joints or pixel adjustments are used.
+The garment-duplication alpha ratio is not applied to this slot: a rigid rear root must be hidden
+under a different opaque garment, so their masks legitimately overlap. This matches the existing
+arm-root ownership rule. Overlap alone is not proof of copied anatomy; inspect the exact registered
+materials and all source/motion layers. The two-build synthetic regression includes a shorter
+appendage with a large covered root; floating and non-pelvic contacts still fail the separate gate.
+Use the same three-generation-per-stage budget, preserve failed attempts, and record the explicit
+adaptation and user authorization separately from numerical acceptance. This extension does not
+establish production support for arbitrary creatures or all 27 actions.
 
 `hips` exists because the rest can't close the body. An image model stops the legs below the belt and
 splits the robe into panels, so background shows through the figure below the belt, in a pose the
@@ -160,6 +177,38 @@ height. Vertical movement is limited to 8% of torso height, horizontal movement
 to one quarter of that. Larger drift is refused. All colour, coverage and spill
 checks run on the seated result. Internal attachment edges have no dark cap
 outline, and the head's neck contains bare skin rather than a second collar.
+This static cross-section does NOT detect an exposed triangular neck base, a cut painted over
+the front of a collar, or stiff motion. Compare the registered composite with the source and
+complete the mandatory head/neck motion review in `visual-review.md`. Preserve skull/face identity;
+the base of the neck must follow the chest while the upper neck permits bounded independent
+head motion. A whole bare neck rotating like a rigid cardboard tab is a failed result.
+Legacy rigid-head binding has no soft neck skinning; report any exposed cut as a failed
+binding/motion stage. New layered binds set `head.neck_skin="torso"`: the registered opaque
+overlap defines a basal neck band whose vertices follow the actual final torso triangles.
+The transition ends before the rigid skull; shared source points retain a whole supporting
+mesh cell so a seam inside a cell cannot drift between locked vertices. No pixels are painted,
+removed or recoloured. Native `check_neck` checks final head/torso triangle correspondence on
+every exported frame at a 1-output-pixel limit, independently of optional limb checks.
+`rig_trace.json.neck_skinning` records the source probes and clip/frame measurements.
+The registered source also determines neck material depth: compare the existing head/torso
+pixels with the original within their shared neck overlap. When existing torso material matches
+the registered source and differs from inferred neck skin/scales, a source-derived torso `front_mask`
+places only those original collar texels above hidden neck art. The torso's duplicate bare neck
+stays behind the continuous head skin. Skinning uses the already-solved torso triangles for
+both passes; material depth is applied separately. The mask is exported with the registered
+torso, never supplied or painted per character. No collar
+is enlarged or repainted, and geometric seam checks remain mandatory. Insufficient/ambiguous
+source colour evidence keeps the default order and requires visual review. A hidden extension
+is acceptable only within the actual parent footprint with no exposed cut in source or motion.
+This does not recognize or repair a painted triangular cut over a collar. Do not erase the source,
+inflate the collar or alter one
+character's joints to hide it. A small harmonic head rotation is not evidence of natural motion.
+
+New binds also select `head_response="neck_inertia_v1"` for idle/walk/run. Breathing contributes
+a small chest counterresponse without changing the shared idle/recovery pose; gaits add delayed
+chest counterrotation and a bounded nod derived from vertical acceleration and measured head size.
+Only the head channel changes. Authored attack head keys, feet and root travel remain authoritative.
+This profile still requires full temporal review; it is not a guarantee of naturalness.
 The rear arm must reconstruct
 its own hidden shoulder rather than copying the visible front shoulder plate.
 Trailing fabric ends at the rear hip and excludes every front-facing skirt flap.
@@ -196,11 +245,16 @@ chains and the resulting bends; fully covered forearms supply no exposed-materia
 evidence. Tests cover two materials and scales plus covered-forearm rejection.
 
 A weapon must intersect the near arm inside the inferred hand region (a disc at
-the wrist with radius wrist-to-tip). The existing runtime grip, 14% of the forearm
-past the wrist, must be within 20% of that hand radius of weapon pixels (minimum
-two pixels). A failed contact or grip refuses binding and requests revised art
-or a hand hint. This validates the current single-hand attachment; it does not
-support arbitrary weapon shapes or two-hand constraints.
+the wrist with radius wrist-to-tip). With an inspected, registered near-hand hint,
+the binder also intersects that exact hand mask and measures the palm pivot from
+occupied contact pixels. It exports the measured along/across forearm offsets and
+source-relative wrist angle to the existing runtime, so the hand and handle share
+their pivot and turn. The binding report records this measurement. This is pixel
+contact, not semantic handle detection: inspect the source, isolated sword and fist
+to establish that it is the handle being held. Missing actual hand contact still
+refuses binding. Without a near-hand hint the legacy grip remains 14% of the forearm
+past the wrist and must be within 20% of the hand radius of weapon pixels (minimum
+two pixels). Neither path supports two-hand constraints or validates arbitrary weapons.
 
 Every attempted bind that reaches layer processing writes fresh `layers_check.png`,
 `bind_joints.png` and `bind_report.json`, even on rejection. Early rejections have
@@ -250,7 +304,13 @@ only: `crouch_walk` bends the knee on purpose, and a running stance flexes about
 cell shows no art whichever way it winds, while counting cells failed legs that looked right.
 
 Framing a painted puppet also measures the occupied source mesh cells at 120 Hz,
-including their real width and any reach below the pivot; skeleton endpoints and
+including rigid rear appendages. For an intentionally limited clip trial, `generate.py` and
+`contact_sheet.py` accept `--fit-selected-clips`: they keep the full registry for simulation and
+handover dependencies but compute one common viewport from only the requested clips and their
+cloth. Unexported actions have no framing guarantee. The default remains all available clips;
+no source pixels, joints or crop thresholds change. The trace records `framing_scope` when selected.
+
+The bounds include each layer's real width and any reach below the pivot; skeleton endpoints and
 cloth centrelines alone do not bound a wide robe or hair fan. Mesh relaxation
 averages neighbouring vertices, so the raw mapped bounds conservatively contain
 the relaxed art. Frame size and QA thresholds are not widened to hide cropping.

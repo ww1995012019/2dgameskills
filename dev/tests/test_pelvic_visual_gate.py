@@ -65,6 +65,8 @@ def accepted(root):
             check.update(status='pass', evidence='Synthetic fixture inspected; no claim about real art')
             for observation in check.get('observations', []):
                 observation['evidence'] = f"{observation['clip']} frame {observation['frame']}: fixture hip/waist path inspected"
+            for playback in check.get('playback', []):
+                playback['evidence'] = f"{playback['clip']}: synthetic complete playback inspected"
     return index, template
 
 

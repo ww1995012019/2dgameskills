@@ -157,7 +157,9 @@ class ShoulderReview(unittest.TestCase):
                 entry = next(e for e in index['sheets'] if e['sheet'] == name)
                 return {'verdict': 'pass', 'checks': {k: dict(status='pass', evidence='synthetic fixture inspected', **(
                     {'observations': [dict(clip=p['clip'], frame=p['frame'], evidence='Synthetic fixture hip connection inspected') for p in entry.get('poses', [])]}
-                    if k in review.PELVIS_CHECKS else {})) for k in review.checks_for_sheet(name)}}
+                    if k in review.POSE_CHECKS else {}), **(
+                    {'playback': [dict(clip=p['clip'], file=p['file'], evidence='Synthetic complete playback inspected') for p in entry.get('playback', [])]}
+                    if k in review.TEMPORAL_CHECKS else {})) for k in review.checks_for_sheet(name)}}
             verdict = {'reviewer': 'test', 'review_id': index['review_id'], 'sheets': {n: row(n) for n in names if n != 'shoulders_00.png'}}
             path = root / 'verdict.json'
             path.write_text(json.dumps(verdict))

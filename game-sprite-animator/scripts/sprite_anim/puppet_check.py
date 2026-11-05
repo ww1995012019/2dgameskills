@@ -27,6 +27,7 @@ SMEAR_STEEP = 0.16    # steepest step between neighbours, as a share of the tile
 SMEAR_SHARE = 0.03    # of a layer's filled tiles
 HAND_DETAIL = 0.55    # of the reference's edge energy at the same size
 HAND_FRAMES = 4       # frames sampled over the clip
+NECK_DRIFT_PX = 1.0   # same rendered-pixel tolerance as registered seam landmarks
 ARM_SPACING_SHARE = 0.5  # gross compression relative to readable reference arms, idle only
 FOLD_SHARE = 0.002    # of a layer's drawn mesh area inverted in any frame
 KINK_DEG = 42.0       # between neighbouring segments of a cloth chain
@@ -163,6 +164,52 @@ def check_core(renderer, clip, frames, fps):
             worst, at = share, i
     if worst > HOLE_SHARE:
         return [f"hole: {clip.name} frame {at}: {worst:.0%} of the body below the belt is see-through; make the hips layer again"]
+    return []
+
+
+def neck_surface_errors(puppet, meshes):
+    """Actual final triangle maps of shared opaque source neck points, in canvas pixels."""
+    from .puppet import mesh_points
+    layers = {layer.name: (layer, verts) for layer, verts in meshes}
+    out = {}
+    for name, (parent, _, report) in puppet.neck_bindings.items():
+        source = np.asarray(report['source_points'], float)
+        head, verts = layers[name]
+        _, body_verts = layers[parent.name]
+        errors = np.linalg.norm(mesh_points(head, verts, source)-mesh_points(parent, body_verts, source), axis=-1)
+        out[name] = float(errors.max())
+    return out
+
+
+def check_neck(renderer, clip, n, fps):
+    """Check moving neck roots independently of optional limb-attachment checks.
+
+    This measures skin correspondence, not the appearance of a painted cut edge.
+    Missing legacy neck skinning remains outside this numerical scope and still
+    requires the mandatory semantic head/neck review.
+    """
+    from .art import Canvas
+    from .render import GROUND_FRAC, frame_time
+    puppet = renderer.art.puppet
+    if not puppet.neck_bindings:
+        return []
+    cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
+    worst, at = 0., 0
+    for i in range(n):
+        t = frame_time(clip, i, n, fps)
+        pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
+        cv.set_squash(pose['squash'], 0.)
+        meshes = list(puppet.meshes(cv, sk, renderer.cloth_at(clip, t), 'ground' in clip.tags))
+        error = max(neck_surface_errors(puppet, meshes).values())/renderer.ss
+        if error > worst:
+            worst, at = error, i
+    if not hasattr(renderer, 'neck_checks'):
+        renderer.neck_checks = {}
+    renderer.neck_checks[clip.name] = dict(frames=n, max_drift_px=round(worst, 4),
+                                          worst_frame=at, limit_px=NECK_DRIFT_PX,
+                                          method='native_final_triangle_correspondence')
+    if worst > NECK_DRIFT_PX:
+        return [f'neck: {clip.name} frame {at}: shared head/torso neck root differs by {worst:.2f}px; repair the skin correspondence']
     return []
 
 
