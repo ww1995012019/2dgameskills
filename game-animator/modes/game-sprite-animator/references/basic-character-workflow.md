@@ -142,18 +142,23 @@ requires the owning job's accepted layers and unchanged `rig/character.json`; a 
 directory cannot bypass those checks. A successful numeric report is not a visual verdict, and
 calling a failed output a prototype does not authorize delivery or publication.
 
-Current basic bindings preserve registered hip-core placement and use `registered_pelvis_v1`
-to join the lower torso and both proximal trouser/shorts roots to the same pelvis surface.
-The transition follows the source garment contour; locking a whole opaque overlap would freeze
-a thigh's clothing. The constrained triangle solver preserves that seam and rejects inverted
-fabric. It moves geometry, never paints a seam cover. All limb attachment checks are mandatory.
+Current basic bindings preserve registered hip-core placement and use `registered_pelvis_v2`.
+Only the lower torso shares the pelvis surface. Each thigh has an anatomical rotating socket,
+with the source rest joint matching Body's measured seat, and a cap following its own first bone.
+Knee radii use local opaque cross-sections; shorts/boots must not enlarge the knee bend.
+The v1 shared-surface rule for whole thigh roots was wrong: its positive-area solver could flatten
+a thigh while reporting zero drift. That rule is not a valid release check. v2 separately checks
+rotation-covariant cap points, local parent contact, and opaque thigh-shaft strain on every frame.
+It moves geometry, never paints a seam cover. All limb attachment checks are mandatory.
 The source-valid interior core check excludes reference background instead of pulling pants
 upward to fill an imaginary constant-width body. Missing true source fabric still fails binding.
 
 `qa_motion.py` and the visual delivery gate independently require all frames/parts and the exact
 registered-source and RGBA hashes. Read every hips sheet: current basic exports include every
 frame rather than only extrema. Compare garment height and both waist edges against
-`binding_reference.png`; complete `source_garment_registration` as well as continuity/alignment.
+`binding_reference.png`; complete `source_garment_registration` and `limb_shape_preservation` as
+well as continuity/alignment. The crops include full thighs and knees. Compare identical frame
+times and equal pixel/world scale against the previous result before accepting a seam repair.
 
 ## 4. Bounded repairs
 

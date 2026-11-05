@@ -36,7 +36,7 @@ JOINTS = (("kn_n", "hip_n", "an_n"), ("kn_f", "hip_f", "an_f"), ("el_n", "sh_n",
 GROUND = (240, 184, 74, 255)
 BG = (58, 62, 74, 255)
 PELVIS_JOINTS = ("waist", "neck", "hip_n", "hip_f", "kn_n", "kn_f", "an_n", "an_f")
-PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity", "source_garment_registration")
+PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity", "source_garment_registration", "limb_shape_preservation")
 NECK_CHECKS = ("neck_continuity", "head_motion_naturalness")
 HAND_CHECKS = ("hand_pose_naturalness", "wrist_continuity")
 POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS
@@ -466,8 +466,9 @@ def pelvic_sheets(root, doc, trace, out):
             draw.text((4, top + 2), f"{name}: pelvis / crotch seam; art then rendered bones", fill="white")
             for col, pose in enumerate(poses):
                 frame, x = pose["frame"], col * PELVIS_CELL
-                points = np.array([sk[key][frame] for key in ("waist", "hip_n", "hip_f")]
-                                  + [(np.asarray(sk["hip_" + side][frame]) * .5 + np.asarray(sk["kn_" + side][frame]) * .5).tolist() for side in "nf"])
+                # Include complete thighs and knees: the old half-thigh crop
+                # concealed the very shape regressions a seam fix can create.
+                points = np.array([sk[key][frame] for key in ("waist", "hip_n", "hip_f", "kn_n", "kn_f")])
                 low, high = points.min(0), points.max(0)
                 pad = max(8, unit * 10)
                 side = max(float(max(high - low)) + 2 * pad, unit * 38, 24)

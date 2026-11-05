@@ -15,6 +15,8 @@ import math
 
 import numpy as np
 
+THIGH_DEFORMATION_LIMITS = dict(min_scale=.25,max_scale=3.,min_area=.15,max_area=3.,max_bad_share=.01,
+                                root_start=.15,knee_exclusion_radii=2.)
 
 def connection_report_faults(root, doc, trace):
     """Fail closed on missing/tampered full-frame registered connection evidence."""
@@ -30,12 +32,21 @@ def connection_report_faults(root, doc, trace):
         reference = Path(root)/'binding_reference.png'
         if hashlib.sha256(reference.read_bytes()).hexdigest() != data['source_reference_sha256']:
             raise ValueError('connection evidence uses a different registered source reference')
-        if data['method'] != 'registered_pelvis_overlap' or set(data['bindings']) != required:
+        if data['method'] != 'registered_articulations_v2' or set(data['bindings']) != required:
             raise ValueError('missing complete registered connection bindings')
+        if data.get('shape_limits') != THIGH_DEFORMATION_LIMITS:
+            raise ValueError('missing current thigh shape checks; zero connection drift is insufficient')
         for name, binding in data['bindings'].items():
             points = np.asarray(binding['source_points'], float)
             if points.ndim != 2 or points.shape[1] != 2 or len(points) < 4 or not np.isfinite(points).all():
                 raise ValueError(f'{name}: missing attachment edge samples')
+            expected = 'registered_pelvis_overlap' if name == 'torso' else 'registered_articulated_socket_v2'
+            if binding.get('method') != expected or binding.get('parent') != 'hips':
+                raise ValueError(f'{name}: incorrect registered joint/surface binding kind')
+            if name != 'torso':
+                joint = np.asarray(binding['source_joint'],float)
+                if joint.shape != (2,) or not np.isfinite(joint).all():
+                    raise ValueError(f'{name}: missing source joint registration')
         if set(data['clips']) != set(doc['clips']):
             raise ValueError('connection scope differs from exported clips')
         for clip, meta in doc['clips'].items():
@@ -50,6 +61,27 @@ def connection_report_faults(root, doc, trace):
                     if error > 1.0:
                         out.append(dict(clip=clip, frame=frame, part=name,
                                         what=f'registered garment connection separates by {error:.3f}px'))
+            shapes = row['shape_parts']
+            if set(shapes) != {'leg_near','leg_far'}:
+                raise ValueError(f'{clip}: missing both thigh shape measurements')
+            for name, measurements in shapes.items():
+                if len(measurements) != count:
+                    raise ValueError(f'{clip}/{name}: incomplete thigh shape frame coverage')
+                for frame, measured in enumerate(measurements):
+                    if type(measured.get('samples')) is not int or measured['samples'] < 1:
+                        raise ValueError(f'{clip}/{name}: missing opaque thigh material samples')
+                    for key in ('bad_share','min_scale','max_scale','min_area','max_area'):
+                        x = measured[key]
+                        if isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x):
+                            raise ValueError(f'{clip}/{name}: invalid thigh deformation measurement')
+                    if not 0 <= measured['bad_share'] <= 1:
+                        raise ValueError(f'{clip}/{name}: invalid deformed material share')
+                    if (measured['min_scale'] < 0 or measured['min_scale'] > measured['max_scale']
+                            or measured['min_area'] > measured['max_area']):
+                        raise ValueError(f'{clip}/{name}: inconsistent thigh deformation extrema')
+                    if measured['bad_share'] > THIGH_DEFORMATION_LIMITS['max_bad_share']:
+                        out.append(dict(clip=clip,frame=frame,part=name,
+                                        what=f"thigh material collapses or stretches over {measured['bad_share']:.1%} of its shaft"))
             hashes = data['frame_hashes'][clip]
             if len(hashes) != count:
                 raise ValueError(f'{clip}: missing measured RGBA frame hashes')

@@ -1065,6 +1065,27 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
                 # Preserve each measured attachment. Coincident screen-space
                 # shoulders are allowed, but must not be forced onto the art.
                 sh_n_at=round2(an["shoulder"]), sh_f_at=round2(af["shoulder"]), hip_n_at=[seat_x(ln["hip"]), round(seat_up, 3)], hip_f_at=[seat_x(lf["hip"]), round(seat_up, 3)])
+    if registered_connections:
+        # A leg cap is artwork, not an anatomical joint. Bind its first bone
+        # to the SAME source seat represented by Body, instead of freezing a
+        # large patch of thigh onto the pelvis to conceal mismatched seats.
+        up = (waist-hip)/np.linalg.norm(waist-hip)
+        forward = np.array([-up[1], up[0]])
+        for side, leg in (('n', ln), ('f', lf)):
+            local = body['hip_'+side+'_at']
+            leg['hip'] = hip+ppu*(forward*local[0]+up*local[1])
+            if side == 'n':
+                body['thigh'] = round(float(np.linalg.norm(leg['knee']-leg['hip'])/ppu), 3)
+        # Refit support height/stride after correcting the actual joints.
+        # Keeping the old cap-to-ankle height makes the shorter leg hover.
+        # A generated side view can foreshorten the far leg. As in the
+        # original basic rig, both anatomical legs share the near bone
+        # lengths; the far source curve retains its own measured artwork.
+        # Treating perspective as unequal anatomy causes hover or crouch.
+        legs = body['thigh']+body['shin']
+        mid = REACH_MID*legs
+        low = math.sqrt(max((REACH_END*legs)**2-(CONTACT_AHEAD*STRIDE*legs)**2,0.0))
+        body['hip_h'] = round(ANKLE_UP+GAIT_DROP+(mid+low)/2-seat_up,3)
 
     joints = dict(hip=hip, waist=waist, neck=neck, head_base=head_base, wr_n=an["wrist"], el_n=an["elbow"])
     def half(name):
@@ -1088,6 +1109,27 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
              foot=dict(side=side, ankle=[round(float(v), 2) for v in leg["ankle"]], shin_dir=[round(float(v), 4) for v in shin],
                        blend=round(0.6 * half(name), 2), width=round(half(name), 2),
                        rest_angle=round(math.degrees(math.atan2(leg["toe"][1] - leg["heel"][1], leg["toe"][0] - leg["heel"][0])), 2)))
+        if registered_connections:
+            # Shorts and boots inflate a whole-layer average width. A knee's
+            # bend radius comes from its own opaque cross-section.
+            axis = leg['ankle']-leg['hip'];axis /= np.linalg.norm(axis)
+            normal = np.array([-axis[1], axis[0]])
+            distances = np.arange(-3*half(name), 3*half(name)+.5, .5)
+            points = np.rint(leg['knee']+distances[:, None]*normal).astype(int)
+            inside = ((points[:, 0] >= 0)&(points[:, 1] >= 0)
+                      &(points[:, 0] < size[0])&(points[:, 1] < size[1]))
+            solid = np.zeros(len(points), bool)
+            solid[inside] = masks[name][points[inside, 1], points[inside, 0]]
+            at = int(np.argmin(np.abs(distances)));lo = hi = at
+            if not solid[at]:
+                raise Rejected(f'{name}: measured knee is outside its own artwork')
+            while lo > 0 and solid[lo-1]:lo -= 1
+            while hi+1 < len(solid) and solid[hi+1]:hi += 1
+            radius = min(half(name), float((distances[hi]-distances[lo]+.5)/2))
+            data[name].update(radius=round(radius, 2), source_frame=True,
+                              root_lock=True, pelvis_joint='hips')
+            diagnostics.setdefault('knee_cross_sections', {})[name] = dict(
+                average_radius=round(half(name), 2), knee_radius=round(radius, 2))
     # The torso's hanging panels bend between the thighs: a virtual joint below the hip.
     ys, xs = np.nonzero(masks["torso"])
     hem = float(ys.max())
@@ -1112,8 +1154,7 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
         diagnostics['neck_front_mask']=front_mask.astype(np.uint8)*255
     data["hips"] = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
     if registered_connections:
-        for name in ('torso', 'leg_near', 'leg_far'):
-            data[name].update(source_frame=True, pelvis_skin='hips')
+        data['torso'].update(source_frame=True, pelvis_skin='hips')
     if "appendage_back" in out:
         data["appendage_back"], contact = rear_appendage_binding(
             masks["appendage_back"], masks["hips"] | masks["torso"], hip, (near_px + far_px) / 2)
@@ -1198,7 +1239,7 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
                             "f": [[round(float(v), 2) for v in af["wrist"]], [round(float(v), 2) for v in af["elbow"]]]},
                   layers=ordered, chains=chains, source="source.png")
     if registered_connections:
-        puppet.update(connection_skinning='registered_pelvis_v1', attachment_checks=True)
+        puppet.update(connection_skinning='registered_pelvis_v2', attachment_checks=True)
     if "robe" in masks:
         puppet["robe_len"] = round(float(robe_len / ppu), 3)
     if weapon_len:
@@ -1252,7 +1293,7 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
             spec['puppet']['layers'][name]['front_mask']='layers/torso-neck-front.png'
     Image.fromarray(ref, "RGBA").save(os.path.join(out_dir, "source.png"))
     spec.update(name=character_name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
-    if spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v1':
+    if spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v2':
         from sprite_anim.puppet import Puppet
         try:
             Puppet(dict(spec, _dir=os.path.abspath(out_dir)))

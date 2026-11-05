@@ -288,7 +288,7 @@ def check_bound_rig(root, job):
     if bound.get('layer_review', {}).get('assets') != layer_assets(root, job) or bound.get('status') != 'accepted':
         raise lp.Rejected('rig is stale; bind the current reviewed layers again')
     spec = read_json(root/'rig/character.json')
-    if (spec.get('puppet', {}).get('connection_skinning') != 'registered_pelvis_v1'
+    if (spec.get('puppet', {}).get('connection_skinning') != 'registered_pelvis_v2'
             or spec['puppet'].get('attachment_checks') is not True):
         raise lp.Rejected('basic-side-v1 requires current registered pelvis and full attachment checks; rebind')
 

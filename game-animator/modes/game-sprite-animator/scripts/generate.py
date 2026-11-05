@@ -21,7 +21,7 @@ from sprite_anim.rig_data import JointRecorder  # noqa: E402
 from sprite_anim.constraints import frame_metrics  # noqa: E402
 from sprite_anim.fx import build_fx  # noqa: E402
 from sprite_anim.motions import SEAMS, Gait, NaturalWalk, GroundedGaitHold, build_clips  # noqa: E402
-from sprite_anim.integrity import HUMANOID_BONES  # noqa: E402
+from sprite_anim.integrity import HUMANOID_BONES, THIGH_DEFORMATION_LIMITS  # noqa: E402
 from sprite_anim.part_check import check_parts  # noqa: E402
 from sprite_anim.occlusion_review import clip_candidates, write_report as write_occlusion_report  # noqa: E402
 from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion, check_attachments, check_neck, check_connections  # noqa: E402
@@ -269,7 +269,7 @@ def main():
             problems += check_hands(r, spec, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
             problems += check_core(r, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
             problems += check_neck(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
-            if spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v1':
+            if spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v2':
                 problems += check_connections(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
             if spec.get('puppet', {}).get('attachment_checks', False):
                 problems += check_attachments(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
@@ -280,15 +280,16 @@ def main():
             print(f"[review] {occlusion_summary['candidates']} occlusion candidates; {occlusion_summary['status']}")
             print(f"[review] {occlusion_summary['check_command']}")
     connection_data = {}
-    if r.art.puppet and spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v1':
+    if r.art.puppet and spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v2':
         import hashlib
         shutil.copyfile(os.path.join(spec['_dir'],spec['puppet']['source']),os.path.join(root,'binding_reference.png'))
         with open(os.path.join(root,'binding_reference.png'),'rb') as source:
             source_reference_sha256=hashlib.sha256(source.read()).hexdigest()
         connection_data = dict(connection_review_required=True, connections=dict(
-            method='registered_pelvis_overlap',
+            method='registered_articulations_v2',shape_limits=THIGH_DEFORMATION_LIMITS,
             source_reference_sha256=source_reference_sha256,
-            bindings={name: report for name, (_, _, report) in r.art.puppet.pelvis_bindings.items()},
+            bindings={name: report for name, (_, _, report) in
+                      dict(r.art.puppet.pelvis_bindings,**r.art.puppet.socket_bindings).items()},
             clips=r.connection_checks,
             frame_hashes={name: [hashlib.sha256(str((f.shape[1], f.shape[0])).encode()+f.tobytes()).hexdigest()
                                   for f in rendered[name]['frames']] for name in names}))

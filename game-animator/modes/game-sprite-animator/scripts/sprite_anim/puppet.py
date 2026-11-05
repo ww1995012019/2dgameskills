@@ -137,6 +137,33 @@ def pelvis_blend_weights(child, parent, seat, distal):
                          attachment_start=attach, fade=fade)
 
 
+def joint_socket_binding(child, parent):
+    """Registered opaque joint with a cap that rotates with its own thigh.
+
+    Overlapping leg/pelvis pixels are separate surfaces, not a welded seam.
+    Never apply the pelvis's rigid rotation to the whole upper leg.
+    """
+    root, knee = child.rest[:2]
+    axis = (knee-root)/np.linalg.norm(knee-root)
+    for layer in (child, parent):
+        x, y = np.rint(root-layer.offset).astype(int)
+        alpha = np.asarray(layer.image)[..., 3]
+        if not (0 <= x < alpha.shape[1] and 0 <= y < alpha.shape[0] and alpha[y, x] > 128):
+            raise ValueError(f'joint socket: {child.name} source joint lacks opaque {layer.name} coverage')
+    y, x = np.nonzero(np.asarray(child.image)[..., 3] > 128)
+    points = np.column_stack((x, y))+child.offset
+    depth = (points-root)@axis
+    points = points[(depth >= -GRID)&(depth <= 0)]
+    if len(points) < 4:
+        raise ValueError(f'joint socket: {child.name} lacks a complete proximal cap')
+    points = points[np.lexsort((points[:, 0], points[:, 1]))]
+    indices = np.linspace(0, len(points)-1, min(96, len(points))).astype(int)
+    transverse = (points-root)@np.array([-axis[1], axis[0]])
+    samples = np.unique(np.vstack((points[indices],points[[transverse.argmin(),transverse.argmax()]])),axis=0)
+    return dict(method='registered_articulated_socket_v2',parent=parent.name,
+                source_joint=root.tolist(),source_points=samples.tolist())
+
+
 def corner_run(a, b, c, radius, reach):
     """How far along each bone the arc at corner b starts. A sharper corner needs a longer run to
     keep the same radius; a limb half as wide as that radius would otherwise pinch to a point."""
@@ -212,6 +239,7 @@ class Layer:
         self.anchor, self.follow = data.get("anchor"), data.get("follow")
         self.neck_skin = data.get('neck_skin')
         self.pelvis_skin = data.get('pelvis_skin')
+        self.pelvis_joint = data.get('pelvis_joint')
         im = Image.open(os.path.join(base, data["image"])).convert("RGBA")
         self.offset = np.array(data.get("offset", (0, 0)), dtype=np.float64)
         self.image = im
@@ -554,6 +582,7 @@ class Puppet:
         self.mips = {}
         self.neck_bindings = {}
         self.pelvis_bindings = {}
+        self.socket_bindings = {}
         indexed = {layer.name: layer for layer in self.layers}
         for layer in self.layers:
             if layer.neck_skin:
@@ -569,6 +598,13 @@ class Puppet:
                 seat, distal = (self.joints['hip'], self.joints['waist']) if layer.name == 'torso' else layer.rest[:2]
                 weights, report = pelvis_blend_weights(layer, parent, seat, distal)
                 self.pelvis_bindings[layer.name] = (parent, weights, report)
+            if layer.pelvis_joint:
+                parent = indexed.get(layer.pelvis_joint)
+                if (layer.name not in ('leg_near','leg_far') or layer.kind != 'tube'
+                        or parent is None or parent.name != 'hips' or parent.kind != 'rigid'
+                        or not layer.root_lock or layer.pelvis_skin):
+                    raise ValueError('articulated pelvis requires independent, root-locked thigh tubes')
+                self.socket_bindings[layer.name] = (parent,None,joint_socket_binding(layer,parent))
 
     def palette(self):
         cols = set()

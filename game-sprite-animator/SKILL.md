@@ -53,16 +53,26 @@ cut edge, background slit, doubled trouser panel or bone emerging from the wrong
 a blocker. Mandatory `rig_alignment` and `pelvis_continuity` observations must name the actual
 clip/frame. Missing trace or missing close-up evidence cannot become a pass.
 
-Basic jobs now require `registered_pelvis_v1`: the complete proximal garment contour follows
-one registered pelvis surface, while distal limbs articulate. Every exported frame must have
-measured torso/hip and both thigh-root correspondence, isolated limb attachment checks, and
+Basic jobs now require `registered_pelvis_v2`: the lower torso shares the pelvis surface;
+each thigh rotates about its own registered joint. Never weld the full thigh overlap to the
+pelvis. Source rest joints and the body's joint seats must agree, and knee bend radii come from
+the knee's own opaque width, excluding wide shorts and boots. Every exported frame must have
+measured torso/hip seams and rotating thigh-cap correspondence, isolated limb attachment checks, and
 RGBA-bound evidence in `rig_trace.json`. Missing frames, missing parts, changed pixels, or a
 separation over one output pixel block QA and visual acceptance. Rebind old basic rigs.
+Zero drift and positive triangle winding do not establish preserved anatomy: a solver can make
+all triangles positive by flattening them. Mandatory opaque thigh-shaft strain checks measure
+thickness, stretch and area, independently of the joint rotation. Missing shape evidence also
+blocks acceptance. Inspect complete thighs AND knees at native size and during playback; a
+pinched root, flattened leg, C-shaped thigh or displaced shorts hem is a blocker, even if a
+numeric connection check passes. Compare the same clip/frame with the pre-change rendering.
 Do not treat a dilated connected component, a covered centre strip, or a single joint contact as
 proof that a whole waist is closed. Inspect ALL generated waist frames on the new hips sheets,
 including both outer edges, on the checkerboard and a light background. Compare the waistband,
 jacket hem and crotch with `binding_reference.png`; connected pixels can still be the wrong
-garment height. Fill the separate `source_garment_registration` check. The hidden core must not
+garment height. Fill both `source_garment_registration` and `limb_shape_preservation` with actual
+per-frame observations. Do not batch-fill passing anatomy claims from a template or carry an
+earlier visual conclusion forward without looking at the current pixels. The hidden core must not
 be lifted or enlarged to fill pixels outside the registered source silhouette. Numeric geometry
 still does not identify a wrong opaque material, painted cut line, hand anatomy or naturalness.
 

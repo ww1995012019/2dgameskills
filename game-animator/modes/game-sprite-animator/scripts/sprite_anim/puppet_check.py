@@ -213,23 +213,61 @@ def check_neck(renderer, clip, n, fps):
     return []
 
 
-def check_connections(renderer, clip, n, fps, bindings=None):
-    """Every frame, across each complete registered pelvis attachment.
+def thigh_strain(layer, vertices, scale):
+    """Measure opaque thigh shaft material, excluding the knee's bend envelope.
 
-    Unlike connected components, this never dilates a gap away. It measures
-    final triangle correspondence, including the attachment's outer edges.
-    Bindings may be supplied by a read-only audit of an older rigid export.
+    Positive triangle area alone permits arbitrarily flat or sheared artwork.
+    Singular values measure thickness/stretch independently of orientation.
+    """
+    from .integrity import THIGH_DEFORMATION_LIMITS as limits
+    j,i = layer.cells.T;w = vertices.shape[1]
+    triangles = np.concatenate((np.stack((j*w+i,j*w+i+1,(j+1)*w+i),-1),
+        np.stack(((j+1)*w+i+1,(j+1)*w+i,j*w+i+1),-1)))
+    source = (np.stack((layer.vx,layer.vy),-1)+layer.offset).reshape(-1,2)[triangles]
+    dest = vertices.reshape(-1,2)[triangles]
+    centers = source.mean(1);axis = layer.rest[1]-layer.rest[0]
+    length = float(np.linalg.norm(axis));axis = axis/length
+    along = (centers-layer.rest[0])@axis/length
+    across = (centers-layer.rest[0])@np.array([-axis[1],axis[0]])
+    local = np.rint(centers-layer.offset).astype(int);alpha = np.asarray(layer.image)[...,3]
+    inside = ((local[:,0]>=0)&(local[:,1]>=0)&(local[:,0]<alpha.shape[1])&(local[:,1]<alpha.shape[0]))
+    solid = np.zeros(len(local),bool);solid[inside] = alpha[local[inside,1],local[inside,0]]>200
+    end = min(.75,1-limits['knee_exclusion_radii']*layer.radius/length)
+    chosen = solid&(along>=limits['root_start'])&(along<=end)&(np.abs(across)<=layer.radius*.75)
+    if not chosen.any():
+        return dict(samples=0,bad_share=1.,min_scale=0.,max_scale=0.,min_area=0.,max_area=0.)
+    se = np.stack((source[:,1]-source[:,0],source[:,2]-source[:,0]),-1)
+    de = np.stack((dest[:,1]-dest[:,0],dest[:,2]-dest[:,0]),-1)
+    jac = de[chosen]@np.linalg.inv(se[chosen])/scale
+    singular = np.linalg.svd(jac,compute_uv=False);area = np.linalg.det(jac)
+    bad = ((singular[:,1]<limits['min_scale'])|(singular[:,0]>limits['max_scale'])
+           |(area<limits['min_area'])|(area>limits['max_area']))
+    return dict(samples=int(chosen.sum()),bad_share=round(float(bad.mean()),6),
+                min_scale=round(float(singular[:,1].min()),6),max_scale=round(float(singular[:,0].max()),6),
+                min_area=round(float(area.min()),6),max_area=round(float(area.max()),6))
+
+
+def check_connections(renderer, clip, n, fps, bindings=None):
+    """Check the torso seam, rotating thigh caps and thigh material every frame.
+
+    The torso shares its pelvis surface. Each thigh cap follows its own bone,
+    while its joint stays in its registered pelvis socket. Both cap edges and
+    material strain are checked on the final mesh, without alpha dilation.
+    Bindings may be supplied by a read-only audit of an older export.
     """
     from .art import Canvas
-    from .puppet import mesh_points
+    from .puppet import mesh_points,rigid
+    from .mathx import rot
+    from .integrity import THIGH_DEFORMATION_LIMITS
     from .render import GROUND_FRAC, frame_time
     puppet = renderer.art.puppet
-    bindings = puppet.pelvis_bindings if bindings is None else bindings
+    bindings = dict(puppet.pelvis_bindings,**getattr(puppet,'socket_bindings',{})) if bindings is None else bindings
     required = {'torso', 'leg_near', 'leg_far'}
     if set(bindings) != required:
         return [f'connection: {clip.name} frame 0: missing full pelvis attachment evidence']
     cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     values = {part: [] for part in required}
+    shapes = {part: [] for part in getattr(puppet,'socket_bindings',{})}
     for i in range(n):
         t = frame_time(clip, i, n, fps)
         pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
@@ -239,14 +277,35 @@ def check_connections(renderer, clip, n, fps, bindings=None):
         for name, (parent, _, report) in bindings.items():
             source = np.asarray(report['source_points'], float)
             child, verts = meshes[name]
-            error = np.linalg.norm(mesh_points(child, verts, source)-
-                                   mesh_points(parent, meshes[parent.name][1], source), axis=-1)
-            values[name].append(round(float(error.max())/renderer.ss, 5))
+            if report.get('method') == 'registered_articulated_socket_v2':
+                side = child.bones[0][-1];root,knee = child.rest[:2]
+                target,next_joint = np.array(cv.T(sk['hip_'+side])),np.array(cv.T(sk['kn_'+side]))
+                axis = knee-root;direction = next_joint-target
+                angle = np.arctan2(direction[1],direction[0])-np.arctan2(axis[1],axis[0])
+                expected = rigid(source[:,0],source[:,1],root,target,float(angle),cv.s/puppet.px_per_unit)
+                error = np.linalg.norm(mesh_points(child,verts,source)-expected,axis=-1)
+                # The virtual socket follows measured pelvis coordinates plus
+                # the authored hip twist. Its cap rotates with its own bone.
+                shift = np.array(rot((pose['hp']*(1 if side=='n' else -1),0),sk['body_rot']))
+                shift = np.array(cv.T(shift))-np.array(cv.T((0.,0.)))
+                parent_joint = mesh_points(parent,meshes[parent.name][1],np.asarray([root]))[0]+shift
+                child_joint = mesh_points(child,verts,np.asarray([root]))[0]
+                worst = max(float(error.max()),float(np.linalg.norm(child_joint-parent_joint)))
+                shapes[name].append(thigh_strain(child,verts,cv.s/puppet.px_per_unit))
+            else:
+                error = np.linalg.norm(mesh_points(child, verts, source)-
+                                       mesh_points(parent, meshes[parent.name][1], source), axis=-1)
+                worst = float(error.max())
+            values[name].append(round(worst/renderer.ss, 5))
     if not hasattr(renderer, 'connection_checks'):
         renderer.connection_checks = {}
-    renderer.connection_checks[clip.name] = dict(frames=n, parts=values)
-    return [f'connection: {name}: {clip.name} frame {i}: registered attachment separates by {error:.3f}px'
-            for name, errors in values.items() for i, error in enumerate(errors) if error > 1.0]
+    renderer.connection_checks[clip.name] = dict(frames=n,parts=values,shape_parts=shapes)
+    faults = [f'connection: {name}: {clip.name} frame {i}: registered attachment separates by {error:.3f}px'
+              for name, errors in values.items() for i, error in enumerate(errors) if error > 1.0]
+    faults += [f'shape: {name}: {clip.name} frame {i}: {row["bad_share"]:.1%} of opaque thigh shaft collapses or stretches'
+               for name, rows in shapes.items() for i,row in enumerate(rows)
+               if not row['samples'] or row['bad_share']>THIGH_DEFORMATION_LIMITS['max_bad_share']]
+    return faults
 
 
 def attachment_faults(alpha, parent_alpha, root, next_joint, radius):

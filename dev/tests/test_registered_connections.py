@@ -23,7 +23,7 @@ from sprite_anim.art import Canvas
 from sprite_anim.rig import full_pose,solve
 from sprite_anim.motions import Proc
 from sprite_anim.render import GROUND_FRAC
-from sprite_anim.integrity import connection_report_faults
+from sprite_anim.integrity import connection_report_faults,THIGH_DEFORMATION_LIMITS
 
 
 class RegisteredConnections(unittest.TestCase):
@@ -138,15 +138,37 @@ class ConnectionEvidence(unittest.TestCase):
             hashes.append(hashlib.sha256(str(image.size).encode()+image.tobytes()).hexdigest())
         parts=('torso','leg_near','leg_far')
         self.doc={'clips':{'idle':{'frames':[0,1]}}}
-        self.trace={'connection_review_required':True,'connections':dict(method='registered_pelvis_overlap',
-            bindings={n:{'source_points':[[2,2],[4,2],[2,5],[4,5]]} for n in parts},
-            clips={'idle':{'frames':2,'parts':{n:[0.,0.] for n in parts}}},frame_hashes={'idle':hashes})}
+        good=dict(samples=30,bad_share=0.,min_scale=1.,max_scale=1.,min_area=1.,max_area=1.)
+        self.trace={'connection_review_required':True,'connections':dict(method='registered_articulations_v2',shape_limits=THIGH_DEFORMATION_LIMITS.copy(),
+            bindings={n:{'source_points':[[2,2],[4,2],[2,5],[4,5]],'parent':'hips',
+                         'method':'registered_pelvis_overlap' if n=='torso' else 'registered_articulated_socket_v2',
+                         **({} if n=='torso' else {'source_joint':[3,3]})} for n in parts},
+            clips={'idle':{'frames':2,'parts':{n:[0.,0.] for n in parts},
+                           'shape_parts':{n:[good.copy(),good.copy()] for n in ('leg_near','leg_far')}}},frame_hashes={'idle':hashes})}
         reference=self.root/'binding_reference.png';Image.new('RGBA',(32,40),(40,80,130,255)).save(reference)
         self.trace['connections']['source_reference_sha256']=hashlib.sha256(reference.read_bytes()).hexdigest()
 
     def faults(self):return connection_report_faults(self.root,self.doc,self.trace)
 
     def test_complete_evidence_passes(self):self.assertEqual(self.faults(),[])
+
+    def test_zero_drift_cannot_omit_thigh_shape_measurements(self):
+        del self.trace['connections']['clips']['idle']['shape_parts']
+        self.assertTrue(self.faults())
+
+    def test_old_welded_leg_evidence_is_not_current_acceptance(self):
+        self.trace['connections']['method']='registered_pelvis_overlap'
+        self.assertTrue(self.faults())
+
+    def test_a_shared_surface_cannot_be_mislabelled_as_a_rotating_thigh(self):
+        self.trace['connections']['bindings']['leg_near']['method']='registered_pelvis_overlap'
+        self.assertTrue(self.faults())
+
+    def test_positive_triangle_area_and_zero_drift_do_not_clear_a_collapsed_thigh(self):
+        self.trace['connections']['clips']['idle']['shape_parts']['leg_far'][1].update(
+            bad_share=.5,min_scale=.01,min_area=.01)
+        faults=self.faults()
+        self.assertTrue(any(x['clip']=='idle' and x['frame']==1 and x['part']=='leg_far' for x in faults),faults)
 
     def test_missing_report_frames_and_parts_fail_closed(self):
         for fault in ('report','frame','part','sample'):
@@ -186,3 +208,68 @@ class ConnectionEvidence(unittest.TestCase):
         self.trace['connections']['status']='PASS';del self.trace['connections']['frame_hashes']
         (self.root/'rig_trace.json').write_text(json.dumps(self.trace))
         self.assertEqual(visual_review.binding_gate(self.root),1)
+
+
+class ThighMaterial(unittest.TestCase):
+    def fixture(self):
+        x,y=np.meshgrid(np.arange(0.,121.,10.),np.arange(0.,241.,10.))
+        j,i=np.indices((len(y)-1,x.shape[1]-1));cells=np.column_stack((j.ravel(),i.ravel()))
+        layer=SimpleNamespace(vx=x,vy=y,offset=np.zeros(2),cells=cells,
+            rest=[np.array([60.,30.]),np.array([60.,210.])],radius=20.,
+            image=Image.new('RGBA',(121,241),(90,130,160,255)))
+        return layer,np.stack((x,y),-1)
+
+    def test_rigid_thighs_preserve_width_at_two_rotations_and_scales(self):
+        for angle,scale in ((.8,.7),(-1.2,2.3)):
+            layer,v=self.fixture();c,s=np.cos(angle),np.sin(angle)
+            transformed=(v@np.array([[c,s],[-s,c]]))*scale+np.array([31.,-17.])
+            row=pc.thigh_strain(layer,transformed,scale)
+            self.assertGreater(row['samples'],10);self.assertEqual(row['bad_share'],0.)
+            self.assertAlmostEqual(row['min_scale'],1.,places=5)
+
+    def test_positive_area_cannot_hide_width_collapse(self):
+        layer,v=self.fixture();v[...,0]*=.03
+        self.assertFalse(pp.flipped(v,layer.cells).any())
+        row=pc.thigh_strain(layer,v,1.)
+        self.assertGreater(row['min_area'],0.);self.assertEqual(row['bad_share'],1.)
+
+    def test_area_preserving_shear_is_also_rejected(self):
+        layer,v=self.fixture();v[...,0]+=6*v[...,1]
+        row=pc.thigh_strain(layer,v,1.)
+        self.assertAlmostEqual(row['min_area'],1.);self.assertEqual(row['bad_share'],1.)
+
+    def test_thigh_socket_rotates_instead_of_being_welded_to_pelvis(self):
+        case=RegisteredConnections('runTest');self.addCleanup(case.doCleanups)
+        r,clip=case.renderer(True);p=r.art.puppet;layers={l.name:l for l in p.layers}
+        p.socket_bindings={}
+        for name in ('leg_near','leg_far'):
+            child=layers[name];p.pelvis_bindings.pop(name)
+            child.root_lock=True
+            p.socket_bindings[name]=(layers['hips'],None,pp.joint_socket_binding(child,layers['hips']))
+        faults=pc.check_connections(r,clip,5,12)
+        self.assertEqual(faults,[])
+        self.assertEqual(set(r.connection_checks['stride']['shape_parts']),{'leg_near','leg_far'})
+
+    def test_rigid_but_wrong_pelvis_rotation_fails_at_its_actual_frame(self):
+        case=RegisteredConnections('runTest');self.addCleanup(case.doCleanups)
+        r,clip=case.renderer(True);p=r.art.puppet;layers={l.name:l for l in p.layers}
+        p.socket_bindings={}
+        for name in ('leg_near','leg_far'):
+            child=layers[name];p.pelvis_bindings.pop(name);child.root_lock=True
+            p.socket_bindings[name]=(layers['hips'],None,pp.joint_socket_binding(child,layers['hips']))
+        real=p.meshes;frame=-1
+        def advance(*_):
+            nonlocal frame
+            frame+=1;return {}
+        r.cloth_at=advance
+        def welded(*args,**kwargs):
+            for layer,verts in real(*args,**kwargs):
+                if layer.name=='leg_far' and frame==2:
+                    # A rigid 90-degree turn keeps every triangle's area and
+                    # thickness. It is still the wrong anatomical rotation.
+                    center=verts.mean((0,1));q=verts-center
+                    verts=np.stack((-q[...,1],q[...,0]),-1)+center
+                yield layer,verts
+        with mock.patch.object(p,'meshes',welded):faults=pc.check_connections(r,clip,5,12)
+        self.assertTrue(any('leg_far: stride frame 2:' in x for x in faults),faults)
+        self.assertFalse(any('frame 0:' in x for x in faults),faults)

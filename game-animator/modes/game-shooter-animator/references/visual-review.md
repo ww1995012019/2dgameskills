@@ -127,6 +127,23 @@ needs a person to watch it play before it counts as done.
 
 Look at each clip for these, in this order. Name the clip and frame when something is wrong.
 
+**Regression review after a connection fix**
+
+- A zero-drift connection or positive triangle area is not an anatomy verdict. Positive triangles
+  can be nearly flat; a rigid thigh can also follow the wrong parent's rotation.
+- Compare the same clip/frame before and after the change at equal world/pixel scale. Keep whole
+  thighs and knees visible; the previous waist-only crop hid thigh regressions.
+- `limb_shape_preservation` is mandatory for every hips-sheet pose. Inspect thickness, thigh
+  direction, knee location, shorts/trouser hems and the full playback. Do not batch-generate
+  passing visual claims from a checklist template.
+- Current basic exports require `registered_articulations_v2` evidence. The torso's seam is shared;
+  thigh caps rotate with their own bones. Their opaque shaft Jacobians are checked outside the
+  knee envelope (two local knee radii): min singular scale 0.25, max 3, signed area ratio 0.15–3;
+  over 1% distressed shaft material is a blocker. These conservative limits identify catastrophic
+  collapse/stretch, not every unnatural silhouette. Existing fold/contact limits remain intact.
+- Revoke the actual current visual pass when a user identifies an omitted defect. Preserve the
+  failure and show changed-frame evidence for that same issue before accepting another result.
+
 **Contact**
 - Feet on the orange line in ground clips, neither above nor below it
 - Nothing hovering: a roll or lying body rests on the line
