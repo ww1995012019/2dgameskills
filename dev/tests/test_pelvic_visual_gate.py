@@ -97,6 +97,23 @@ class PelvicGate(unittest.TestCase):
             covered = {p['clip'] for row in index['sheets'] for p in row.get('poses', [])}
             self.assertEqual(covered, set(names))
 
+    def test_registered_review_validates_every_frame_across_multiple_sheets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            doc,trace=fixture(root, ('idle','run'), 25)
+            trace['connection_review_required']=True
+            (root/'rig_trace.json').write_text(json.dumps(trace))
+            review.build(root)
+            index=json.loads((root/'review/index.json').read_text())
+            entries=review.validate_index(root,index)
+            hips=[row for name,row in entries.items() if name.startswith('hips_')]
+            self.assertEqual(len(hips),4)
+            self.assertEqual({(p['clip'],p['frame']) for row in hips for p in row['poses']},
+                             {(c,i) for c in doc['clips'] for i in range(25)})
+            hips[-1]['poses'].pop()
+            with self.assertRaisesRegex(ValueError,'pelvis pose coverage'):
+                review.validate_index(root,index)
+
     def test_template_is_pending_and_cannot_clear_a_review(self):
         pending = json.loads((self.root/'review/verdict_template.json').read_text())
         with self.assertRaisesRegex(SystemExit, 'reviewer'):

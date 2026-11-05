@@ -261,7 +261,7 @@ def bind_job(folder):
     layers = {name: lp.key_out(root/'layers'/f'{name}.png') for name in (*slots(job), *HAND_HINTS)}
     state = {}
     try:
-        out, spec, report = lp.bind(ref, layers, str(root/'fit_cache'), state)
+        out, spec, report = lp.bind(ref, layers, str(root/'fit_cache'), state, registered_connections=True)
     except lp.Rejected:
         lp.save_diagnostics(root/'rig', ref, state)
         raise
@@ -274,10 +274,8 @@ def bind_job(folder):
     write_json(root/'job.json', job)
 
 
-def preview_job(folder):
-    root, job = load_job(folder)
-    if job['phase'] not in ('bound', 'awaiting_walk_review', 'preview_blocked'):
-        raise lp.Rejected('bind the reviewed layers before preview')
+def check_bound_rig(root, job):
+    """Shared by the staged preview and direct generation; neither may skip review."""
     accepted_layers(root, job, root/'layer_review.json')
     if not job.get('rig_assets'):
         raise lp.Rejected('missing exported rig provenance; bind through this workflow first')
@@ -289,6 +287,41 @@ def preview_job(folder):
     bound = read_json(root/'rig/bind_report.json')
     if bound.get('layer_review', {}).get('assets') != layer_assets(root, job) or bound.get('status') != 'accepted':
         raise lp.Rejected('rig is stale; bind the current reviewed layers again')
+    spec = read_json(root/'rig/character.json')
+    if (spec.get('puppet', {}).get('connection_skinning') != 'registered_garment_v3'
+            or spec['puppet'].get('attachment_checks') is not True):
+        raise lp.Rejected('basic-side-v1 requires current registered pelvis and full attachment checks; rebind')
+
+
+def check_render_input(character):
+    """Reject basic-job diagnostics or stale rigs before the renderer writes any output."""
+    path = Path(character).resolve()
+    owner = lp.find_basic_job(path)
+    if owner is None:
+        report = path.parent/'bind_report.json'
+        if report.is_file():
+            value = read_json(report)
+            if not isinstance(value, dict) or not isinstance(value.get('reference_review', {}), dict):
+                raise lp.Rejected('invalid binding review provenance')
+            if (value.get('profile') == BASIC_PROFILE
+                    or value.get('reference_review', {}).get('profile') == BASIC_PROFILE):
+                raise lp.Rejected('basic-side-v1 rig has no owning production job; '
+                                  'render from the original reviewed job')
+        return
+    root, job = load_job(owner)
+    if job['phase'] not in ('bound', 'preview_rendering', 'awaiting_walk_review', 'preview_blocked'):
+        raise lp.Rejected('basic-side-v1: finish the per-layer reviews and bind before rendering')
+    if path != root/'rig/character.json':
+        raise lp.Rejected('basic-side-v1: only the reviewed rig/character.json may be rendered; '
+                          'diagnostic bindings are not approved production input')
+    check_bound_rig(root, job)
+
+
+def preview_job(folder):
+    root, job = load_job(folder)
+    if job['phase'] not in ('bound', 'awaiting_walk_review', 'preview_blocked'):
+        raise lp.Rejected('bind the reviewed layers before preview')
+    check_bound_rig(root, job)
     scripts = [
         ['generate.py', '--character', str(root/'rig/character.json'), '--preset', 'hd512',
          '--clips', 'idle,walk', '--no-fx', '--out', str(root/'build')],

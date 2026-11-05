@@ -2,6 +2,8 @@
 These are workflow/numerical fixtures, not AI-art visual acceptance.
 """
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -85,6 +87,12 @@ class CharacterWorkflow(unittest.TestCase):
                     cw.bind_job(self.job)
                 state = cw.read_json(self.job/'job.json')
                 self.assertEqual(state['phase'], 'bound')
+                cw.check_render_input(self.job/'rig/character.json')
+                state['phase'] = 'preview_rendering'
+                cw.write_json(self.job/'job.json', state)
+                cw.check_render_input(self.job/'rig/character.json')
+                state['phase'] = 'bound'
+                cw.write_json(self.job/'job.json', state)
                 spec = cw.read_json(self.job/'rig/character.json')
                 self.assertEqual(spec['name'], 'test hero')
                 spec['_dir'] = str(self.job/'rig')
@@ -96,7 +104,90 @@ class CharacterWorkflow(unittest.TestCase):
                 spec['name'] = 'hand-edited'
                 cw.write_json(self.job/'rig/character.json', spec)
                 with self.assertRaisesRegex(cw.lp.Rejected, 'exported rig was changed'):
+                    cw.check_render_input(self.job/'rig/character.json')
+                with self.assertRaisesRegex(cw.lp.Rejected, 'exported rig was changed'):
                     cw.preview_job(self.job)
+
+    def test_direct_binder_cannot_skip_basic_layer_review(self):
+        self.prepare()
+        layers, _ = self.fixture()
+        self.reference(layers)
+        for name, image in layers.items():
+            image.save(self.job/'layers'/f'{name}.png')
+        out = self.root/'diagnostic_bind'
+        result = subprocess.run([sys.executable, str(cw.HERE/'layer_parts.py'), 'bind',
+            '--image', str(self.job/'reference.png'), '--layers', str(self.job/'layers'),
+            '--reference-review', str(self.job/'reference_review.json'), '--out', str(out)],
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('cannot bypass per-layer review', result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_copied_reference_review_and_symlinked_layers_keep_basic_gate(self):
+        self.prepare()
+        layers, _ = self.fixture()
+        self.reference(layers)
+        outside = self.root/'outside'
+        outside.mkdir()
+        shutil.copyfile(self.job/'reference.png', outside/'reference.png')
+        shutil.copyfile(self.job/'reference_review.json', outside/'review.json')
+        (outside/'layers').mkdir()
+        with self.assertRaisesRegex(cw.lp.Rejected, 'cannot bypass'):
+            cw.lp.require_generic_binding(outside/'reference.png', outside/'layers', outside/'review.json')
+        linked = outside/'linked_layers'
+        linked.symlink_to(self.job/'layers', target_is_directory=True)
+        with self.assertRaisesRegex(cw.lp.Rejected, 'cannot bypass'):
+            cw.lp.require_generic_binding(outside/'reference.png', linked, None)
+
+    def test_direct_generator_rejects_unreviewed_diagnostic_before_writing(self):
+        self.prepare()
+        rig = self.job/'diagnostic_bind'
+        rig.mkdir()
+        cw.write_json(rig/'character.json', {'name': 'unreviewed diagnostic'})
+        out = self.root/'diagnostic_build'
+        result = subprocess.run([sys.executable, str(cw.HERE/'generate.py'),
+            '--character', str(rig/'character.json'), '--clips', 'idle,run', '--out', str(out)],
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('finish the per-layer reviews', result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_basic_rig_cannot_be_relocated_without_owning_job(self):
+        rig = self.root/'copied_rig'
+        rig.mkdir()
+        cw.write_json(rig/'character.json', {'name': 'copied diagnostic'})
+        cw.write_json(rig/'bind_report.json', {'reference_review': {'profile': 'basic-side-v1'}})
+        with self.assertRaisesRegex(cw.lp.Rejected, 'no owning production job'):
+            cw.check_render_input(rig/'character.json')
+
+    def test_render_does_not_trust_bound_phase_without_layer_acceptance(self):
+        self.prepare()
+        layers, _ = self.fixture()
+        self.reference(layers)
+        job = cw.read_json(self.job/'job.json')
+        job['phase'] = 'bound'
+        cw.write_json(self.job/'job.json', job)
+        rig = self.job/'rig'
+        rig.mkdir()
+        cw.write_json(rig/'character.json', {'name': 'unreviewed art'})
+        out = self.root/'unapproved_build'
+        result = subprocess.run([sys.executable, str(cw.HERE/'generate.py'),
+            '--character', str(rig/'character.json'), '--out', str(out)],
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('layer_review.json', result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_bound_job_cannot_render_an_alternate_diagnostic_rig(self):
+        self.prepare()
+        job = cw.read_json(self.job/'job.json')
+        job['phase'] = 'bound'
+        cw.write_json(self.job/'job.json', job)
+        rig = self.job/'diagnostic_bind'
+        rig.mkdir()
+        cw.write_json(rig/'character.json', {'name': 'alternate diagnostic'})
+        with self.assertRaisesRegex(cw.lp.Rejected, 'only the reviewed rig'):
+            cw.check_render_input(rig/'character.json')
 
     def test_reference_without_specific_neck_or_hand_review_is_refused(self):
         self.prepare()
@@ -264,7 +355,8 @@ class CharacterWorkflow(unittest.TestCase):
         self.prepare()
         root, job = cw.load_job(self.job)
         (root/'rig').mkdir()
-        cw.write_json(root/'rig/character.json', {'fixture':True})
+        cw.write_json(root/'rig/character.json', {'fixture':True, 'puppet':{
+            'connection_skinning':'registered_garment_v3', 'attachment_checks':True}})
         job.update(phase='bound', rig_assets={'character.json':cw.vr.file_hash(root/'rig/character.json')})
         cw.write_json(root/'job.json',job)
         cw.write_json(root/'rig/bind_report.json', {'status':'accepted','layer_review':{'assets':{'fixture':'hash'}}})

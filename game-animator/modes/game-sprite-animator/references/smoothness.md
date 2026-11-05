@@ -24,6 +24,29 @@ sprites from anywhere: `python scripts/qa_motion.py path/to/frames --loop`.
 
 Attacks allow a higher `spike`: a strike is supposed to accelerate hard, and the smear carries it.
 
+## Ordinary running support and height
+
+Basic `ordinary_run_v2` measures the actual pelvis/head trajectory, its phase speed and
+acceleration, and both half-cycles. The old v1 declared bob could be small while its per-frame
+reach fit moved the body by over 20 output pixels. Fit one constant support envelope and use a
+shared small height curve, with its apex in flight. Paired frame sampling and identical GIF
+half-step timing prevent alternating support durations. The required `run_support` sheet and
+playback keep a fixed canvas and head/ground guides; never recenter each frame for this review.
+
+The native PNG silhouette is checked independently for abrupt vertical steps, excessive height
+range and unequal half-cycle heights. These checks bound the supported ordinary-run rhythm;
+they do not establish natural motion or general material semantics.
+
+### Hand-detail context correction
+
+For registered source-preserving arms, hand detail is compared inside the same arm's alpha in
+both reference and actual output. An unmasked square crop can include flat trousers beside the
+hand, diluting the mean gradient without losing finger lines. In the rejected-run investigation,
+that composite ratio was 53.6%, while the same-arm ratio was 87.3%. The original 55% detail
+threshold is retained. Fault injection still rejects a blurred actual output hand. Store the
+method, reference energy and per-frame energies in `rig_trace.json/hand_detail`; source hand
+anatomy and intentional occlusion still require visual review.
+
 ## Exported playback clock
 
 Rendered samples retain their authored poses, but rounding the frame count changes

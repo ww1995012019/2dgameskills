@@ -15,6 +15,232 @@ import math
 
 import numpy as np
 
+THIGH_DEFORMATION_LIMITS = dict(min_scale=.25,max_scale=3.,min_area=.15,max_area=3.,max_bad_share=.01,
+                                root_start=.15,knee_exclusion_radii=2.)
+GARMENT_EDGE_LIMITS = dict(contact_radius_px=1.,occluder_alpha=.9)
+ORDINARY_RUN_LIMITS = dict(max_stride_ratio=1.,max_lift_ratio=.3,max_foot_span_ratio=1.,
+                           max_thigh_deg=65.,max_lean_deg=15.,max_bob_ratio=.05,
+                           max_pelvis_range_ratio=.05,max_head_range_ratio=.065,
+                           max_half_step_height_ratio=.015,max_vertical_step_ratio=.015,
+                           max_vertical_phase_speed_ratio=.5,max_vertical_phase_accel_ratio=8.)
+
+
+def ordinary_run_faults(report, count):
+    """The declared ordinary run must stay inside its body-scaled envelope."""
+    if not isinstance(report,dict) or report.get('frames') != count or len(report['samples']) != count:
+        raise ValueError('ordinary run: incomplete exported-frame coverage')
+    out = []
+    def fault(frame,what):
+        out.append(dict(clip='run',frame=frame,part='motion',what=what))
+    def number(value):
+        return (not isinstance(value,bool) and isinstance(value,(int,float))
+                and math.isfinite(value) and value>=0)
+    if report.get('profile') != 'ordinary_run_v2':
+        fault(0,'missing the requested ordinary_run_v2 support rhythm')
+    frame_limits = dict(foot_span_ratio=ORDINARY_RUN_LIMITS['max_foot_span_ratio'],
+                        lift_ratio=ORDINARY_RUN_LIMITS['max_lift_ratio'],
+                        thigh_deg=ORDINARY_RUN_LIMITS['max_thigh_deg'],
+                        lean_deg=ORDINARY_RUN_LIMITS['max_lean_deg'])
+    for i,row in enumerate(report['samples']):
+        for key,limit in frame_limits.items():
+            if not number(row[key]):
+                raise ValueError(f'ordinary run frame {i}: invalid {key}')
+            if row[key]>limit:
+                fault(i,f'ordinary run {key} {row[key]:.3f} exceeds {limit:.3f}')
+    for key,peak in (('stride_ratio','foot_span_ratio'),('lift_ratio','lift_ratio'),('bob_ratio','thigh_deg')):
+        value = report[key]
+        if not number(value):
+            raise ValueError(f'ordinary run: invalid {key}')
+        limit = ORDINARY_RUN_LIMITS['max_'+key]
+        if value>limit:
+            frame = max(range(count),key=lambda i:report['samples'][i][peak])
+            fault(frame,f'ordinary run {key} {value:.3f} exceeds {limit:.3f}')
+    if count%2:
+        fault(0,'ordinary run has unequal half-step frame counts')
+    for name in ('near_contact','far_contact'):
+        if any(type(row.get(name)) is not bool for row in report['samples']):
+            raise ValueError('ordinary run: missing actual exported support states')
+    if sum(row['near_contact'] for row in report['samples']) != sum(row['far_contact'] for row in report['samples']):
+        fault(0,'ordinary run has unequal exported stance durations')
+    rhythm = report['rhythm']
+    phase = rhythm['phase_samples']
+    if rhythm.get('method')!='phase_sampled_run_support_v1' or len(phase)!=240:
+        raise ValueError('ordinary run: missing full-cycle support-height measurements')
+    for i,row in enumerate(phase):
+        if row.get('phase')!=i/240 or any(not number(row.get(k)) for k in ('pelvis_y_ratio','head_y_ratio')):
+            raise ValueError('ordinary run: invalid actual height/phase evidence')
+        if any(type(row.get(k)) is not bool for k in ('near_contact','far_contact')):
+            raise ValueError('ordinary run: invalid phase support states')
+    heights = np.array([row['pelvis_y_ratio'] for row in phase])
+    head = np.array([row['head_y_ratio'] for row in phase])
+    def measured(values,limit,name):
+        index = int(np.argmax(values))
+        if values[index]>limit:
+            fault(int(math.floor(phase[index]['phase']*count+.5))%count,
+                  f'ordinary run actual {name} {values[index]:.4f} exceeds {limit:.4f}')
+    measured(heights-heights.min(),ORDINARY_RUN_LIMITS['max_pelvis_range_ratio'],'pelvis height range')
+    measured(head-head.min(),ORDINARY_RUN_LIMITS['max_head_range_ratio'],'head height range')
+    measured(np.abs(heights-np.roll(heights,120)),ORDINARY_RUN_LIMITS['max_half_step_height_ratio'],
+             'half-step height mismatch')
+    measured(np.abs(np.roll(heights,-1)-np.roll(heights,1))*120,
+             ORDINARY_RUN_LIMITS['max_vertical_phase_speed_ratio'],'vertical phase speed')
+    measured(np.abs(np.roll(heights,-1)-2*heights+np.roll(heights,1))*240**2,
+             ORDINARY_RUN_LIMITS['max_vertical_phase_accel_ratio'],'vertical phase acceleration')
+    exported = np.array([row['pelvis_y_ratio'] for row in report['samples']])
+    if not np.isfinite(exported).all():
+        raise ValueError('ordinary run: invalid exported pelvis heights')
+    step = np.abs(np.roll(exported,-1)-exported)
+    if step.max()>ORDINARY_RUN_LIMITS['max_vertical_step_ratio']:
+        frame = int(np.argmax(step))
+        fault((frame+1)%count,f'ordinary run actual vertical frame step {step[frame]:.4f} is abrupt')
+    apex = int(np.argmax(heights[:120]))
+    if phase[apex]['near_contact'] or phase[apex]['far_contact']:
+        fault(int(math.floor(phase[apex]['phase']*count+.5))%count,
+              'ordinary run pelvis apex occurs during stance instead of flight')
+    return out
+
+
+def rendered_run_faults(frames, leg_pixels):
+    """Check the actual transparent frames, independently of declared bob."""
+    if not math.isfinite(leg_pixels) or leg_pixels<=0 or len(frames)<2:
+        raise ValueError('ordinary run: missing rendered height scale or frames')
+    top = []
+    for frame in frames:
+        rows = np.flatnonzero((np.asarray(frame)[...,3]>=128).any(1))
+        if not len(rows):
+            raise ValueError('ordinary run: empty rendered silhouette')
+        top.append(float(rows[0]))
+    top = np.asarray(top)
+    out = []
+    def fault(frame,what):out.append(dict(clip='run',frame=int(frame),part='motion',what=what))
+    tolerance = 1.  # raster rounding, in output pixels
+    if np.ptp(top)>ORDINARY_RUN_LIMITS['max_head_range_ratio']*leg_pixels+tolerance:
+        fault(np.argmax(top),'ordinary run rendered head-height range is excessive')
+    if len(top)%2==0:
+        mismatch = np.abs(top-np.roll(top,len(top)//2))
+        if mismatch.max()>ORDINARY_RUN_LIMITS['max_half_step_height_ratio']*leg_pixels+tolerance:
+            fault(np.argmax(mismatch),'ordinary run rendered half-step heights differ')
+    step = np.abs(np.roll(top,-1)-top)
+    if step.max()>ORDINARY_RUN_LIMITS['max_vertical_step_ratio']*leg_pixels+tolerance:
+        fault((np.argmax(step)+1)%len(top),'ordinary run rendered vertical frame step is abrupt')
+    return out
+
+
+def connection_report_faults(root, doc, trace):
+    """Fail closed on missing/tampered full-frame registered connection evidence."""
+    if not (trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1'):
+        return []
+    import hashlib
+    from pathlib import Path
+    from PIL import Image
+    out = []
+    required = {'torso', 'leg_near', 'leg_far'}
+    try:
+        data = trace['connections']
+        reference = Path(root)/'binding_reference.png'
+        if hashlib.sha256(reference.read_bytes()).hexdigest() != data['source_reference_sha256']:
+            raise ValueError('connection evidence uses a different registered source reference')
+        if data['method'] != 'registered_garment_surfaces_v3' or set(data['bindings']) != required:
+            raise ValueError('missing complete registered connection bindings')
+        if data.get('shape_limits') != THIGH_DEFORMATION_LIMITS:
+            raise ValueError('missing current thigh shape checks; zero connection drift is insufficient')
+        if data.get('edge_limits') != GARMENT_EDGE_LIMITS:
+            raise ValueError('missing native hidden garment-edge visibility checks')
+        for name, binding in data['bindings'].items():
+            points = np.asarray(binding['source_points'], float)
+            if points.ndim != 2 or points.shape[1] != 2 or len(points) < 4 or not np.isfinite(points).all():
+                raise ValueError(f'{name}: missing attachment edge samples')
+            expected = 'registered_pelvis_overlap' if name == 'torso' else 'registered_garment_rim_v1'
+            if binding.get('method') != expected or binding.get('parent') != 'hips':
+                raise ValueError(f'{name}: incorrect registered joint/surface binding kind')
+            if name != 'torso':
+                joint = np.asarray(binding['source_joint'],float)
+                if joint.shape != (2,) or not np.isfinite(joint).all():
+                    raise ValueError(f'{name}: missing source joint registration')
+                parents = ['hips','torso'] if name=='leg_near' else ['leg_near','hips','torso']
+                if binding.get('occluders') != parents:
+                    raise ValueError(f'{name}: missing original garment depth owners')
+                origin,up = np.asarray(binding['origin'],float),np.asarray(binding['up'],float)
+                if (origin.shape!=(2,) or up.shape!=(2,) or not np.isfinite(origin).all()
+                        or not np.isfinite(up).all() or abs(np.linalg.norm(up)-1)>1e-6
+                        or not math.isfinite(binding['attachment_depth'])
+                        or not math.isfinite(binding['fade']) or binding['fade']<=0):
+                    raise ValueError(f'{name}: invalid registered waist transition')
+        if set(data['clips']) != set(doc['clips']):
+            raise ValueError('connection scope differs from exported clips')
+        for clip, meta in doc['clips'].items():
+            count = len(meta['frames']); row = data['clips'][clip]
+            if row['frames'] != count or set(row['parts']) != required:
+                raise ValueError(f'{clip}: missing connection frame/part coverage')
+            for name, errors in row['parts'].items():
+                if len(errors) != count or not all(isinstance(x, (int,float)) and not isinstance(x,bool)
+                        and math.isfinite(x) and x >= 0 for x in errors):
+                    raise ValueError(f'{clip}/{name}: invalid connection measurements')
+                for frame, error in enumerate(errors):
+                    if error > 1.0:
+                        out.append(dict(clip=clip, frame=frame, part=name,
+                                        what=f'registered garment connection separates by {error:.3f}px'))
+            for field,label in (('shape_parts','thigh'),('garment_shapes','waist garment')):
+                shapes = row[field]
+                if set(shapes) != {'leg_near','leg_far'}:
+                    raise ValueError(f'{clip}: missing both {label} shape measurements')
+                for name, measurements in shapes.items():
+                    if len(measurements) != count:
+                        raise ValueError(f'{clip}/{name}: incomplete {label} shape frame coverage')
+                    for frame, measured in enumerate(measurements):
+                        if type(measured.get('samples')) is not int or measured['samples'] < 1:
+                            raise ValueError(f'{clip}/{name}: missing opaque {label} material samples')
+                        for key in ('bad_share','min_scale','max_scale','min_area','max_area'):
+                            x = measured[key]
+                            if isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x):
+                                raise ValueError(f'{clip}/{name}: invalid {label} deformation measurement')
+                        if not 0 <= measured['bad_share'] <= 1:
+                            raise ValueError(f'{clip}/{name}: invalid deformed material share')
+                        if (measured['min_scale'] < 0 or measured['min_scale'] > measured['max_scale']
+                                or measured['min_area'] > measured['max_area']):
+                            raise ValueError(f'{clip}/{name}: inconsistent {label} deformation extrema')
+                        if measured['bad_share'] > THIGH_DEFORMATION_LIMITS['max_bad_share']:
+                            out.append(dict(clip=clip,frame=frame,part=name,
+                                            what=f"{label} material collapses or stretches over {measured['bad_share']:.1%}"))
+            if set(row['edge_visibility']) != {'leg_near','leg_far'}:
+                raise ValueError(f'{clip}: missing both hidden garment-edge checks')
+            for name,measurements in row['edge_visibility'].items():
+                if len(measurements) != count:
+                    raise ValueError(f'{clip}/{name}: incomplete hidden garment-edge frame coverage')
+                for frame,measured in enumerate(measurements):
+                    n = len(data['bindings'][name]['source_points'])
+                    indices = measured['exposed_indices']
+                    if (measured.get('samples')!=n or type(measured.get('exposed')) is not int
+                            or measured['exposed']!=len(indices) or len(indices)!=len(set(indices))
+                            or any(type(i) is not int or i<0 or i>=n for i in indices)):
+                        raise ValueError(f'{clip}/{name}: invalid hidden garment-edge measurements')
+                    if indices:
+                        out.append(dict(clip=clip,frame=frame,part=name,
+                                        what=f'{len(indices)} originally hidden garment cut-edge samples exposed'))
+            hashes = data['frame_hashes'][clip]
+            if len(hashes) != count:
+                raise ValueError(f'{clip}: missing measured RGBA frame hashes')
+            for frame, expected in enumerate(hashes):
+                with Image.open(Path(root)/'frames'/clip/f'{clip}_{frame:03d}.png') as image:
+                    image = image.convert('RGBA')
+                    current = hashlib.sha256(str(image.size).encode()+image.tobytes()).hexdigest()
+                if current != expected:
+                    out.append(dict(clip=clip, frame=frame, part='frame', what='connection evidence measures different RGBA pixels'))
+        if 'run' in doc['clips']:
+            if data.get('run_limits') != ORDINARY_RUN_LIMITS:
+                raise ValueError('missing body-scaled ordinary-run limits')
+            if doc['clips']['run'].get('frame_multiple') != 2:
+                raise ValueError('ordinary run lacks paired step sampling')
+            out += ordinary_run_faults(data['ordinary_run'],len(doc['clips']['run']['frames']))
+            frames = []
+            for i in range(len(doc['clips']['run']['frames'])):
+                with Image.open(Path(root)/f'frames/run/run_{i:03d}.png') as frame:
+                    frames.append(np.asarray(frame.convert('RGBA')))
+            out += rendered_run_faults(frames,trace['unit_px']*data['ordinary_run']['leg_length'])
+    except (KeyError,ValueError,TypeError,IndexError,OSError) as error:
+        out.append(dict(clip=next(iter(doc['clips']), ''),frame=0,part='scope',what=str(error)))
+    return out
+
 SOLID = 96                # alpha that counts as art; glows, soft edges and contact shadows stay below it
 FLOAT_SHARE = 0.005       # a loose piece this share of the body or bigger is visible as a floater
 FLOAT_MIN_PX = 4          # below this it is antialiasing noise, however small the character

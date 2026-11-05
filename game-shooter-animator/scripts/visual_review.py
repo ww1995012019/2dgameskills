@@ -36,11 +36,12 @@ JOINTS = (("kn_n", "hip_n", "an_n"), ("kn_f", "hip_f", "an_f"), ("el_n", "sh_n",
 GROUND = (240, 184, 74, 255)
 BG = (58, 62, 74, 255)
 PELVIS_JOINTS = ("waist", "neck", "hip_n", "hip_f", "kn_n", "kn_f", "an_n", "an_f")
-PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity")
+PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity", "source_garment_registration", "limb_shape_preservation",
+                 "hidden_garment_edges", "motion_style_match")
 NECK_CHECKS = ("neck_continuity", "head_motion_naturalness")
 HAND_CHECKS = ("hand_pose_naturalness", "wrist_continuity")
-POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS
-TEMPORAL_CHECKS = ("head_motion_naturalness", "hand_pose_naturalness")
+POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS + ('support_rhythm',)
+TEMPORAL_CHECKS = ("head_motion_naturalness", "hand_pose_naturalness", 'support_rhythm')
 DETAIL_CELL = 256
 DETAIL_PER_SHEET = 2
 
@@ -444,6 +445,8 @@ def pelvic_rows(doc, trace):
     rows = []
     for name, sk in humanoid_scope(doc, trace).items():
         poses = pelvic_frames(sk, doc["clips"][name], trace.get("traces", {}).get(name, {}))
+        if trace.get('connection_review_required'):
+            poses = [dict(frame=i, reasons=['complete garment connection review']) for i in range(len(sk['waist']))]
         for start in range(0, len(poses), MAX_POSES):
             rows.append((name, sk, poses[start:start + MAX_POSES]))
     return rows
@@ -453,8 +456,9 @@ def pelvic_sheets(root, doc, trace, out):
     """Enlarged waist/hip/inner-thigh art followed by the exact rendered bones."""
     files, rows = [], pelvic_rows(doc, trace)
     unit = float(trace.get("unit_px", 1))
-    for start in range(0, len(rows), PER_SHEET):
-        group = rows[start:start + PER_SHEET]
+    per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
+    for start in range(0, len(rows), per_sheet):
+        group = rows[start:start + per_sheet]
         sheet = Image.new("RGBA", (PELVIS_CELL * MAX_POSES, (28 + 2 * PELVIS_CELL) * len(group)), BG)
         draw = ImageDraw.Draw(sheet)
         evidence = []
@@ -463,8 +467,9 @@ def pelvic_sheets(root, doc, trace, out):
             draw.text((4, top + 2), f"{name}: pelvis / crotch seam; art then rendered bones", fill="white")
             for col, pose in enumerate(poses):
                 frame, x = pose["frame"], col * PELVIS_CELL
-                points = np.array([sk[key][frame] for key in ("waist", "hip_n", "hip_f")]
-                                  + [(np.asarray(sk["hip_" + side][frame]) * .5 + np.asarray(sk["kn_" + side][frame]) * .5).tolist() for side in "nf"])
+                # Include complete thighs and knees: the old half-thigh crop
+                # concealed the very shape regressions a seam fix can create.
+                points = np.array([sk[key][frame] for key in ("waist", "hip_n", "hip_f", "kn_n", "kn_f")])
                 low, high = points.min(0), points.max(0)
                 pad = max(8, unit * 10)
                 side = max(float(max(high - low)) + 2 * pad, unit * 38, 24)
@@ -496,6 +501,124 @@ def pelvic_sheets(root, doc, trace, out):
         sheet.convert("RGB").save(os.path.join(out, filename))
         files.append(dict(sheet=filename, kind="pelvis", clips=sorted({name for name, _, _ in group}), poses=evidence))
     return files
+
+
+def garment_rows(doc, trace):
+    """Separate waist macros so full-thigh crops cannot hide small cut edges."""
+    if trace.get('connections',{}).get('method') != 'registered_garment_surfaces_v3':
+        return []
+    rows = []
+    for name,sk in humanoid_scope(doc,trace).items():
+        count = len(sk['waist'])
+        poses = {p['frame']:p for p in pelvic_frames(sk,doc['clips'][name],trace['traces'][name])}
+        for frame in (0,count-1,*(min(count-1,round(count*k/4)) for k in range(4))):
+            poses.setdefault(frame,dict(frame=frame,reasons=['waist edge / motion phase']))
+        ordered = [poses[i] for i in sorted(poses)]
+        for start in range(0,len(ordered),MAX_POSES):
+            rows.append((name,sk,ordered[start:start+MAX_POSES]))
+    return rows
+
+
+def garment_sheets(root, doc, trace, out):
+    files,rows = [],garment_rows(doc,trace)
+    unit = float(trace.get('unit_px',1))
+    for start in range(0,len(rows),2):
+        group = rows[start:start+2]
+        sheet = Image.new('RGBA',(PELVIS_CELL*MAX_POSES,(PELVIS_CELL+28)*len(group)),BG)
+        draw = ImageDraw.Draw(sheet);evidence = []
+        for row,(name,sk,poses) in enumerate(group):
+            top = row*(PELVIS_CELL+28)
+            draw.text((4,top+2),f'{name}: enlarged waistband / original hidden cut edges',fill='white')
+            for col,pose in enumerate(poses):
+                frame = pose['frame']
+                points = np.asarray([sk[k][frame] for k in ('waist','hip_n','hip_f')])
+                low,high = points.min(0),points.max(0)
+                side = max(float(max(high-low))+8*unit,20*unit,24)
+                center = (low+high)/2
+                box = [int(center[0]-side/2),int(center[1]-side/2),
+                       int(center[0]+side/2+1),int(center[1]+side/2+1)]
+                art = composite(root,doc,name,frame).crop(box).resize((PELVIS_CELL,PELVIS_CELL),Image.NEAREST)
+                cell = Image.new('RGBA',art.size,(142,180,212,255));cell.alpha_composite(art)
+                sheet.alpha_composite(cell,(col*PELVIS_CELL,top+28))
+                draw.text((col*PELVIS_CELL+4,top+16),f'#{frame}',fill='white')
+                evidence.append(dict(clip=name,frame=frame,reasons=pose['reasons'],crop=box))
+        filename = f'garment_edges_{len(files):02d}.png'
+        sheet.convert('RGB').save(os.path.join(out,filename))
+        files.append(dict(sheet=filename,kind='pelvis',clips=sorted({n for n,_,_ in group}),poses=evidence))
+    return files
+
+
+def run_support_required(doc, trace):
+    connection = trace.get('connections',{})
+    return ('run' in doc['clips'] and connection.get('method')=='registered_garment_surfaces_v3'
+            and isinstance(connection.get('ordinary_run'),dict))
+
+
+def run_support_poses(doc):
+    return [dict(clip='run',frame=i,reasons=['support cycle on fixed canvas'])
+            for i in range(len(doc['clips']['run']['frames']))]
+
+
+def run_support_media(doc):
+    from sprite_anim.export import gif_durations
+    meta = doc['clips']['run'];count = len(meta['frames'])
+    return dict(clip='run',file='run_support_motion_000.gif',frame_count=count,
+                fps=meta['fps'],loop=bool(meta['loop']),
+                duration_ms=sum(gif_durations(count,meta['fps'],meta.get('frame_multiple',1))))
+
+
+def run_support_sheets(root, doc, trace, out):
+    """Complete fixed-canvas playback plus actual silhouette/hip height tracks."""
+    if not run_support_required(doc,trace):
+        return []
+    from sprite_anim.export import gif_durations
+    meta = doc['clips']['run'];count = len(meta['frames'])
+    frames = [composite(root,doc,'run',i) for i in range(count)]
+    top = np.array([np.flatnonzero((np.asarray(f)[...,3]>=128).any(1))[0] for f in frames])
+    sk = trace['traces']['run']['skeleton']
+    hip = np.array(sk['hip'])[:,1]
+    width,cell,band,columns = 1440,120,160,12
+    chart = 240
+    sheet = Image.new('RGB',(width,chart+band*((count+columns-1)//columns)),BG[:3])
+    draw = ImageDraw.Draw(sheet)
+    draw.text((8,6),'run: complete cycle / fixed canvas / actual pixel heights; PLAY run_support_motion_000.gif',fill='white')
+    left,right,center,scale = 60,width-30,138,3.
+    for value in (-20,-10,0,10,20):
+        y=center+value*scale
+        draw.line((left,y,right,y),fill=(85,91,108),width=1)
+        draw.text((5,y-4),f'{value:+d}px',fill='white')
+    for number,(values,color,label) in enumerate(((top,(250,191,86),'rendered head top'),(hip,(80,220,223),'pelvis'))):
+        draw.text((65+number*250,25),label,fill=color)
+        ys=center+(values-values.mean())*scale
+        points=[(left+i*(right-left)/count,float(ys[i])) for i in range(count)]
+        draw.line(points+[ (right,float(ys[0])) ],fill=color,width=2)
+    samples=trace['connections']['ordinary_run']['samples']
+    for i,row in enumerate(samples):
+        x0=left+i*(right-left)/count;x1=left+(i+1)*(right-left)/count
+        for y,key,color in ((54,'near_contact',(80,220,223)),(68,'far_contact',(245,163,95))):
+            if row[key]:draw.rectangle((x0,y,x1,y+8),fill=color)
+    draw.text((5,54),'near',fill='white');draw.text((5,68),'far',fill='white')
+    for i,frame in enumerate(frames):
+        x,y=(i%columns)*cell,chart+(i//columns)*band
+        thumb=frame.resize((cell,cell),Image.Resampling.LANCZOS)
+        bg=Image.new('RGBA',thumb.size,(237,241,247,255));bg.alpha_composite(thumb)
+        guide=ImageDraw.Draw(bg)
+        guide.line((0,float(top.mean()*cell/frame.height),cell,float(top.mean()*cell/frame.height)),fill=(211,122,111),width=1)
+        ground=doc['pivot'][1]*cell/frame.height
+        guide.line((0,ground,cell,ground),fill=(132,148,171),width=1)
+        sheet.paste(bg.convert('RGB'),(x,y+20));draw.text((x+3,y+3),f'#{i}',fill='white')
+    filename='run_support_00.png';sheet.save(os.path.join(out,filename))
+    movie=[]
+    for frame in frames:
+        bg=Image.new('RGBA',frame.size,(237,241,247,255));bg.alpha_composite(frame)
+        d=ImageDraw.Draw(bg);d.line((0,float(top.mean()),frame.width,float(top.mean())),fill=(211,122,111),width=1)
+        d.line((0,doc['pivot'][1],frame.width,doc['pivot'][1]),fill=(132,148,171),width=1)
+        movie.append(bg.convert('RGB'))
+    media=run_support_media(doc)
+    movie[0].save(os.path.join(out,media['file']),save_all=True,append_images=movie[1:],
+                  duration=gif_durations(count,meta['fps'],meta.get('frame_multiple',1)),
+                  loop=0,disposal=2,optimize=False)
+    return [dict(sheet=filename,kind='run_support',clips=['run'],poses=run_support_poses(doc),playback=[media])]
 
 
 def selected_clips(doc, qa):
@@ -544,7 +667,11 @@ def expected_sheets(doc, trace, qa, root=None):
                     for name, tr in traces.items() for sk in [tr.get("skeleton", {})])
         expected.update(f"{prefix}_{i:02d}.png" for i in range((count + PER_SHEET - 1) // PER_SHEET))
     rows = pelvic_rows(doc, trace)
-    expected.update(f"hips_{i:02d}.png" for i in range((len(rows) + PER_SHEET - 1) // PER_SHEET))
+    pelvis_per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
+    expected.update(f"hips_{i:02d}.png" for i in range((len(rows) + pelvis_per_sheet - 1) // pelvis_per_sheet))
+    expected.update(f'garment_edges_{i:02d}.png' for i in range((len(garment_rows(doc,trace))+1)//2))
+    if run_support_required(doc,trace):
+        expected.add('run_support_00.png')
     for kind in ('neck', 'hands'):
         count = len(detail_rows(doc, trace, kind))
         expected.update(f'{kind}_{i:02d}.png' for i in range((count + DETAIL_PER_SHEET - 1) // DETAIL_PER_SHEET))
@@ -596,6 +723,8 @@ def build(root):
         index.extend(shoulder_sheets(root, doc, trace, out))
         index.extend(shoulder_sheets(root, doc, trace, out, full_arms=True))
         index.extend(pelvic_sheets(root, doc, trace, out))
+        index.extend(garment_sheets(root,doc,trace,out))
+        index.extend(run_support_sheets(root,doc,trace,out))
         for kind in ('neck', 'hands'):
             index.extend(detail_sheets(root, doc, trace, out, kind))
     index.extend(binding_sheets(root))
@@ -635,7 +764,9 @@ def checks_for_sheet(name):
         return CHECKS + NECK_CHECKS
     if name.startswith('hands_'):
         return CHECKS + HAND_CHECKS
-    return CHECKS + PELVIS_CHECKS if name.startswith("hips_") else CHECKS
+    if name.startswith('run_support_'):
+        return CHECKS + ('support_rhythm',)
+    return CHECKS + PELVIS_CHECKS if name.startswith(("hips_","garment_edges_")) else CHECKS
 
 
 def file_hash(path):
@@ -662,7 +793,7 @@ def review_assets(root):
     paths = []
     for pattern in ("frames/*/*.png", "review/*.png", "review/*_motion_*.gif", "review/index.json", "animations.json", "rig_trace.json", "qa_report.json",
                     "atlas*.png", "atlas*.json", "sheets/*.png", "preview.html", "fx*.png", "fx*.json", "engine/**/*",
-                    "binding_audit.json", "binding_review_*.png", "occlusion_review.json", "occlusion_decisions.json"):
+                    "binding_audit.json", "binding_reference.png", "binding_review_*.png", "occlusion_review.json", "occlusion_decisions.json"):
         paths.extend(glob.glob(os.path.join(root, pattern), recursive=True))
     # Follow declared page names too, including nested/custom atlas filenames.
     # A missing required page must fail closed, even when it was absent before
@@ -717,13 +848,29 @@ def validate_index(root, index):
         if not os.path.isfile(sheet_file(root, name)):
             raise ValueError(f"missing required review sheet: {name}")
     rows = pelvic_rows(doc, trace)
-    for start in range(0, len(rows), PER_SHEET):
-        name = f"hips_{start // PER_SHEET:02d}.png"
+    per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
+    for start in range(0, len(rows), per_sheet):
+        name = f"hips_{start // per_sheet:02d}.png"
         entry = next(row for row in entries if row["sheet"] == name)
-        want = [(clip, pose["frame"], pose["reasons"]) for clip, _, poses in rows[start:start + PER_SHEET] for pose in poses]
+        want = [(clip, pose["frame"], pose["reasons"]) for clip, _, poses in rows[start:start + per_sheet] for pose in poses]
         got = [(pose["clip"], pose["frame"], pose["reasons"]) for pose in entry.get("poses", [])]
         if got != want:
             raise ValueError(f"{name}: missing or altered required pelvis pose coverage")
+    rows = garment_rows(doc,trace)
+    for start in range(0,len(rows),2):
+        name = f'garment_edges_{start//2:02d}.png'
+        entry = next(row for row in entries if row['sheet']==name)
+        want = [(clip,p['frame'],p['reasons']) for clip,_,poses in rows[start:start+2] for p in poses]
+        got = [(p['clip'],p['frame'],p['reasons']) for p in entry.get('poses',[])]
+        if got != want:
+            raise ValueError(f'{name}: missing or altered required garment-edge pose coverage')
+    if run_support_required(doc,trace):
+        name='run_support_00.png';entry=next(row for row in entries if row['sheet']==name)
+        if entry.get('poses')!=run_support_poses(doc):
+            raise ValueError(f'{name}: incomplete full-cycle support pose coverage')
+        media=run_support_media(doc)
+        if entry.get('playback')!=[media] or not os.path.isfile(os.path.join(root,'review',media['file'])):
+            raise ValueError(f'{name}: missing complete fixed-canvas support playback')
     for kind in ('neck', 'hands'):
         rows = detail_rows(doc, trace, kind)
         scope = list(detail_scope(doc, trace, kind))
@@ -788,6 +935,13 @@ def binding_gate(root):
         if os.path.isfile(trace_path):
             with open(trace_path, encoding="utf-8") as source:
                 trace = json.load(source)
+        if trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1':
+            from sprite_anim.integrity import connection_report_faults
+            with open(os.path.join(root, 'animations.json'), encoding='utf-8') as source:
+                connections = connection_report_faults(root, json.load(source), trace)
+            if connections:
+                print('connection audit: missing, stale or failed registered garment attachments')
+                return 1
         if not os.path.isfile(path):
             if trace.get("binding_audit_required") is True:
                 print("binding audit: missing required report for this external skin binding")

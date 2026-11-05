@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+from pathlib import Path
 import sys
 
 import numpy as np
@@ -22,7 +23,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sprite_anim.layer_slots import HAND_HINTS, KEY_COLOR, SLOTS, hand_prompt, prompt  # noqa: E402
+from sprite_anim.layer_slots import BASIC_PROFILE, HAND_HINTS, KEY_COLOR, SLOTS, hand_prompt, prompt  # noqa: E402
 from sprite_anim.puppet_check import HOLE_SHARE, core_mask  # noqa: E402
 from sprite_anim.constraints import BAND, LIMITS  # noqa: E402
 
@@ -62,6 +63,39 @@ MIN_SEGMENT_SHARE = 0.25  # exclude collapsed joints and implausibly uneven two-
 
 class Rejected(Exception):
     """Input that breaks the contract. The message says what to make again."""
+
+
+def find_basic_job(path):
+    """Locate the production job owning an input, including symlinked inputs."""
+    if not path:
+        return None
+    resolved = Path(path).resolve()
+    folder = resolved if resolved.is_dir() else resolved.parent
+    for parent in (folder, *folder.parents):
+        marker = parent / 'job.json'
+        if marker.is_file():
+            try:
+                value = json.loads(marker.read_text(encoding='utf-8'))
+            except (OSError, ValueError) as error:
+                raise Rejected(f'cannot read workflow state: {marker}') from error
+            if isinstance(value, dict) and value.get('profile') == BASIC_PROFILE:
+                return parent
+    return None
+
+
+def require_generic_binding(image, layers, review):
+    """The lower-level CLI must not replace basic per-layer production review."""
+    job = find_basic_job(image) or find_basic_job(layers)
+    basic_review = False
+    if review and Path(review).is_file():
+        try:
+            value = json.loads(Path(review).read_text(encoding='utf-8'))
+            basic_review = isinstance(value, dict) and value.get('profile') == BASIC_PROFILE
+        except (OSError, ValueError):
+            pass  # check_reference_review supplies the detailed invalid-review error.
+    if job or basic_review:
+        raise Rejected('basic-side-v1 requires character_workflow.py bind --job JOB; '
+                       'the generic binder cannot bypass per-layer review')
 
 
 # -- reading pictures --------------------------------------------------------------------------
@@ -836,17 +870,17 @@ def rear_appendage_binding(mask, parent, hip, leg_px):
     return layer, contact
 
 
-def bind(ref, layers, fit_cache=None, diagnostics=None):
+def bind(ref, layers, fit_cache=None, diagnostics=None, registered_connections=False):
     """Keep the current partial registration available even when acceptance fails."""
     state = diagnostics if diagnostics is not None else {}
     try:
-        return _bind(ref, layers, fit_cache, state)
+        return _bind(ref, layers, fit_cache, state, registered_connections)
     except Rejected as exc:
         state.update(status="rejected", reason=str(exc))
         raise
 
 
-def _bind(ref, layers, fit_cache, diagnostics):
+def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
     """Places every layer and works out the rig. Returns (placed layers, spec's puppet + body, report)."""
     size = (ref.shape[1], ref.shape[0])
     missing = [n for n, s in SLOTS.items() if s[2] and n not in layers]
@@ -963,12 +997,26 @@ def _bind(ref, layers, fit_cache, diagnostics):
     # The robe around the hips can split and swing clear, so what's behind it has to be solid.
     waist_half = waist_half_width(masks["torso"], waist)
     core_px = CORE_SHARE * waist_half
+    if registered_connections:
+        # The old constant-width strip could extend OUTSIDE a fitted waist.
+        # Filling those background pixels by lifting the trouser core invents
+        # a higher waistband. Keep a source-valid interior strip; the complete
+        # attachment edges are audited separately by triangle correspondence.
+        candidate = core_mask(size, waist, hip, core_px)
+        yy, xx = np.indices(seen.shape)
+        axis = hip-waist
+        lateral = np.abs((xx-waist[0])*axis[1]-(yy-waist[1])*axis[0])/np.linalg.norm(axis)
+        outside = candidate & ~seen
+        if outside.any():
+            core_px = max(1., min(core_px, float(lateral[outside].min())-1.))
+        diagnostics['registered_core'] = dict(method='source_silhouette_interior', radius_px=core_px,
+                                               excluded_reference_background=int(outside.sum()))
     out["hips"] = trimmed(out["hips"], waist, hip, HIPS_WIDTH * waist_half)
     masks["hips"] = out["hips"][..., 3] > 128
     solid = masks["torso"] | masks["hips"] | masks["leg_near"] | masks["leg_far"]
     core = core_mask(size, waist, hip, core_px)
     open_share = float((~solid[core]).mean())
-    if open_share > HOLE_SHARE:
+    if open_share > HOLE_SHARE and not registered_connections:
         aligned, fit = align_hips(layers["hips"], waist, hip)
         if fit is not None:
             out["hips"] = trimmed(aligned, waist, hip, HIPS_WIDTH * waist_half)
@@ -1017,6 +1065,27 @@ def _bind(ref, layers, fit_cache, diagnostics):
                 # Preserve each measured attachment. Coincident screen-space
                 # shoulders are allowed, but must not be forced onto the art.
                 sh_n_at=round2(an["shoulder"]), sh_f_at=round2(af["shoulder"]), hip_n_at=[seat_x(ln["hip"]), round(seat_up, 3)], hip_f_at=[seat_x(lf["hip"]), round(seat_up, 3)])
+    if registered_connections:
+        # A leg cap is artwork, not an anatomical joint. Bind its first bone
+        # to the SAME source seat represented by Body, instead of freezing a
+        # large patch of thigh onto the pelvis to conceal mismatched seats.
+        up = (waist-hip)/np.linalg.norm(waist-hip)
+        forward = np.array([-up[1], up[0]])
+        for side, leg in (('n', ln), ('f', lf)):
+            local = body['hip_'+side+'_at']
+            leg['hip'] = hip+ppu*(forward*local[0]+up*local[1])
+            if side == 'n':
+                body['thigh'] = round(float(np.linalg.norm(leg['knee']-leg['hip'])/ppu), 3)
+        # Refit support height/stride after correcting the actual joints.
+        # Keeping the old cap-to-ankle height makes the shorter leg hover.
+        # A generated side view can foreshorten the far leg. As in the
+        # original basic rig, both anatomical legs share the near bone
+        # lengths; the far source curve retains its own measured artwork.
+        # Treating perspective as unequal anatomy causes hover or crouch.
+        legs = body['thigh']+body['shin']
+        mid = REACH_MID*legs
+        low = math.sqrt(max((REACH_END*legs)**2-(CONTACT_AHEAD*STRIDE*legs)**2,0.0))
+        body['hip_h'] = round(ANKLE_UP+GAIT_DROP+(mid+low)/2-seat_up,3)
 
     joints = dict(hip=hip, waist=waist, neck=neck, head_base=head_base, wr_n=an["wrist"], el_n=an["elbow"])
     def half(name):
@@ -1040,6 +1109,27 @@ def _bind(ref, layers, fit_cache, diagnostics):
              foot=dict(side=side, ankle=[round(float(v), 2) for v in leg["ankle"]], shin_dir=[round(float(v), 4) for v in shin],
                        blend=round(0.6 * half(name), 2), width=round(half(name), 2),
                        rest_angle=round(math.degrees(math.atan2(leg["toe"][1] - leg["heel"][1], leg["toe"][0] - leg["heel"][0])), 2)))
+        if registered_connections:
+            # Shorts and boots inflate a whole-layer average width. A knee's
+            # bend radius comes from its own opaque cross-section.
+            axis = leg['ankle']-leg['hip'];axis /= np.linalg.norm(axis)
+            normal = np.array([-axis[1], axis[0]])
+            distances = np.arange(-3*half(name), 3*half(name)+.5, .5)
+            points = np.rint(leg['knee']+distances[:, None]*normal).astype(int)
+            inside = ((points[:, 0] >= 0)&(points[:, 1] >= 0)
+                      &(points[:, 0] < size[0])&(points[:, 1] < size[1]))
+            solid = np.zeros(len(points), bool)
+            solid[inside] = masks[name][points[inside, 1], points[inside, 0]]
+            at = int(np.argmin(np.abs(distances)));lo = hi = at
+            if not solid[at]:
+                raise Rejected(f'{name}: measured knee is outside its own artwork')
+            while lo > 0 and solid[lo-1]:lo -= 1
+            while hi+1 < len(solid) and solid[hi+1]:hi += 1
+            radius = min(half(name), float((distances[hi]-distances[lo]+.5)/2))
+            data[name].update(radius=round(radius, 2), source_frame=True,
+                              root_lock=True, pelvis_garment='hips')
+            diagnostics.setdefault('knee_cross_sections', {})[name] = dict(
+                average_radius=round(half(name), 2), knee_radius=round(radius, 2))
     # The torso's hanging panels bend between the thighs: a virtual joint below the hip.
     ys, xs = np.nonzero(masks["torso"])
     hem = float(ys.max())
@@ -1063,6 +1153,10 @@ def _bind(ref, layers, fit_cache, diagnostics):
     if front_mask.any():
         diagnostics['neck_front_mask']=front_mask.astype(np.uint8)*255
     data["hips"] = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
+    if registered_connections:
+        data['torso'].update(source_frame=True, pelvis_skin='hips')
+        for name in ('arm_near','arm_far'):
+            data[name].update(source_frame=True,tip_lock=True)
     if "appendage_back" in out:
         data["appendage_back"], contact = rear_appendage_binding(
             masks["appendage_back"], masks["hips"] | masks["torso"], hip, (near_px + far_px) / 2)
@@ -1140,12 +1234,17 @@ def _bind(ref, layers, fit_cache, diagnostics):
         gait["idle"].update(wep=round(wep_rest - arm_near_lo, 2), wep_sway=1.5)
     for clip in ('idle', 'walk', 'run'):
         gait.setdefault(clip, {})['head_response'] = 'neck_inertia_v1'
+    if registered_connections:
+        gait['walk']['planar_hips'] = True
+        gait['run']['profile'] = 'ordinary_run_v2'
     puppet = dict(px_per_unit=round(float(ppu), 4), joints={k: [round(float(x), 2) for x in v] for k, v in joints.items()},
                   rest_angles={k: round(float(v), 3) for k, v in rest_angles.items()}, skirt_len=round(float(skirt_len / ppu), 3),
                   core_radius=round(core_px / ppu, 3),
                   rest_arm={"n": [[round(float(v), 2) for v in an["wrist"]], [round(float(v), 2) for v in an["elbow"]]],
                             "f": [[round(float(v), 2) for v in af["wrist"]], [round(float(v), 2) for v in af["elbow"]]]},
                   layers=ordered, chains=chains, source="source.png")
+    if registered_connections:
+        puppet.update(connection_skinning='registered_garment_v3', attachment_checks=True)
     if "robe" in masks:
         puppet["robe_len"] = round(float(robe_len / ppu), 3)
     if weapon_len:
@@ -1199,6 +1298,14 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
             spec['puppet']['layers'][name]['front_mask']='layers/torso-neck-front.png'
     Image.fromarray(ref, "RGBA").save(os.path.join(out_dir, "source.png"))
     spec.update(name=character_name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
+    if spec.get('puppet', {}).get('connection_skinning') == 'registered_garment_v3':
+        from sprite_anim.puppet import Puppet
+        try:
+            Puppet(dict(spec, _dir=os.path.abspath(out_dir)))
+        except ValueError as exc:
+            state.update(status='rejected', connection_error=str(exc))
+            save_diagnostics(out_dir, ref, state)
+            raise Rejected(str(exc)) from exc
     with open(os.path.join(out_dir, "character.json"), "w", encoding="utf-8") as fh:
         json.dump(spec, fh, ensure_ascii=False, indent=1)
     print(f"[bind] {len(out)} layers, {report['px_per_unit']} px/unit, covers {report['cover']:.0%} of the reference, {report['spill']:.0%} outside -> {out_dir}")
@@ -1253,6 +1360,8 @@ def main():
     b.add_argument("--fit-cache", help="reuse registration searches for identical images; all acceptance gates still run")
     a = ap.parse_args()
     try:
+        if a.cmd == 'bind':
+            require_generic_binding(a.image, a.layers, a.reference_review)
         ref = reference(a.image)
         os.makedirs(a.out, exist_ok=True)
         if a.cmd == "plan":

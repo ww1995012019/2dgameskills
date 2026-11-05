@@ -53,6 +53,53 @@ cut edge, background slit, doubled trouser panel or bone emerging from the wrong
 a blocker. Mandatory `rig_alignment` and `pelvis_continuity` observations must name the actual
 clip/frame. Missing trace or missing close-up evidence cannot become a pass.
 
+Basic jobs require `registered_garment_v3`. The lower torso and originally hidden waistband
+cuts share their registered garment owner; a free cloth band connects that rim to each rotating
+thigh. Rotating a whole leg cap can expose its original cut, pocket top or duplicate waistband
+even when its hip registration is exact. Do not freeze an entire thigh overlap to hide it.
+The source rest joints and actual hip seats must agree; knee radii use local opaque knee width.
+Every exported frame needs final seam/hip, thigh AND waist-band strain measurements, plus native
+alpha evidence that each originally hidden proximal edge stays under its recorded source depth
+owners. One output pixel is the fixed contact tolerance. Missing source edges, frame/part coverage,
+changed RGBA pixels or exposed internal edges block acceptance. Rebind earlier basic rigs.
+Zero drift and positive triangle winding do not establish preserved anatomy: a solver can make
+all triangles positive by flattening them. Mandatory opaque thigh-shaft strain checks measure
+thickness, stretch and area, independently of the joint rotation. Missing shape evidence also
+blocks acceptance. Inspect complete thighs AND knees at native size and during playback; a
+pinched root, flattened leg, C-shaped thigh or displaced shorts hem is a blocker, even if a
+numeric connection check passes. Compare the same clip/frame with the pre-change rendering.
+Do not treat a dilated connected component, a covered centre strip, or a single joint contact as
+proof that a whole waist is closed. Inspect ALL generated waist frames on the new hips sheets,
+including both outer edges, on the checkerboard and a light background. Compare the waistband,
+jacket hem and crotch with `binding_reference.png`; connected pixels can still be the wrong
+garment height. Fill both `source_garment_registration` and `limb_shape_preservation` with actual
+per-frame observations. Do not batch-fill passing anatomy claims from a template or carry an
+earlier visual conclusion forward without looking at the current pixels. The hidden core must not
+be lifted or enlarged to fill pixels outside the registered source silhouette. Numeric geometry
+still does not identify a wrong opaque material, painted cut line, hand anatomy or naturalness.
+
+Also complete `hidden_garment_edges` and `motion_style_match`. Inspect the mandatory blue-background
+`garment_edges_*.png` waist macros as well as the whole thighs and knees. A black folded rim or
+loose trouser corner is a blocker even if no transparent hole appears. Compare clean art on a
+light/blue background and watch every delivered loop; bone overlays alone can hide these edges.
+
+Basic `run` uses the explicit `ordinary_run_v2` profile: stride/lift follow leg length, with a
+short airborne phase and restrained hip motion. The legacy fixed 48-unit stride/19-unit lift
+is an action-game sprint and is not the default ordinary run for measured artwork. Required
+ordinary-run evidence bounds stride, lift, foot separation, thigh angle and torso lean against
+the measured body. Those limits enforce this requested style, not all possible sprinting.
+Do not claim natural motion merely because the envelope passes; inspect the actual cadence,
+waist, leg recovery and foot support in the browser.
+
+The previous support-height fit followed the recovering foot and overrode the declared bob.
+Measure the actual pelvis/head trajectories, half-step equality, vertical speed/acceleration and
+native rendered head-height changes. The configured bob is not evidence of the rendered motion.
+Both steps share one smooth height curve, with its apex in flight; one constant support envelope
+is fitted over the complete cycle. Export an even frame count and quantize both GIF half-cycles
+identically. Inspect `run_support_00.png` and its complete fixed-canvas playback against a fixed
+head/ground reference; fill every `support_rhythm` observation. Abrupt drops, unequal support or
+limping rhythm are blockers even when every foot touches the ground and the loop closes.
+
 For an external/custom atlas skin, export its **actual** source points, skin weights, per-frame
 matrices and isolated RGBA frames to a binding manifest, then run
 `python scripts/audit_skin_binding.py binding_manifest.json --out out/c/binding_audit.json`.
@@ -80,6 +127,11 @@ guarded trial, not a production-validated promise. Report a failed job honestly 
 Do not silently preserve unsupported long robes, wide sleeves, capes, spears or two-handed weapons.
 Record adaptations or stop if essential identity cannot be kept. Log each repair; at three attempts
 per stage stop and report the remaining blocker. Never reset the job to bypass that limit.
+Do not render or publish a failed basic job through the lower-level `layer_parts.py bind` or
+`generate.py` commands. The binder rejects basic-job inputs, and the generator rechecks the owning
+job, current layer review and exact exported rig before writing output. Numeric QA, a diagnostic
+folder name or a "prototype" label cannot clear a failed art stage. Record the actual failure;
+delivery still requires the current versioned visual review and `visual_review.py --check`.
 
 Numerical checks do not recognize complete art; the agent must inspect full-size layers and motion.
 Short/stump arms, broken garments, ghosting and extra weapons are blockers. No per-character joint

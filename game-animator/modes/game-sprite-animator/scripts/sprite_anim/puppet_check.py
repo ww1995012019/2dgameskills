@@ -13,6 +13,7 @@
 Thresholds and how each was set are in references/layered-art.md.
 """
 import os
+import math
 
 import numpy as np
 from PIL import Image
@@ -115,22 +116,60 @@ def check_hands(renderer, spec, clip, frames, fps):
     size = renderer.size
     scale = renderer.unit / puppet.px_per_unit
     ref = Image.open(path).convert("RGBA")
+    source_size = ref.size
     ref = np.asarray(ref.resize((max(1, round(ref.width * scale)), max(1, round(ref.height * scale))), Image.LANCZOS))
+    layers = {layer.name:layer for layer in puppet.layers}
+    masks = {}
+    def arm_mask(index, side, pose, sk):
+        """Only the same arm's support; neighbouring opaque clothes are context."""
+        if index not in masks:
+            from .puppet import raster
+            native = Canvas(size,renderer.ss,renderer.unit,GROUND_FRAC,1,False,(0,0,0))
+            native.set_squash(pose['squash'],0.)
+            masks[index] = {}
+            for layer,verts in puppet.meshes(native,sk,renderer.cloth_at(clip,frame_time(clip,index,len(frames),fps)),
+                                              'ground' in clip.tags):
+                if layer.name not in ('arm_near','arm_far'):
+                    continue
+                alpha = raster(layer,verts,puppet.mip(layer,native.s/puppet.px_per_unit),native.w,native.h)[...,3]
+                masks[index][layer.name] = np.asarray(Image.fromarray(np.uint8(np.clip(alpha,0,1)*255+.5)).resize(
+                    (size,size),Image.Resampling.LANCZOS))
+        return masks[index]['arm_near' if side=='n' else 'arm_far']
     out = []
+    measurements = {}
     cv = Canvas(size, 1, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
     for side in "nf":
         wrist, elbow = puppet.rest_arm[side]
         radius = 0.5 * float(np.hypot(*np.subtract(wrist, elbow))) * scale
         rx, ry = (wrist[0] + (wrist[0] - elbow[0]) * 0.28) * scale, (wrist[1] + (wrist[1] - elbow[1]) * 0.28) * scale
-        want = edge_energy(disc_crop(ref, rx, ry, radius))
+        layer = layers['arm_near' if side=='n' else 'arm_far']
+        same_arm = layer.source_frame and layer.tip_lock
+        reference = ref
+        if same_arm:
+            alpha = Image.new('L',source_size)
+            alpha.paste(layer.image.getchannel('A'),tuple(int(round(v)) for v in layer.offset))
+            alpha = np.asarray(alpha.resize((ref.shape[1],ref.shape[0]),Image.Resampling.LANCZOS))
+            reference = ref.copy();reference[...,3] = np.minimum(reference[...,3],alpha)
+        want = edge_energy(disc_crop(reference, rx, ry, radius))
         got = []
         for i in np.linspace(0, len(frames) - 1, HAND_FRAMES).astype(int):
-            sk = solve(full_pose(clip.sample(frame_time(clip, int(i), len(frames), fps))), renderer.art.body)
+            pose = full_pose(clip.sample(frame_time(clip, int(i), len(frames), fps)))
+            sk = solve(pose, renderer.art.body)
             wr, el = np.array(sk["wr_" + side]), np.array(sk["el_" + side])
             x, y = cv.T(tuple(wr + (wr - el) * 0.28))
-            got.append(edge_energy(disc_crop(frames[int(i)], x, y, radius)))
+            actual = frames[int(i)]
+            if same_arm:
+                actual = actual.copy()
+                actual[...,3] = np.minimum(actual[...,3],arm_mask(int(i),side,pose,sk))
+            got.append(edge_energy(disc_crop(actual, x, y, radius)))
+        measurements[side] = dict(method='same_arm_alpha_context_v1' if same_arm else 'legacy_composite_crop',
+                                  reference_energy=want,frame_energies=got,
+                                  detail_ratio=float(np.mean(got))/want if want else None,limit=HAND_DETAIL)
         if want > 0 and float(np.mean(got)) < HAND_DETAIL * want:
             out.append(f"hand: {side}: {clip.name}: {np.mean(got) / want:.0%} of the reference's detail; the hand lost its drawing")
+    if not hasattr(renderer,'hand_detail_checks'):
+        renderer.hand_detail_checks = {}
+    renderer.hand_detail_checks[clip.name] = measurements
     return out
 
 
@@ -211,6 +250,221 @@ def check_neck(renderer, clip, n, fps):
     if worst > NECK_DRIFT_PX:
         return [f'neck: {clip.name} frame {at}: shared head/torso neck root differs by {worst:.2f}px; repair the skin correspondence']
     return []
+
+
+def material_triangles(layer, vertices):
+    """Actual source/final triangles and opaque material sample locations."""
+    j,i = layer.cells.T;w = vertices.shape[1]
+    triangles = np.concatenate((np.stack((j*w+i,j*w+i+1,(j+1)*w+i),-1),
+        np.stack(((j+1)*w+i+1,(j+1)*w+i,j*w+i+1),-1)))
+    source = (np.stack((layer.vx,layer.vy),-1)+layer.offset).reshape(-1,2)[triangles]
+    dest = vertices.reshape(-1,2)[triangles]
+    centers = source.mean(1)
+    local = np.rint(centers-layer.offset).astype(int);alpha = np.asarray(layer.image)[...,3]
+    inside = ((local[:,0]>=0)&(local[:,1]>=0)&(local[:,0]<alpha.shape[1])&(local[:,1]<alpha.shape[0]))
+    solid = np.zeros(len(local),bool);solid[inside] = alpha[local[inside,1],local[inside,0]]>200
+    return source,dest,centers,solid
+
+
+def material_strain(source, dest, chosen, scale):
+    """Orientation-independent strain; positive winding alone is insufficient."""
+    from .integrity import THIGH_DEFORMATION_LIMITS as limits
+    if not chosen.any():
+        return dict(samples=0,bad_share=1.,min_scale=0.,max_scale=0.,min_area=0.,max_area=0.)
+    se = np.stack((source[:,1]-source[:,0],source[:,2]-source[:,0]),-1)
+    de = np.stack((dest[:,1]-dest[:,0],dest[:,2]-dest[:,0]),-1)
+    jac = de[chosen]@np.linalg.inv(se[chosen])/scale
+    singular = np.linalg.svd(jac,compute_uv=False);area = np.linalg.det(jac)
+    bad = ((singular[:,1]<limits['min_scale'])|(singular[:,0]>limits['max_scale'])
+           |(area<limits['min_area'])|(area>limits['max_area']))
+    return dict(samples=int(chosen.sum()),bad_share=round(float(bad.mean()),6),
+                min_scale=round(float(singular[:,1].min()),6),max_scale=round(float(singular[:,0].max()),6),
+                min_area=round(float(area.min()),6),max_area=round(float(area.max()),6))
+
+
+def thigh_strain(layer, vertices, scale):
+    """Opaque thigh shaft, excluding its existing two-radius knee envelope."""
+    from .integrity import THIGH_DEFORMATION_LIMITS as limits
+    source,dest,centers,solid = material_triangles(layer,vertices)
+    axis = layer.rest[1]-layer.rest[0]
+    length = float(np.linalg.norm(axis));axis = axis/length
+    along = (centers-layer.rest[0])@axis/length
+    across = (centers-layer.rest[0])@np.array([-axis[1],axis[0]])
+    end = min(.75,1-limits['knee_exclusion_radii']*layer.radius/length)
+    chosen = solid&(along>=limits['root_start'])&(along<=end)&(np.abs(across)<=layer.radius*.75)
+    return material_strain(source,dest,chosen,scale)
+
+
+def garment_strain(layer, vertices, scale, report):
+    """Also inspect the waist transition that the thigh-only ROI excluded."""
+    from .puppet import GRID
+    source,dest,centers,solid = material_triangles(layer,vertices)
+    depth = (centers-np.asarray(report['origin']))@(-np.asarray(report['up']))
+    start = report['attachment_depth']
+    chosen = solid&(depth>=start-GRID)&(depth<=start+report['fade']+GRID)
+    return material_strain(source,dest,chosen,scale)
+
+
+def garment_visibility(puppet, meshes, cv):
+    """Native final alpha coverage of originally hidden proximal cut edges.
+
+    Check actual rendered occluders within one output pixel of each mapped
+    edge point. This does not dilate the composite body or infer shirt colours.
+    """
+    from .puppet import mesh_points,raster
+    from .integrity import GARMENT_EDGE_LIMITS as limits
+    bindings = puppet.garment_bindings
+    mapped = {name:mesh_points(meshes[name][0],meshes[name][1],report['source_points'])
+              for name,(_,_,report,_) in bindings.items()}
+    points = np.vstack(list(mapped.values()))
+    margin = math.ceil(cv.ss*limits['contact_radius_px'])+2
+    lo = np.maximum(0,np.floor(points.min(0)).astype(int)-margin)
+    hi = np.minimum((cv.w,cv.h),np.ceil(points.max(0)).astype(int)+margin+1)
+    if np.any(hi<=lo):
+        return {name:dict(samples=len(p),exposed=len(p),exposed_indices=list(range(len(p))))
+                for name,p in mapped.items()}
+    masks = {}
+    parents = {p for _,_,report,_ in bindings.values() for p in report['occluders']}
+    for name in parents:
+        layer,verts = meshes[name]
+        masks[name] = raster(layer,verts-lo,puppet.mip(layer,cv.s/puppet.px_per_unit),
+                             int(hi[0]-lo[0]),int(hi[1]-lo[1]))[...,3]
+    radius = cv.ss*limits['contact_radius_px']
+    offsets = np.arange(-margin,margin+1)
+    dx,dy = np.meshgrid(offsets,offsets)
+    offsets = np.column_stack((dx.ravel(),dy.ravel()))
+    result = {}
+    for name,(_,_,report,_) in bindings.items():
+        p = mapped[name]-lo
+        near = np.rint(p).astype(int)[:,None,:]+offsets
+        alpha = np.maximum.reduce([masks[n] for n in report['occluders']])
+        valid = ((near[...,0]>=0)&(near[...,1]>=0)
+                 &(near[...,0]<alpha.shape[1])&(near[...,1]<alpha.shape[0]))
+        covered = np.zeros(valid.shape,bool)
+        y,x = near[...,1],near[...,0]
+        covered[valid] = alpha[y[valid],x[valid]]>=limits['occluder_alpha']
+        covered &= np.sum((near-p[:,None,:])**2,axis=-1)<=radius*radius+1e-9
+        bad = np.flatnonzero(~covered.any(1)).tolist()
+        result[name] = dict(samples=len(p),exposed=len(bad),exposed_indices=bad)
+    return result
+
+
+def ordinary_run_report(clip, body, n, fps):
+    """Measure the requested ordinary-run style against this body's leg length."""
+    from .render import frame_time
+    legs = min(sum(body.leg_bones(side)) for side in 'nf')
+    samples = []
+    for i in range(n):
+        pose = full_pose(clip.sample(frame_time(clip,i,n,fps)))
+        sk = solve(pose,body)
+        angles = [abs(math.degrees(math.atan2(sk['kn_'+s][0]-sk['hip_'+s][0],
+                    sk['hip_'+s][1]-sk['kn_'+s][1]))) for s in 'nf']
+        samples.append(dict(foot_span_ratio=abs(sk['an_n'][0]-sk['an_f'][0])/legs,
+                            lift_ratio=max(pose['foot_n_y'],pose['foot_f_y'])/legs,
+                            thigh_deg=max(angles),lean_deg=abs(sk['chest_rot']),
+                            pelvis_y_ratio=sk['hip'][1]/legs,
+                            head_y_ratio=sk['head_base'][1]/legs,
+                            near_contact=clip.contacts(frame_time(clip,i,n,fps))['n'],
+                            far_contact=clip.contacts(frame_time(clip,i,n,fps))['f']))
+    phase_samples = []
+    for i in range(240):
+        t = clip.duration*i/240
+        sk = solve(full_pose(clip.sample(t)),body)
+        contacts = clip.contacts(t)
+        phase_samples.append(dict(phase=i/240,pelvis_y_ratio=sk['hip'][1]/legs,
+                                  head_y_ratio=sk['head_base'][1]/legs,
+                                  near_contact=contacts['n'],far_contact=contacts['f']))
+    return dict(profile=getattr(clip,'profile','legacy_run'),frames=n,leg_length=legs,
+                stride_ratio=clip.L/legs,lift_ratio=clip.lift/legs,bob_ratio=clip.bob/legs,
+                samples=samples,rhythm=dict(method='phase_sampled_run_support_v1',
+                                           phase_samples=phase_samples))
+
+
+def check_connections(renderer, clip, n, fps, bindings=None):
+    """Check the torso seam, rotating thigh caps and thigh material every frame.
+
+    The torso shares its pelvis surface. Each thigh cap follows its own bone,
+    while its joint stays in its registered pelvis socket. Both cap edges and
+    material strain are checked on the final mesh, without alpha dilation.
+    Bindings may be supplied by a read-only audit of an older export.
+    """
+    from .art import Canvas
+    from .puppet import mesh_points,rigid
+    from .mathx import rot
+    from .integrity import THIGH_DEFORMATION_LIMITS
+    from .render import GROUND_FRAC, frame_time
+    puppet = renderer.art.puppet
+    garment = getattr(puppet,'garment_bindings',{})
+    if bindings is None:
+        bindings = dict(puppet.pelvis_bindings,**getattr(puppet,'socket_bindings',{}),
+                        **{name:(parent,weights,report) for name,(parent,weights,report,_) in garment.items()})
+    required = {'torso', 'leg_near', 'leg_far'}
+    if set(bindings) != required:
+        return [f'connection: {clip.name} frame 0: missing full pelvis attachment evidence']
+    cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
+    values = {part: [] for part in required}
+    shapes = {part: [] for part in set(getattr(puppet,'socket_bindings',{}))|set(garment)}
+    garment_shapes = {part:[] for part in garment}
+    edges = {part:[] for part in garment}
+    for i in range(n):
+        t = frame_time(clip, i, n, fps)
+        pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
+        cv.set_squash(pose['squash'], 0.)
+        meshes = {layer.name: (layer, vertices) for layer, vertices in
+                  puppet.meshes(cv, sk, renderer.cloth_at(clip, t), 'ground' in clip.tags)}
+        for name, (parent, _, report) in bindings.items():
+            source = np.asarray(report['source_points'], float)
+            child, verts = meshes[name]
+            if report.get('method') == 'registered_articulated_socket_v2':
+                side = child.bones[0][-1];root,knee = child.rest[:2]
+                target,next_joint = np.array(cv.T(sk['hip_'+side])),np.array(cv.T(sk['kn_'+side]))
+                axis = knee-root;direction = next_joint-target
+                angle = np.arctan2(direction[1],direction[0])-np.arctan2(axis[1],axis[0])
+                expected = rigid(source[:,0],source[:,1],root,target,float(angle),cv.s/puppet.px_per_unit)
+                error = np.linalg.norm(mesh_points(child,verts,source)-expected,axis=-1)
+                # The virtual socket follows measured pelvis coordinates plus
+                # the authored hip twist. Its cap rotates with its own bone.
+                shift = np.array(rot((pose['hp']*(1 if side=='n' else -1),0),sk['body_rot']))
+                shift = np.array(cv.T(shift))-np.array(cv.T((0.,0.)))
+                parent_joint = mesh_points(parent,meshes[parent.name][1],np.asarray([root]))[0]+shift
+                child_joint = mesh_points(child,verts,np.asarray([root]))[0]
+                worst = max(float(error.max()),float(np.linalg.norm(child_joint-parent_joint)))
+                shapes[name].append(thigh_strain(child,verts,cv.s/puppet.px_per_unit))
+            else:
+                error = np.linalg.norm(mesh_points(child, verts, source)-
+                                       mesh_points(parent, meshes[parent.name][1], source), axis=-1)
+                worst = float(error.max())
+                if name in garment:
+                    joint = np.asarray([report['source_joint']],float)
+                    side = 'n' if name == 'leg_near' else 'f'
+                    at = mesh_points(child,verts,joint)[0]
+                    worst = max(worst,float(np.linalg.norm(at-np.asarray(cv.T(sk['hip_'+side])))))
+                    shapes[name].append(thigh_strain(child,verts,cv.s/puppet.px_per_unit))
+                    garment_shapes[name].append(garment_strain(child,verts,cv.s/puppet.px_per_unit,report))
+            values[name].append(round(worst/renderer.ss, 5))
+        if garment:
+            for name,row in garment_visibility(puppet,meshes,cv).items():
+                edges[name].append(row)
+    if not hasattr(renderer, 'connection_checks'):
+        renderer.connection_checks = {}
+    renderer.connection_checks[clip.name] = dict(frames=n,parts=values,shape_parts=shapes,
+                                                garment_shapes=garment_shapes,edge_visibility=edges)
+    faults = [f'connection: {name}: {clip.name} frame {i}: registered attachment separates by {error:.3f}px'
+              for name, errors in values.items() for i, error in enumerate(errors) if error > 1.0]
+    faults += [f'shape: {name}: {clip.name} frame {i}: {row["bad_share"]:.1%} of opaque thigh shaft collapses or stretches'
+               for name, rows in shapes.items() for i,row in enumerate(rows)
+               if not row['samples'] or row['bad_share']>THIGH_DEFORMATION_LIMITS['max_bad_share']]
+    faults += [f'garment shape: {name}: {clip.name} frame {i}: {row["bad_share"]:.1%} of waist material collapses or stretches'
+               for name,rows in garment_shapes.items() for i,row in enumerate(rows)
+               if not row['samples'] or row['bad_share']>THIGH_DEFORMATION_LIMITS['max_bad_share']]
+    faults += [f'garment edge: {name}: {clip.name} frame {i}: {row["exposed"]} originally hidden cut-edge samples exposed'
+               for name,rows in edges.items() for i,row in enumerate(rows) if row['exposed']]
+    if garment and clip.name == 'run':
+        from .integrity import ordinary_run_faults
+        renderer.ordinary_run_checks = ordinary_run_report(clip,renderer.art.body,n,fps)
+        faults += [f'ordinary run: run frame {row["frame"]}: {row["what"]}'
+                   for row in ordinary_run_faults(renderer.ordinary_run_checks,n)]
+    return faults
 
 
 def attachment_faults(alpha, parent_alpha, root, next_joint, radius):

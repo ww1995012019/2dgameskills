@@ -101,6 +101,16 @@ edges, horizontal shelves, detached panels, duplicated waistbands and an arm or 
 the wrong painted joint. An opaque belt/torso must not conceal the absence of necessary pelvis
 pixels. The existing body-core check stops above the leg split and cannot establish this.
 
+For current registered basic exports, hips sheets include EVERY exported frame. Look at both
+outer waist edges, the complete jacket/trouser boundary, and the inner thighs at native crop size;
+do not let a dark page background or a centreline contact hide a one-pixel split. Compare the
+registered `binding_reference.png` with rest, all extremes and the sequence: a trouser core that
+climbs beside the jacket, a shifted waistband or an invented extra panel fails the mandatory
+`source_garment_registration` check even if there is no transparent hole. Registered connection
+evidence checks all frames and rejects missing coverage or changed source/output pixels. It
+measures geometry; it cannot certify garment colours, painted cuts or anatomy. A manual pass
+must describe the source comparison, not infer it from a green numerical report.
+
 For an external/custom mesh, also inspect the source-point and runtime overlays from
 `audit_skin_binding.py` ([contract](skin-binding-audit.md)). The tool checks declared landmarks
 and shared boundaries only. It cannot identify every unmarked seam or judge all anatomy.
@@ -116,6 +126,45 @@ needs a person to watch it play before it counts as done.
 ## Checklist
 
 Look at each clip for these, in this order. Name the clip and frame when something is wrong.
+
+**Regression review after a connection fix**
+
+- A zero-drift connection or positive triangle area is not an anatomy verdict. Positive triangles
+  can be nearly flat; a rigid thigh can also follow the wrong parent's rotation.
+- Compare the same clip/frame before and after the change at equal world/pixel scale. When a
+  cadence change alters frame count, compare nearby normalized cycle phases and label both frame
+  numbers; equal frame indices then no longer mean equal poses. Keep whole
+  thighs and knees visible; the previous waist-only crop hid thigh regressions.
+- `limb_shape_preservation` is mandatory for every hips-sheet pose. Inspect thickness, thigh
+  direction, knee location, shorts/trouser hems and the full playback. Do not batch-generate
+  passing visual claims from a checklist template.
+- Current basic exports require `registered_garment_surfaces_v3` evidence. The original hidden
+  waist rim follows its garment owner; a free deformation band connects it to the moving thigh.
+  The opaque shaft Jacobians are checked outside the
+  knee envelope (two local knee radii): min singular scale 0.25, max 3, signed area ratio 0.15–3;
+  over 1% distressed shaft material is a blocker. These conservative limits identify catastrophic
+  collapse/stretch, not every unnatural silhouette. Existing fold/contact limits remain intact.
+- Apply those same strain limits separately to the waist transition; the previous thigh ROI
+  excluded exactly that region. Native alpha checks also require every originally hidden source
+  cut-edge point to remain under the recorded later garment surfaces, within one output pixel.
+  A rotating cap is not sufficient proof that a trouser rim or pocket top remains hidden.
+- Complete `hidden_garment_edges` and `motion_style_match` for each required pose. Open the blue
+  `garment_edges_*.png` waist macros, where a small folded corner is large enough to inspect.
+- The explicit `ordinary_run_v2` profile is body-scaled; ordinary-run evidence limits stride to
+  1 leg length, lift to 0.3 legs, horizontal ankle separation to 1 leg, thigh angle to 65 degrees,
+  torso lean to 15 degrees and bob to 0.05 legs. These are conservative bounds for ordinary running,
+  not universal limits for a sprint or an action pose. Watch the actual cycle and compare the user's
+  intent; a fixed large-step template can pass skeletal integrity and still be the wrong motion.
+- A declared small bob did not measure v1's per-frame support-height override. Current evidence
+  also measures actual pelvis/head height range, half-step mismatch, vertical frame displacement,
+  and phase derivatives; the native PNG head silhouette is checked independently. The body
+  apex must occur in flight. Both steps need equal frame counts and matching GIF timing patterns.
+  Open `run_support_00.png` and `run_support_motion_000.gif`: the entire cycle uses one fixed
+  canvas and fixed head/ground guides, with no per-frame recentering. Record `support_rhythm`
+  for every frame and the full playback. Foot contact and a closed loop do not establish an
+  even running rhythm; a sudden drop or alternating high/low step must block release.
+- Revoke the actual current visual pass when a user identifies an omitted defect. Preserve the
+  failure and show changed-frame evidence for that same issue before accepting another result.
 
 **Contact**
 - Feet on the orange line in ground clips, neither above nor below it

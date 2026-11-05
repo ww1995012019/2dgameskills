@@ -340,6 +340,91 @@ class Gait(Clip):
         return p
 
 
+class LegacyOrdinaryRun(Gait):
+    """A body-scaled ordinary run for registered, planar character artwork.
+
+    The legacy action-game run has a fixed 48-unit stride and 19-unit lift.
+    Those are sprint-like on the measured basic bodies. Keep this requested
+    style explicit, and preserve ground speed when changing its stride.
+    """
+    profile = 'ordinary_run_v1'
+
+    def __init__(self, body, period=.7, bounce=1.):
+        legs = min(sum(body.leg_bones(side)) for side in 'nf')
+        super().__init__('run', period, .75*legs, .22*legs, .44,
+                         front=.5, hip=-3., bob=.8*bounce, bob_at=.4,
+                         lean=6., pelvis=4., head=-8.,
+                         arm_n=(-12.,20.,75.,10.), arm_f=(4.,25.,80.,10.),
+                         wep=-75., heel=8., toe=25., swing_pitch=-20.,
+                         peak=.85, tan=1., sh=.7, hp=0., surge=.25,
+                         tags=('ground',),
+                         events=[(0.,'footstep'),(.5*period,'footstep')])
+        self.contact_body = body
+
+    def sample(self, t):
+        pose = super().sample(t)
+        pose['_leg_soft'] = .997
+        legs = min(sum(self.contact_body.leg_bones(side)) for side in 'nf')
+        pose['root_y'] = measured_walk_height(
+            pose, self.contact_body, reach_fraction=.98,
+            softness=.008*legs)-self.contact_body.hip_h
+        return pose
+
+
+class OrdinaryRun(LegacyOrdinaryRun):
+    """Balanced support with a small authored height curve on both steps.
+
+    A per-frame maximum-reach fit makes the pelvis follow the recovering foot.
+    Fit one constant support height over the whole cycle instead, then retain
+    the same smooth vertical path for each half-cycle.
+    """
+    profile = 'ordinary_run_v2'
+    frame_multiple = 2
+
+    def __init__(self, body, period=.7, bounce=1.):
+        super().__init__(body, period, bounce)
+        legs = min(sum(body.leg_bones(side)) for side in 'nf')
+        self.stride(.7*legs)
+        self.lift = .16*legs
+        self.bob = .0125*legs*bounce
+        self.surge = 0.
+        self._height_cache = None
+
+    def _prepared_pose(self, t):
+        pose = Gait.sample(self, t)
+        pose['_leg_soft'] = .997
+        for side in 'nf':
+            seat = getattr(self.contact_body, 'hip_'+side+'_at')
+            if seat is None:
+                seat = (self.contact_body.hip_w*.3, 0.) if side=='n' else (-self.contact_body.hip_w, 0.)
+            # Centre each trajectory under its measured seat, keeping the
+            # offset constant so the planted foot still has constant speed.
+            pose['foot_'+side+'_x'] += rot(tuple(seat), self.pelvis)[0]
+        return pose
+
+    def _height_wave(self, phase):
+        flight_mid = (self.duty+.5)/2
+        return self.bob*math.cos(TAU*2*(phase-flight_mid))
+
+    def sample(self, t):
+        parameters = (self.L,self.lift,self.bob,self.duty,self.front,self.pelvis,
+                      self.hp,self.surge,self.peak,self.tan)
+        if self._height_cache is None or self._height_cache[0] != parameters:
+            body = self.contact_body
+            legs = min(sum(body.leg_bones(side)) for side in 'nf')
+            height = min(measured_walk_height(self._prepared_pose(self.T*i/480), body,
+                         reach_fraction=.98, softness=.008*legs)-self._height_wave(i/480)
+                         for i in range(480))-.002*legs
+            self._height_cache = parameters,height
+        pose = self._prepared_pose(t)
+        pose['root_y'] = self._height_cache[1]+self._height_wave(t/self.T)-self.contact_body.hip_h
+        return pose
+
+    def contacts(self, t):
+        phase = round((t/self.T)%1., 12)%1.
+        return dict(n=phase<self.duty, f=round((phase+.5)%1.,12)<self.duty)
+
+
 class NaturalWalk(Gait):
     """Opt-in, proportion-derived upright walk with explicit sole support.
 
@@ -727,6 +812,12 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
                lean=13, pelvis=9, head=-15, arm_n=(-26, 14, 40, 8), arm_f=(8, 44, 84, 14),
                wep=-75, heel=12, toe=46, swing_pitch=-62, peak=0.62, tan=0.62, sh=2.2, hp=1.6,
                surge=0.9, tags=("ground",), events=[(0.0, "footstep"), (0.28 * tm, "footstep")])
+    run_profile = (gait or {}).get('run', {}).get('profile')
+    if run_profile is not None:
+        if run_profile not in ('ordinary_run_v1','ordinary_run_v2'):
+            raise ValueError(f'gait.run.profile: unknown profile {run_profile!r}')
+        run_type = OrdinaryRun if run_profile=='ordinary_run_v2' else LegacyOrdinaryRun
+        run = run_type(body, .7*tm, bn)
     crouch_walk = Gait("crouch_walk", 0.9 * tm, 26, 6, 0.64, hip=-15, bob=0.9 * bn, lean=22,
                        pelvis=25, head=-34, arm_n=(-6, 10, 62, 8), arm_f=(30, 16, 50, 10), wep=48,
                        heel=10, toe=30, tags=("ground",),
@@ -963,9 +1054,13 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
         if 'held_weapon_carry' in pose and any(k in pose for k in ('arm_n', 'wep_sway')):
             raise ValueError('held_weapon_carry cannot be combined with arm_n or wep_sway overrides')
         for key, value in pose.items():
-            if key == 'profile'  and name == 'walk':
+            if key == 'profile' and name in ('walk','run'):
                 continue  # selected before constructing the clip
-            if key == 'settle_relax_free_arm':
+            if key == 'planar_hips':
+                if not isinstance(out[name],Gait) or value is not True:
+                    raise ValueError('planar_hips requires a gait and explicit true')
+                out[name].hp = 0.
+            elif key == 'settle_relax_free_arm':
                 if name != 'walk' or not isinstance(out[name], NaturalWalk) or type(value) is not bool:
                     raise ValueError('settle_relax_free_arm requires a natural walk and an explicit boolean')
                 out[name].settle_relax_free_arm = value

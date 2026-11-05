@@ -136,6 +136,46 @@ Changed art/notes invalidates acceptance. Binding rechecks both reviews plus the
 Inspect `rig/layers_check.png` and `rig/bind_joints.png`; trace both entire arms, do not judge a
 shoulder cap alone. Never hand-edit the generated character configuration or individual pixels to
 make it pass. Preview detects changes to the exported rig and requires rebinding the general fix.
+The lower-level `layer_parts.py bind` command rejects inputs belonging to this profile, including
+copied basic reference reviews. Use the staged binding command above. Direct `generate.py` also
+requires the owning job's accepted layers and unchanged `rig/character.json`; a `diagnostic_bind`
+directory cannot bypass those checks. A successful numeric report is not a visual verdict, and
+calling a failed output a prototype does not authorize delivery or publication.
+
+Current basic bindings preserve registered hip-core placement and use `registered_garment_v3`.
+The original hidden waistband rim shares the garment's body transform. A constrained free cloth
+band connects it to the thigh without pinning the whole thigh. ARAP rotations and bounded local
+strain projection preserve material while both ends stay registered; independent QA still rejects
+folding or compression. Source rest joints match actual measured seats and knee radii use local width.
+v1 flattened thighs by freezing too much material; v2 allowed hidden waist cuts to rotate out of
+the jacket. Both acceptance conclusions have been revoked. The current checks include the complete
+source-hidden proximal boundary, actual final occluder alpha, waist-band AND thigh-shaft strain,
+hip registration and isolated limb support. No source texture is repainted or covered with a patch.
+The source-valid interior core check excludes reference background instead of pulling pants
+upward to fill an imaginary constant-width body. Missing true source fabric still fails binding.
+
+`qa_motion.py` and the visual delivery gate independently require all frames/parts and the exact
+registered-source and RGBA hashes. Read every hips sheet: current basic exports include every
+frame rather than only extrema. Compare garment height and both waist edges against
+`binding_reference.png`; complete `source_garment_registration` and `limb_shape_preservation` as
+well as continuity/alignment. The crops include full thighs and knees. Compare identical frame
+times and equal pixel/world scale against the previous result before accepting a seam repair.
+If cadence changes the frame count, use nearby normalized cycle phases, label both frame numbers,
+and keep world scale identical; do not describe those comparisons as identical timestamps.
+Inspect `garment_edges_*.png` waist macros separately and complete `hidden_garment_edges` and
+`motion_style_match`; an intact alpha silhouette can still show an exposed internal cut.
+
+Basic ordinary running uses `gait.run.profile = ordinary_run_v2`, derived from leg length:
+stride 0.7 legs, lift 0.16 legs, period 0.7 seconds at default speed, duty 0.44. Explicit planar
+hip motion preserves a single garment owner. Native measurements and the recorded output scope
+must include every delivered run frame. This profile is not a sprint; matching the user's motion
+intent, natural recovery and cloth appearance still require full playback review.
+The pelvis height is a shared smooth two-step curve fitted once below the full-cycle reach
+envelope. Never solve a new maximum hip height from the swing foot on each frame. The earlier
+v1 method produced large, asymmetric vertical drops despite a small declared bob. Required
+evidence now measures actual height and its derivatives plus the native PNG silhouette, uses
+paired frame sampling, and quantizes equal GIF step timings. Review the full fixed-canvas
+`run_support` plot/playback and every `support_rhythm` observation before release.
 
 ## 4. Bounded repairs
 

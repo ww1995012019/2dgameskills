@@ -4,12 +4,20 @@ import base64
 import hashlib
 import json
 import os
-
 import numpy as np
 from PIL import Image
 
 MAX_PAGE = 4096
 PAD = 2
+
+
+def gif_durations(count, fps, parts=1):
+    """Quantize each repeated step identically, preserving a balanced cadence."""
+    if type(parts) is not int or parts<1 or count<1 or count%parts or fps<=0:
+        raise ValueError('GIF timing requires complete equal parts and a positive FPS')
+    length = count//parts
+    step = [max(10,(round((i+1)*100/fps)-round(i*100/fps))*10) for i in range(length)]
+    return step*parts
 
 
 def bleed(a, iters=4):

@@ -33,7 +33,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim.constraints import summarize  # noqa: E402
-from sprite_anim.integrity import frame_problems  # noqa: E402
+from sprite_anim.integrity import frame_problems, connection_report_faults  # noqa: E402
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 RANK = {PASS: 0, WARN: 1, FAIL: 2}
@@ -325,6 +325,15 @@ def run_set(root):
     out = dict(clips=report, transitions=trans, parts=dict(status=FAIL if problems else PASS, problems=problems),
                bind=dict(status=FAIL if bind_gaps else WARN if bind_warnings else PASS, warnings=bind_warnings, gaps=bind_gaps))
     failed += len(problems) + len(bind_gaps)
+    if trace and (trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1'):
+        faults = connection_report_faults(root, doc, trace)
+        out['connections'] = dict(status=FAIL if faults else PASS, problems=faults,
+                                  scope='all exported frames; full registered garment attachment')
+        failed += len(faults)
+        for fault in faults:
+            report[fault['clip']].setdefault('flags', {}).setdefault(str(fault['frame']), []).append(
+                'connection: '+fault['part']+': '+fault['what'])
+        print(f"connections: {out['connections']['status']}, {len(faults)} faults")
     if locomotion is not None:
         out['locomotion'] = locomotion
         failed += sum(r['status'] == FAIL for r in locomotion['clips'].values())
