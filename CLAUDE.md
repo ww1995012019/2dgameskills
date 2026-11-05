@@ -46,14 +46,18 @@
 ## 改完要跑的
 
 ```bash
-python3 -m unittest discover -s dev/tests -v      # 故障注入、CSS 回放、引擎实测、同步和打包检查
 bash dev/engines/get_godot.sh && npm install --prefix dev/engines   # 引擎测试要的 Godot、Phaser、PixiJS，装一次
+python3 dev/sync_shared.py && python3 dev/sync_modes.py
+python3 dev/package_skills.py                    # 先本地重建，归档隔离安装测试使用这些包
+python3 -m unittest discover -s dev/tests -v      # 故障注入、CSS 回放、引擎实测、同步和打包检查
 bash dev/regress_all.sh                          # 26 套全量回归，放后台并检查各套真实退出码
 python3 dev/baseline.py                          # 和 dev/baseline.json 比较：状态变差就失败
 python3 dev/baseline.py --strict                 # 重构时用：任何像素变化都算失败
-python3 dev/package_skills.py                    # 改了 skill 里的文件后重新打包 .skill
 ```
 
+- 用户要求源码提交不包含重新打包的 `.skill` 文件。仍须在本地重建并验证包；提交前恢复这些
+  产物、显式排除 `.skill`，检查暂存区。仓库内旧包可能落后于源码，安装最新版本请使用源码目录
+  或本地重建的包；不通过跳过打包/隔离安装测试来适应这项提交约定。
 - 有意改动画面后，确认没有回退，再 `python3 dev/baseline.py --update`，把 `dev/baseline.json` 和改动一起提交。
 - `dev/verify_exports_*.py <结果目录>` 校验导出文件，`node dev/test_shooter_demo.js all/<套>` 跑射击试玩页。
 

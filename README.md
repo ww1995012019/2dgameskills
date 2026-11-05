@@ -110,6 +110,10 @@ python scripts/visual_review.py out/wolf
 
 ## 安装
 
+源码提交不随附更新 `.skill` 打包文件，因此仓库中的预打包文件可能落后于源码。
+要使用最新代码，可以直接安装下述源码目录，或先在仓库根目录运行
+`python3 dev/package_skills.py`，再安装本地生成的包。
+
 四个 skill 互相独立，按需安装。四足包为 [`game-quadruped-animator.skill`](game-quadruped-animator.skill)。俯视包为 [`game-topdown-animator.skill`](game-topdown-animator.skill)。
 
 **Claude 桌面版：** 下载 [`game-sprite-animator.skill`](game-sprite-animator.skill) 或 [`game-shooter-animator.skill`](game-shooter-animator.skill)，在 Claude 中打开文件并保存为 skill。

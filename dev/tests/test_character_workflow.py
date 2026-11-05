@@ -361,14 +361,14 @@ class CharacterWorkflow(unittest.TestCase):
         cw.write_json(root/'job.json',job)
         cw.write_json(root/'rig/bind_report.json', {'status':'accepted','layer_review':{'assets':{'fixture':'hash'}}})
         from types import SimpleNamespace
-        with patch.object(cw,'accepted_layers'), patch.object(cw,'layer_assets',return_value={'fixture':'hash'}), patch.object(cw.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+        with patch.object(cw,'accepted_layers',return_value={'assets':{'fixture':'hash'}}), patch.object(cw.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
             cw.preview_job(self.job)
         args = run.call_args_list[0].args[0]
         self.assertEqual(args[args.index('--clips')+1], 'idle,walk')
         self.assertEqual(cw.read_json(root/'job.json')['phase'], 'awaiting_walk_review')
         (root/'build').mkdir()
         cw.write_json(root/'build/visual_report.json', {'status':'pass'})
-        with patch.object(cw,'accepted_layers'), patch.object(cw,'layer_assets',return_value={'fixture':'hash'}), patch.object(cw.subprocess,'run',side_effect=[SimpleNamespace(returncode=n) for n in (0,1,0)]):
+        with patch.object(cw,'accepted_layers',return_value={'assets':{'fixture':'hash'}}), patch.object(cw.subprocess,'run',side_effect=[SimpleNamespace(returncode=n) for n in (0,1,0)]):
             with self.assertRaisesRegex(cw.lp.Rejected,'QA/review build failed'):
                 cw.preview_job(self.job)
         self.assertEqual(cw.read_json(root/'job.json')['phase'], 'preview_blocked')

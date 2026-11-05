@@ -23,8 +23,8 @@ from sprite_anim.fx import build_fx  # noqa: E402
 from sprite_anim.motions import SEAMS, Gait, NaturalWalk, GroundedGaitHold, build_clips  # noqa: E402
 from sprite_anim.integrity import HUMANOID_BONES, THIGH_DEFORMATION_LIMITS, GARMENT_EDGE_LIMITS, ORDINARY_RUN_LIMITS  # noqa: E402
 from sprite_anim.part_check import check_parts  # noqa: E402
-from sprite_anim.occlusion_review import clip_candidates, write_report as write_occlusion_report  # noqa: E402
-from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion, check_attachments, check_neck, check_connections  # noqa: E402
+from sprite_anim.occlusion_review import write_report as write_occlusion_report  # noqa: E402
+from sprite_anim.puppet_qa import check_clips  # noqa: E402
 from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_count, frame_time, playback_speed, walk_hold_phase, to_u8  # noqa: E402
 from sprite_anim.rig import Body  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
@@ -76,6 +76,101 @@ def rig_trace(clip, n, fps, art, unit_px, size):
     return dict(joints=tr, skeleton=skeleton, smear=smear, feet=feet, contacts=contacts, metrics=metrics,
                 head_motion=head_motion,
                 frame_dt=1.0 / fps)
+
+
+def render_clips(root, r, clips, names, fps, over, settle_banks, write_frames=True):
+    """Render selected clips and assemble their unchanged timing/trace metadata."""
+    unit_px, size = r.unit, r.size
+    rendered, meta, sheets, traces = {}, {}, {}, {}
+    for nm in names:
+        c = clips[nm]
+        cfps = over.get(nm, fps)
+        frames = [to_u8(f) for f in r.render_clip(c, cfps)]
+        n = len(frames)
+        rendered[nm] = dict(frames=frames)
+        if write_frames:
+            export.write_frames(root, nm, frames)
+        sheets[nm] = export.write_sheet(root, nm, frames, size)
+        step = c.duration / n if c.loop else c.duration / (n - 1)
+        meta[nm] = dict(
+            fps=cfps, loop=c.loop, duration=n / cfps,
+            source_duration=c.duration,
+            speed_px_s=round(playback_speed(c, cfps, n) * unit_px, 2),
+            events=[dict(frame=min(n - 1, int(round(t / step))), name=e) for t, e in c.events],
+            next=c.next if not c.loop else None, prev=c.prev,
+            chain_frame=int(round(c.chain_at / step)) if c.chain_at else None,
+            tags=sorted(c.tags))
+        if getattr(c,'frame_multiple',1)>1:
+            meta[nm]['frame_multiple'] = c.frame_multiple
+        if isinstance(c, Gait) and nm == 'walk':
+            # Both the legacy and natural walking loop can retain their phase
+            # while braking to a two-foot support frame. Use the baked clock.
+            meta[nm]['locomotion'] = dict(profile='natural_walk_v1' if isinstance(c, NaturalWalk) else 'phase_walk_v1',
+                period_s=n / cfps, duty=c.duty, speed_px_s=playback_speed(c, cfps, n) * unit_px,
+                hold_phase=walk_hold_phase(c, n),
+                idle_mode='held_double_support', contact_sampling='baked_frames')
+            if settle_banks:
+                meta[nm]['locomotion']['settle_banks'] = settle_banks
+                meta[nm]['locomotion']['idle_mode'] = 'settled_double_support'
+        traces[nm] = rig_trace(c, n, cfps, r.art, unit_px, size)
+        print(f"[clip] {nm:<14} {n:>3}f @ {cfps}fps {'loop' if c.loop else 'once'}")
+
+    return rendered, meta, sheets, traces
+
+
+def export_engine_files(root, doc, sheets, meta, skill_root):
+    """Copy engine adapters and write formats from the completed manifest."""
+    export.godot_tres(root, doc)
+    export.cocos_plist(root, doc)
+    export.css_keyframes(root, doc, sheets)
+    shutil.copy(os.path.join(skill_root, "assets", "engine", "web", "sprite-player.js"), os.path.join(root, "engine", "web"))
+    if any('locomotion' in m for m in meta.values()):
+        shutil.copy(os.path.join(skill_root, 'assets', 'engine', 'web', 'grounded-walk.html'),
+                    os.path.join(root, 'engine', 'web', 'grounded-walk.html'))
+    os.makedirs(os.path.join(root, "engine", "unity"), exist_ok=True)
+    shutil.copy(os.path.join(skill_root, "assets", "engine", "unity", "SpriteSetImporter.cs"), os.path.join(root, "engine", "unity"))
+
+
+def export_fx(root, spec, size, fps, pixel, pivot, name):
+    """Build effect assets separately from character sampling and QA."""
+    fx = build_fx(size, fps, pixel, spec)
+    fx_rendered = {k: dict(frames=v["frames"]) for k, v in fx.items()}
+    os.makedirs(os.path.join(root, "fx"), exist_ok=True)
+    s2, r2, f2 = export.build_atlas(root, fx_rendered, size, prefix="fx")
+    export.texturepacker_json(root, s2, r2, f2, size, pivot, prefix="fx")
+    fm = {k: dict(fps=v["fps"], loop=v["loop"], duration=v["duration"], events=[], tags=[], next=None) for k, v in fx.items()}
+    fx_doc = export.manifest(s2, r2, f2, fm, size, pivot, name + "_fx")
+    with open(os.path.join(root, "fx.json"), "w", encoding="utf-8") as fh:
+        json.dump(fx_doc, fh, ensure_ascii=False, indent=1)
+    for k, v in fx.items():
+        export.write_sheet(os.path.join(root, "fx"), k, v["frames"], size)
+
+    return fx_doc
+
+
+def connection_evidence(root, spec, r, rendered, names):
+    """Bind measured garment connections to the actual reference/output pixels."""
+    connection_data = {}
+    if r.art.puppet and spec.get('puppet', {}).get('connection_skinning') == 'registered_garment_v3':
+        import hashlib
+        shutil.copyfile(os.path.join(spec['_dir'],spec['puppet']['source']),os.path.join(root,'binding_reference.png'))
+        with open(os.path.join(root,'binding_reference.png'),'rb') as source:
+            source_reference_sha256=hashlib.sha256(source.read()).hexdigest()
+        connection_data = dict(connection_review_required=True, connections=dict(
+            method='registered_garment_surfaces_v3',shape_limits=THIGH_DEFORMATION_LIMITS,
+            edge_limits=GARMENT_EDGE_LIMITS,run_limits=ORDINARY_RUN_LIMITS,
+            ordinary_run=getattr(r,'ordinary_run_checks',None),
+            **({'draw_owners':{layer.name:layer.draw_owner for layer in r.art.puppet.layers if layer.draw_owner}}
+               if spec.get('gait',{}).get('carry') else {}),
+            source_reference_sha256=source_reference_sha256,
+            bindings={name: report for name, (_, _, report) in
+                      dict(r.art.puppet.pelvis_bindings,**r.art.puppet.socket_bindings,
+                           **{name:(parent,weights,report) for name,(parent,weights,report,_)
+                              in r.art.puppet.garment_bindings.items()}).items()},
+            clips=r.connection_checks,
+            frame_hashes={name: [hashlib.sha256(str((f.shape[1], f.shape[0])).encode()+f.tobytes()).hexdigest()
+                                  for f in rendered[name]['frames']] for name in names}))
+    return connection_data
 
 
 def main():
@@ -172,39 +267,8 @@ def main():
     print(f"[fit] character scale {r.fit:.3f} to keep {fit_scope} inside the frame")
     pivot = (size // 2, int(size * GROUND_FRAC))
 
-    rendered, meta, sheets, traces = {}, {}, {}, {}
-    for nm in names:
-        c = clips[nm]
-        cfps = over.get(nm, fps)
-        frames = [to_u8(f) for f in r.render_clip(c, cfps)]
-        n = len(frames)
-        rendered[nm] = dict(frames=frames)
-        if not a.no_frames:
-            export.write_frames(root, nm, frames)
-        sheets[nm] = export.write_sheet(root, nm, frames, size)
-        step = c.duration / n if c.loop else c.duration / (n - 1)
-        meta[nm] = dict(
-            fps=cfps, loop=c.loop, duration=n / cfps,
-            source_duration=c.duration,
-            speed_px_s=round(playback_speed(c, cfps, n) * unit_px, 2),
-            events=[dict(frame=min(n - 1, int(round(t / step))), name=e) for t, e in c.events],
-            next=c.next if not c.loop else None, prev=c.prev,
-            chain_frame=int(round(c.chain_at / step)) if c.chain_at else None,
-            tags=sorted(c.tags))
-        if getattr(c,'frame_multiple',1)>1:
-            meta[nm]['frame_multiple'] = c.frame_multiple
-        if isinstance(c, Gait) and nm == 'walk':
-            # Both the legacy and natural walking loop can retain their phase
-            # while braking to a two-foot support frame. Use the baked clock.
-            meta[nm]['locomotion'] = dict(profile='natural_walk_v1' if isinstance(c, NaturalWalk) else 'phase_walk_v1',
-                period_s=n / cfps, duty=c.duty, speed_px_s=playback_speed(c, cfps, n) * unit_px,
-                hold_phase=walk_hold_phase(c, n),
-                idle_mode='held_double_support', contact_sampling='baked_frames')
-            if settle_banks:
-                meta[nm]['locomotion']['settle_banks'] = settle_banks
-                meta[nm]['locomotion']['idle_mode'] = 'settled_double_support'
-        traces[nm] = rig_trace(c, n, cfps, r.art, unit_px, size)
-        print(f"[clip] {nm:<14} {n:>3}f @ {cfps}fps {'loop' if c.loop else 'once'}")
+    rendered, meta, sheets, traces = render_clips(
+        root, r, clips, names, fps, over, settle_banks, not a.no_frames)
 
     for bank in settle_banks:
         # Pose-bank registration follows the same discrete clock as the walk;
@@ -224,29 +288,9 @@ def main():
     doc = export.manifest(sprites, refs, files, meta, size, pivot, name)
     with open(os.path.join(root, "animations.json"), "w", encoding="utf-8") as fh:
         json.dump(doc, fh, ensure_ascii=False, indent=1)
-    export.godot_tres(root, doc)
-    export.cocos_plist(root, doc)
-    export.css_keyframes(root, doc, sheets)
-    shutil.copy(os.path.join(SKILL_ROOT, "assets", "engine", "web", "sprite-player.js"), os.path.join(root, "engine", "web"))
-    if any('locomotion' in m for m in meta.values()):
-        shutil.copy(os.path.join(SKILL_ROOT, 'assets', 'engine', 'web', 'grounded-walk.html'),
-                    os.path.join(root, 'engine', 'web', 'grounded-walk.html'))
-    os.makedirs(os.path.join(root, "engine", "unity"), exist_ok=True)
-    shutil.copy(os.path.join(SKILL_ROOT, "assets", "engine", "unity", "SpriteSetImporter.cs"), os.path.join(root, "engine", "unity"))
+    export_engine_files(root, doc, sheets, meta, SKILL_ROOT)
 
-    fx_doc = None
-    if not a.no_fx:
-        fx = build_fx(size, fps, pixel, spec)
-        fx_rendered = {k: dict(frames=v["frames"]) for k, v in fx.items()}
-        os.makedirs(os.path.join(root, "fx"), exist_ok=True)
-        s2, r2, f2 = export.build_atlas(root, fx_rendered, size, prefix="fx")
-        export.texturepacker_json(root, s2, r2, f2, size, pivot, prefix="fx")
-        fm = {k: dict(fps=v["fps"], loop=v["loop"], duration=v["duration"], events=[], tags=[], next=None) for k, v in fx.items()}
-        fx_doc = export.manifest(s2, r2, f2, fm, size, pivot, name + "_fx")
-        with open(os.path.join(root, "fx.json"), "w", encoding="utf-8") as fh:
-            json.dump(fx_doc, fh, ensure_ascii=False, indent=1)
-        for k, v in fx.items():
-            export.write_sheet(os.path.join(root, "fx"), k, v["frames"], size)
+    fx_doc = None if a.no_fx else export_fx(root, spec, size, fps, pixel, pivot, name)
 
     seams = [s for s in SEAMS if s[0] in names and s[1] in names]
     # Custom clips declare their own neighbors; include them in the same transition QA.
@@ -267,42 +311,13 @@ def main():
     occlusion_candidates = []
     occlusion_summary = None
     if r.art.puppet:
-        problems = check_layers(r.art.puppet)
-        for nm in names:
-            problems += check_motion(r, clips[nm], len(rendered[nm]["frames"]), over.get(nm, fps))
-            problems += check_hands(r, spec, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
-            problems += check_core(r, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
-            problems += check_neck(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
-            if spec.get('puppet', {}).get('connection_skinning') == 'registered_garment_v3':
-                problems += check_connections(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
-            if spec.get('puppet', {}).get('attachment_checks', False):
-                problems += check_attachments(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
-                occlusion_candidates += clip_candidates(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
+        problems, occlusion_candidates = check_clips(r, spec, clips, names, rendered, fps, over)
         if spec.get('puppet', {}).get('attachment_checks', False):
             occlusion_summary = write_occlusion_report(root, occlusion_candidates,
                                                        {n:len(rendered[n]['frames']) for n in names})
             print(f"[review] {occlusion_summary['candidates']} occlusion candidates; {occlusion_summary['status']}")
             print(f"[review] {occlusion_summary['check_command']}")
-    connection_data = {}
-    if r.art.puppet and spec.get('puppet', {}).get('connection_skinning') == 'registered_garment_v3':
-        import hashlib
-        shutil.copyfile(os.path.join(spec['_dir'],spec['puppet']['source']),os.path.join(root,'binding_reference.png'))
-        with open(os.path.join(root,'binding_reference.png'),'rb') as source:
-            source_reference_sha256=hashlib.sha256(source.read()).hexdigest()
-        connection_data = dict(connection_review_required=True, connections=dict(
-            method='registered_garment_surfaces_v3',shape_limits=THIGH_DEFORMATION_LIMITS,
-            edge_limits=GARMENT_EDGE_LIMITS,run_limits=ORDINARY_RUN_LIMITS,
-            ordinary_run=getattr(r,'ordinary_run_checks',None),
-            **({'draw_owners':{layer.name:layer.draw_owner for layer in r.art.puppet.layers if layer.draw_owner}}
-               if spec.get('gait',{}).get('carry') else {}),
-            source_reference_sha256=source_reference_sha256,
-            bindings={name: report for name, (_, _, report) in
-                      dict(r.art.puppet.pelvis_bindings,**r.art.puppet.socket_bindings,
-                           **{name:(parent,weights,report) for name,(parent,weights,report,_)
-                              in r.art.puppet.garment_bindings.items()}).items()},
-            clips=r.connection_checks,
-            frame_hashes={name: [hashlib.sha256(str((f.shape[1], f.shape[0])).encode()+f.tobytes()).hexdigest()
-                                  for f in rendered[name]['frames']] for name in names}))
+    connection_data = connection_evidence(root, spec, r, rendered, names)
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
                        **({'neck_skinning': dict(source_bindings={name:report for name, (_, _, report) in r.art.puppet.neck_bindings.items()},
