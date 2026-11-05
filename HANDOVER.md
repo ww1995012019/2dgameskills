@@ -30,12 +30,21 @@
   原严格落脚阈值报告 run hover_px=1.346，保留警告，未宣传零警告。逐一检查每角色 14 张全尺寸图、
   全 89 帧腰胯、骨线、原参考、全部 17 跑步帧及浏览器实际循环；每角色 3 个远臂遮挡候选已单独
   审核。桌面/手机无溢出，浏览器各遍历 72/17 帧，暂停、逐帧、翻转、调速及下载哈希一致。
-- 原私有 Site 已发布版本 5，来源 `ce4d42c885310b2bc6166be119e8fba4e1cb0320`，部署
-  `appgdep_6aec3cd3091c819186261c39a0ea4f81` succeeded；首页与 `/conan.html` 使用 v2 GIF、
-  新逐帧播放器与 ZIP，新增腰部修前修后对照。旧 GIF/ZIP 字节已更新，旧播放器入口指向新版。
+- 原私有 Site 已发布版本 6，来源 `d0909ae5f5b31ad2394ce3d26e626ff73e70df55`，部署
+  `appgdep_6aec42a150ec81919f87fc7eadbf1826` succeeded；首页与 `/conan.html` 使用 v2 GIF、
+  新逐帧播放器与 ZIP，新增腰部修前修后对照，肩部对照右栏也使用本次最终帧。旧 GIF/ZIP 字节已更新，旧播放器入口指向新版。
   本次没有扩大分享范围，用户动态验收仍 pending。
-- 验证证据：`/workspace/work/connection-repair-20261105`；全量单测及 26 套动画回归进行中，
-  提交前补齐最终结果。没有用旧轮验证日志充当本轮结果。
+- 验证证据：`/workspace/work/connection-repair-20261105`。本轮按当前 discover 核对 695 个唯一
+  测试 ID：686 pass、9 expectedFailure（原有 8 项及新增的服装语义缺口），0 failure/error/skip，
+  0 遗漏。顺序单测完成 `test_cutout_source` 后按模块继续；64 个模块批次全部成功，最后新增的
+  已知语义缺口单独补跑并纳入当前 ID 汇总。原 `test_preview_command` 的假 rig 缺少新增必填
+  profile 标记，修正测试夹具后该项重新通过，未放宽真实任务门禁。完整核对记录在
+  `verified-test-summary.json` / `verified-test-results.json`，原日志与独立批次结果均保留。
+- `JOBS=2 TEMP=... bash dev/regress_all.sh` 本轮 26 套全量动画回归退出 0，每套 0 FAIL；
+  cutout_demo 原有 HD8 / pixel7 WARN 保留。`python dev/baseline.py .../regression/spr/all`
+  退出 0、0 状态回退，历史 116 changed / 102 drifted 与前轮一致，未更新基线。
+  `sync_shared.py --check`、`sync_modes.py --check` 和五个安装包 freshness 检查通过。
+  修改及五个安装包已推至同一草稿 PR #8；未将数值通过、AI 视觉结论或用户认可混为一谈。
 
 ## 2026-11-05 CityRunner 实际画面返修与网页替换
 
