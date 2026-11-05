@@ -40,7 +40,12 @@
   仍仅原所有者可见，未改变 audience。各任务 `release_v2.json` 已标记撤回并指向保留失败目录，
   `release_v3.json` 指向当前真实构建、审核和下载哈希；用户认可仍 pending。
 - 本轮 26 套全量回归各 0 FAIL；cutout_demo 原 HD8 / pixel7 WARN 保留。基线比较仍为
-  0 regressions、116 changed、102 drifted，未更新基线。完整单测、最终发布及上传结果见本节后续记录。
+  0 regressions、116 changed、102 drifted，未更新基线。
+  按本轮当前 discover 的 704 个唯一测试 ID 重新运行全部 82 个模块：695 pass、9 个已知缺口
+  expectedFailure，0 failure/error/skip/unexpected success，0 遗漏，所有模块进程退出 0。
+  记录位于 `tests/summary.json`、`tests/all-results.json` 和逐模块原日志；没有继承上轮通过结果。
+  `sync_shared.py --check`、`sync_modes.py --check`、五包 freshness 与 diff 检查均通过。
+  修复代码及五个安装包已推至原草稿 PR #8，代码提交 `99cf780`；尚未合并 main。
   所有证据位于 `/workspace/work/leg-shape-repair-20261105`，实际角色输出仍在原任务目录，
   原素材累计次数和身份代理图来源说明保留。
 
