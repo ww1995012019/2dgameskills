@@ -40,8 +40,8 @@ PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity", "source_garment_registrat
                  "hidden_garment_edges", "motion_style_match")
 NECK_CHECKS = ("neck_continuity", "head_motion_naturalness")
 HAND_CHECKS = ("hand_pose_naturalness", "wrist_continuity")
-POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS + ('support_rhythm',)
-TEMPORAL_CHECKS = ("head_motion_naturalness", "hand_pose_naturalness", 'support_rhythm')
+POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS + ('support_rhythm','carry_rigidity')
+TEMPORAL_CHECKS = ("head_motion_naturalness", "hand_pose_naturalness", 'support_rhythm','carry_rigidity')
 DETAIL_CELL = 256
 DETAIL_PER_SHEET = 2
 
@@ -634,6 +634,54 @@ def selected_clips(doc, qa):
     return names
 
 
+def carry_media(doc,name,index):
+    clip=doc['clips'][name];count=len(clip['frames'])
+    durations=[max(10,(round((i+1)*100/clip['fps'])-round(i*100/clip['fps']))*10) for i in range(count)]
+    if clip.get('frame_multiple')==2 and count%2==0:
+        durations=durations[:count//2]*2
+    return dict(clip=name,file=f'carry_motion_{index:03d}.gif',frame_count=count,fps=clip['fps'],
+                loop=bool(clip['loop']),duration_ms=sum(durations)),durations
+
+
+def carry_entries(doc,trace):
+    from sprite_anim.integrity import source_carry_required
+    if not source_carry_required(trace):
+        return []
+    return [dict(sheet=f'carry_{i:02d}.png',kind='carry',clips=[name],
+                 poses=[dict(clip=name,frame=j,reasons=['actual source rifle and both gripping hands'])
+                        for j in range(len(clip['frames']))],playback=[carry_media(doc,name,i)[0]])
+            for i,(name,clip) in enumerate(doc['clips'].items())]
+
+
+def carry_sheets(root,doc,trace,out):
+    entries=carry_entries(doc,trace)
+    for index,entry in enumerate(entries):
+        name=entry['clips'][0];sk=trace['traces'][name]['skeleton']
+        frames=[composite(root,doc,name,p['frame']) for p in entry['poses']]
+        bottom=int(max(p[1] for p in sk['hip'])+2*trace['unit_px'])
+        bounds=[im.crop((0,0,im.width,min(im.height,bottom))).getbbox() for im in frames]
+        if any(b is None for b in bounds):
+            raise ValueError('source carry has an empty upper-body frame')
+        x0,y0=min(b[0] for b in bounds),min(b[1] for b in bounds)
+        x1,y1=max(b[2] for b in bounds),max(b[3] for b in bounds)
+        side=max(x1-x0,y1-y0)+12;left=(x0+x1-side)//2;top=(y0+y1-side)//2
+        box=(left,top,left+side,top+side)
+        crops=[]
+        for im in frames:
+            cell=Image.new('RGBA',(256,256),BG)
+            cell.alpha_composite(im.crop(box).resize((256,256),Image.Resampling.NEAREST))
+            crops.append(cell)
+        sheet=Image.new('RGBA',(256*8,280*((len(crops)+7)//8)),BG);draw=ImageDraw.Draw(sheet)
+        for j,im in enumerate(crops):
+            x,y=(j%8)*256,(j//8)*280
+            sheet.alpha_composite(im,(x,y+24));draw.text((x+4,y+4),f'{name} #{j}',fill='white')
+        sheet.convert('RGB').save(os.path.join(out,entry['sheet']))
+        media,durations=carry_media(doc,name,index)
+        crops[0].save(os.path.join(out,media['file']),save_all=True,append_images=crops[1:],
+                      duration=durations,loop=0,disposal=2,optimize=False)
+    return entries
+
+
 def binding_sheets(root):
     path = os.path.join(root, "binding_audit.json")
     if not os.path.isfile(path):
@@ -672,6 +720,7 @@ def expected_sheets(doc, trace, qa, root=None):
     expected.update(f'garment_edges_{i:02d}.png' for i in range((len(garment_rows(doc,trace))+1)//2))
     if run_support_required(doc,trace):
         expected.add('run_support_00.png')
+    expected.update(row['sheet'] for row in carry_entries(doc,trace))
     for kind in ('neck', 'hands'):
         count = len(detail_rows(doc, trace, kind))
         expected.update(f'{kind}_{i:02d}.png' for i in range((count + DETAIL_PER_SHEET - 1) // DETAIL_PER_SHEET))
@@ -725,6 +774,7 @@ def build(root):
         index.extend(pelvic_sheets(root, doc, trace, out))
         index.extend(garment_sheets(root,doc,trace,out))
         index.extend(run_support_sheets(root,doc,trace,out))
+        index.extend(carry_sheets(root,doc,trace,out))
         for kind in ('neck', 'hands'):
             index.extend(detail_sheets(root, doc, trace, out, kind))
     index.extend(binding_sheets(root))
@@ -758,6 +808,8 @@ CATEGORIES.update(("neck_seam", "stiff_head", "unnatural_hand", "broken_wrist"))
 
 
 def checks_for_sheet(name):
+    if name.startswith('carry_'):
+        return CHECKS + ('carry_rigidity',)
     if name.startswith("binding_review_"):
         return ("binding_registration",)
     if name.startswith('neck_'):
@@ -871,6 +923,10 @@ def validate_index(root, index):
         media=run_support_media(doc)
         if entry.get('playback')!=[media] or not os.path.isfile(os.path.join(root,'review',media['file'])):
             raise ValueError(f'{name}: missing complete fixed-canvas support playback')
+    for required in carry_entries(doc,trace):
+        entry=next(row for row in entries if row['sheet']==required['sheet'])
+        if entry!=required or not os.path.isfile(os.path.join(root,'review',required['playback'][0]['file'])):
+            raise ValueError('missing or altered complete source-carry visual review')
     for kind in ('neck', 'hands'):
         rows = detail_rows(doc, trace, kind)
         scope = list(detail_scope(doc, trace, kind))
