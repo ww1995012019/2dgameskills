@@ -41,8 +41,17 @@
   部署 `appgdep_6aec909e17d481919aaa217d2760f573` succeeded，原生 saved-version 来源核对一致。
   仍为原所有者私有，分享范围未变。生产 HTTP 受环境 CONNECT 403 限制，没有重试或绕过；
   浏览器检查使用与发布完全相同的本地源码，不声称实测生产传输字节。
-- 本轮全量单测与 26 套回归仍待全部结束，不能继承旧轮通过；最终结果在本节补记。
-  当前工作证据：`/workspace/work/run-rhythm-repair-20261105`。
+- 本轮当前 discover 的 84 个模块、731 个唯一测试 ID 已全部重新运行：722 pass、9 个已知
+  缺口 expectedFailure，0 failure/error/skip/unexpected success，0 遗漏，所有模块进程退出 0。
+  没有继承旧轮通过；新节奏 12 项、布料 12 项在本轮完整运行中均通过。
+- 本轮 26 套全量模板回归完成，全部 0 FAIL，xargs 总退出 0，26 组均有真实成功结果。
+  cutout_demo 原 pixel7 / HD8 WARN 保留；基线比较 0 regressions、116 changed、
+  102 drifted，未更新基线。开始时 JOBS=2，单测及浏览器完成后增加到 3/4 个并行任务，
+  没有改变测试选择或命令。完整结果、每组 QA 哈希见 `final-verification.json`。
+- 代码与五个安装包已推送 `32908eea726334bff6cd79ca8dadbec7ed10a990` 到原草稿 PR #8，
+  同步、五包 freshness 和 diff 检查通过；最终验证结果也记录在此分支，未合并 main。
+  本地预览服务器在浏览器核对后已停止。当前工作证据：
+  `/workspace/work/run-rhythm-repair-20261105`。
 
 ## 历史：2026-11-05 裤腰裁边与普通跑步返修（v4 自然度通过已撤回）
 
