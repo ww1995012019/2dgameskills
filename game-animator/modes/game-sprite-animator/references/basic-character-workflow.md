@@ -136,6 +136,11 @@ Changed art/notes invalidates acceptance. Binding rechecks both reviews plus the
 Inspect `rig/layers_check.png` and `rig/bind_joints.png`; trace both entire arms, do not judge a
 shoulder cap alone. Never hand-edit the generated character configuration or individual pixels to
 make it pass. Preview detects changes to the exported rig and requires rebinding the general fix.
+The lower-level `layer_parts.py bind` command rejects inputs belonging to this profile, including
+copied basic reference reviews. Use the staged binding command above. Direct `generate.py` also
+requires the owning job's accepted layers and unchanged `rig/character.json`; a `diagnostic_bind`
+directory cannot bypass those checks. A successful numeric report is not a visual verdict, and
+calling a failed output a prototype does not authorize delivery or publication.
 
 ## 4. Bounded repairs
 

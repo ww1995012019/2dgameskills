@@ -1,5 +1,60 @@
 # 交接文档
 
+## 2026-11-05 CityRunner 实际画面返修与网页替换
+
+- 用户指出“你是一点都没改吗”后，继续原任务实际返修素材。没有只改规则后交付旧画面。
+  同一任务记录用户继续返修的授权，保留原生成次数与失败图；躯干第 4 版恢复连续的原夹克布料及裸颈，
+  骨盆第 3 版因生成短裤被拒，第 4 版改为单片圆钝实心内层。最终次数 reference=2（包含身份代理图）、
+  torso=4、hips=4、head=3；没有重置三次额度或建立新任务隐藏重试。
+- 通用 `layer_slots.py` 提示词去掉把去袖躯干解释成 sleeveless vest 的要求：袖根下应恢复原外套布料，
+  禁止圆形内搭/皮肤洞。骨盆明确要求隐藏腰裆核心，禁止短裤腿筒、口袋及内部切边。
+  没有手绘像素补片、单角色关节调整或改渲染阈值。已同步统一模式并重打两个受影响包；
+  4 项现有 AnatomyPrompts 检查通过。上一节的完整故障注入/26 套回归结果仍保留，没有用它代替本次画面复核。
+- 新图逐层检查后经正式 `character_workflow.py bind` 输出 `rig/character.json`；待机 72 帧、跑步 17 帧重新生成至
+  `/workspace/work/city-runner-20261105/build`。数值 QA 为 0 FAIL / 0 WARN；逐一检查全部 9 张视觉审查图、
+  跑步全部 17 帧、肩部 0/8/16 帧修前修后对照及浏览器实际循环播放。新审查继承旧 issue registry/history，
+  两个旧缺陷以改变后的帧证据关闭，`visual_review.py --record` 和 `--check` 均通过。
+  这是代理的视觉判断；用户尚未验收，待机仍为准备起跑姿势。
+- 原 Site 已替换实际 GIF 和内嵌图集播放器；新资源带 `shoulder-fix-v1` 文件名，旧 `interactive.html`、
+  `idle.gif`、`run.gif` 入口也替换为新内容。首页新增同姿势修前修后对照。桌面/390px 手机无横向溢出，
+  资源加载、循环帧推进、暂停/单步/翻转/调速均通过，证据在本任务 `web-review-repair-v1`。
+  Site 源提交 `0227a5f3f4f2c8e017a297c4afde34aa7b8fdbd2` 已推送；从该提交归档发布，
+  deployment `appgdep_6aec2167b2d081918eab1973667b79ff` 返回 succeeded，保持原仅所有者可见的权限。
+  网址 `https://cityrunner-motion-preview-20261105.ww1995012019.chatgpt.site`。
+
+## 2026-11-05 CityRunner 肩部材质缺陷与验收旁路
+
+- 用户指出跑步时袖根露出的蓝色圆形区域。它来自躯干分层图，不是运行时染色。
+  原任务只通过参考图审核，仍为 `awaiting_layers`，没有 `layer_review.json` 或当前
+  `visual_report.json`。代理已看出肩部和腰后问题，却直接调用 `layer_parts.py bind` /
+  `generate.py` 制作诊断动画，并手动复制到 Site 发布；不能把数值 QA 或“试作”说明当成美术通过。
+- 底层绑定 CLI 现在拒绝已知 `basic-side-v1` 任务输入与 basic 参考复核；检查解析符号链接，
+  复制到任务外的 basic 复核也不能切换成通用绑定。该任务必须走原 `character_workflow.py bind`。
+  `generate.py` 在写输出前复查任务状态、当前逐层复核、唯一的正式 rig 路径、绑定资产哈希及复核归属。
+  复查代码与 staged preview 共用；允许正常 `preview_rendering` 子进程，不依赖单独的状态字符串。
+  任务外仍带 basic 绑定复核的复制品也会被拒绝。
+- 本例原三次躯干额度未重开。第三版仍有肩部肤色圆洞、裸颈缺失，任务已明确登记 `blocked`。
+  原网页使用的第二版蓝色肩洞和腰后硬边，连同实际帧/审查图哈希记录在
+  `/workspace/work/city-runner-20261105/diagnostic_build/quality_revocation.json`，
+  `visual_review.py --check` 返回 1。已将两个已观察缺陷登记至 `review/issue_registry.json`，
+  失败证据以当前 review_id 归档，其他视觉检查保留 pending，没有伪造完整复核或通过结论。
+  实测只改 resolved、原帧不变会被 `validate_resolution` 拒绝。此时网页和动画仍是失败样例；后续实际返修与发布见上节。
+- 实际失败任务的两条原始旁路已重新执行：均退出 1，均未创建绑定/渲染输出；证据在本例
+  `gate-regression/result.json`。新增六项故障测试覆盖直接 CLI、复制复核、符号链接、伪造 bound
+  状态、任务外复制品和替代诊断 rig；原两种合成体型均已验证合法绑定可进入渲染检查、改过的 rig 会被拒绝。
+- 这是已知生产入口的验收约束，不是自动服装材质识别，也不是阻止任意文件复制的安全边界。
+  发布交付仍必须执行版本化视觉复核与 `visual_review.py --check`，不能只写问题说明。
+  已同步统一包并重打包 `game-sprite-animator.skill` / `game-animator.skill`；本节最初记录时尚未提交或推送 skill 仓库。
+- 验证日志：`/workspace/work/workflow-gate-20261105`。按 discover 核对 678 个唯一测试 ID：
+  670 pass、8 个原有 expectedFailure，最终 0 failure/error/skip、0 遗漏。原顺序单测在完成
+  `test_puppet` 后由并行模块继续；原日志和覆盖核对均保留。并行验证脚本初版漏加仓库导入路径，
+  造成 3 个模块加载失败，修正验证脚本后这 27 项全部重跑通过。Web 引擎初跑因依赖缺失跳过
+  两项，按仓库配置安装本地依赖后两项重跑通过，没有把跳过当通过；Godot 实测通过。
+  最终汇总见 `complete-test-summary.json` 和 `verified-discovered_ids.json`。
+- 26 套全量动画回归退出 0、每套 0 FAIL；cutout_demo 原 HD8 / pixel7 WARN 保留。
+  基线比较退出 0、0 状态回退，历史 116 changed / 102 drifted 与既有记录一致，未更新基线。
+  同步及五个安装包 freshness 检查通过。本次只补任务验收入口，未改变渲染/动作像素算法。
+
 ## 2026-11-04 先提交，再返修头颈与手型，合并预览
 
 - 按用户要求先将上一轮提示词及视觉门禁独立提交为 `b5fa487`，再进行本轮返修；

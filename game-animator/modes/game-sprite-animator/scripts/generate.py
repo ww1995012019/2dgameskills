@@ -97,6 +97,12 @@ def main():
 
     spec = {}
     if a.character:
+        from character_workflow import check_render_input
+        from layer_parts import Rejected
+        try:
+            check_render_input(a.character)
+        except (Rejected, OSError, ValueError, KeyError, TypeError) as error:
+            sys.exit(f'[rejected] {error}')
         with open(a.character, encoding="utf-8") as fh:
             spec = json.load(fh)
         spec["_dir"] = os.path.dirname(os.path.abspath(a.character))   # for relative part images

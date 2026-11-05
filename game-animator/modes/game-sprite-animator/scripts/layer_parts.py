@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+from pathlib import Path
 import sys
 
 import numpy as np
@@ -22,7 +23,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sprite_anim.layer_slots import HAND_HINTS, KEY_COLOR, SLOTS, hand_prompt, prompt  # noqa: E402
+from sprite_anim.layer_slots import BASIC_PROFILE, HAND_HINTS, KEY_COLOR, SLOTS, hand_prompt, prompt  # noqa: E402
 from sprite_anim.puppet_check import HOLE_SHARE, core_mask  # noqa: E402
 from sprite_anim.constraints import BAND, LIMITS  # noqa: E402
 
@@ -62,6 +63,39 @@ MIN_SEGMENT_SHARE = 0.25  # exclude collapsed joints and implausibly uneven two-
 
 class Rejected(Exception):
     """Input that breaks the contract. The message says what to make again."""
+
+
+def find_basic_job(path):
+    """Locate the production job owning an input, including symlinked inputs."""
+    if not path:
+        return None
+    resolved = Path(path).resolve()
+    folder = resolved if resolved.is_dir() else resolved.parent
+    for parent in (folder, *folder.parents):
+        marker = parent / 'job.json'
+        if marker.is_file():
+            try:
+                value = json.loads(marker.read_text(encoding='utf-8'))
+            except (OSError, ValueError) as error:
+                raise Rejected(f'cannot read workflow state: {marker}') from error
+            if isinstance(value, dict) and value.get('profile') == BASIC_PROFILE:
+                return parent
+    return None
+
+
+def require_generic_binding(image, layers, review):
+    """The lower-level CLI must not replace basic per-layer production review."""
+    job = find_basic_job(image) or find_basic_job(layers)
+    basic_review = False
+    if review and Path(review).is_file():
+        try:
+            value = json.loads(Path(review).read_text(encoding='utf-8'))
+            basic_review = isinstance(value, dict) and value.get('profile') == BASIC_PROFILE
+        except (OSError, ValueError):
+            pass  # check_reference_review supplies the detailed invalid-review error.
+    if job or basic_review:
+        raise Rejected('basic-side-v1 requires character_workflow.py bind --job JOB; '
+                       'the generic binder cannot bypass per-layer review')
 
 
 # -- reading pictures --------------------------------------------------------------------------
@@ -1253,6 +1287,8 @@ def main():
     b.add_argument("--fit-cache", help="reuse registration searches for identical images; all acceptance gates still run")
     a = ap.parse_args()
     try:
+        if a.cmd == 'bind':
+            require_generic_binding(a.image, a.layers, a.reference_review)
         ref = reference(a.image)
         os.makedirs(a.out, exist_ok=True)
         if a.cmd == "plan":

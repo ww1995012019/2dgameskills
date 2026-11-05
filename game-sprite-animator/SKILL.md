@@ -80,6 +80,11 @@ guarded trial, not a production-validated promise. Report a failed job honestly 
 Do not silently preserve unsupported long robes, wide sleeves, capes, spears or two-handed weapons.
 Record adaptations or stop if essential identity cannot be kept. Log each repair; at three attempts
 per stage stop and report the remaining blocker. Never reset the job to bypass that limit.
+Do not render or publish a failed basic job through the lower-level `layer_parts.py bind` or
+`generate.py` commands. The binder rejects basic-job inputs, and the generator rechecks the owning
+job, current layer review and exact exported rig before writing output. Numeric QA, a diagnostic
+folder name or a "prototype" label cannot clear a failed art stage. Record the actual failure;
+delivery still requires the current versioned visual review and `visual_review.py --check`.
 
 Numerical checks do not recognize complete art; the agent must inspect full-size layers and motion.
 Short/stump arms, broken garments, ghosting and extra weapons are blockers. No per-character joint
