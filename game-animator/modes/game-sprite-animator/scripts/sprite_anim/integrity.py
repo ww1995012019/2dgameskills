@@ -15,6 +15,54 @@ import math
 
 import numpy as np
 
+
+def connection_report_faults(root, doc, trace):
+    """Fail closed on missing/tampered full-frame registered connection evidence."""
+    if not (trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1'):
+        return []
+    import hashlib
+    from pathlib import Path
+    from PIL import Image
+    out = []
+    required = {'torso', 'leg_near', 'leg_far'}
+    try:
+        data = trace['connections']
+        reference = Path(root)/'binding_reference.png'
+        if hashlib.sha256(reference.read_bytes()).hexdigest() != data['source_reference_sha256']:
+            raise ValueError('connection evidence uses a different registered source reference')
+        if data['method'] != 'registered_pelvis_overlap' or set(data['bindings']) != required:
+            raise ValueError('missing complete registered connection bindings')
+        for name, binding in data['bindings'].items():
+            points = np.asarray(binding['source_points'], float)
+            if points.ndim != 2 or points.shape[1] != 2 or len(points) < 4 or not np.isfinite(points).all():
+                raise ValueError(f'{name}: missing attachment edge samples')
+        if set(data['clips']) != set(doc['clips']):
+            raise ValueError('connection scope differs from exported clips')
+        for clip, meta in doc['clips'].items():
+            count = len(meta['frames']); row = data['clips'][clip]
+            if row['frames'] != count or set(row['parts']) != required:
+                raise ValueError(f'{clip}: missing connection frame/part coverage')
+            for name, errors in row['parts'].items():
+                if len(errors) != count or not all(isinstance(x, (int,float)) and not isinstance(x,bool)
+                        and math.isfinite(x) and x >= 0 for x in errors):
+                    raise ValueError(f'{clip}/{name}: invalid connection measurements')
+                for frame, error in enumerate(errors):
+                    if error > 1.0:
+                        out.append(dict(clip=clip, frame=frame, part=name,
+                                        what=f'registered garment connection separates by {error:.3f}px'))
+            hashes = data['frame_hashes'][clip]
+            if len(hashes) != count:
+                raise ValueError(f'{clip}: missing measured RGBA frame hashes')
+            for frame, expected in enumerate(hashes):
+                with Image.open(Path(root)/'frames'/clip/f'{clip}_{frame:03d}.png') as image:
+                    image = image.convert('RGBA')
+                    current = hashlib.sha256(str(image.size).encode()+image.tobytes()).hexdigest()
+                if current != expected:
+                    out.append(dict(clip=clip, frame=frame, part='frame', what='connection evidence measures different RGBA pixels'))
+    except (KeyError,ValueError,TypeError,IndexError,OSError) as error:
+        out.append(dict(clip=next(iter(doc['clips']), ''),frame=0,part='scope',what=str(error)))
+    return out
+
 SOLID = 96                # alpha that counts as art; glows, soft edges and contact shadows stay below it
 FLOAT_SHARE = 0.005       # a loose piece this share of the body or bigger is visible as a floater
 FLOAT_MIN_PX = 4          # below this it is antialiasing noise, however small the character

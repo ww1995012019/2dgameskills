@@ -101,6 +101,16 @@ edges, horizontal shelves, detached panels, duplicated waistbands and an arm or 
 the wrong painted joint. An opaque belt/torso must not conceal the absence of necessary pelvis
 pixels. The existing body-core check stops above the leg split and cannot establish this.
 
+For current registered basic exports, hips sheets include EVERY exported frame. Look at both
+outer waist edges, the complete jacket/trouser boundary, and the inner thighs at native crop size;
+do not let a dark page background or a centreline contact hide a one-pixel split. Compare the
+registered `binding_reference.png` with rest, all extremes and the sequence: a trouser core that
+climbs beside the jacket, a shifted waistband or an invented extra panel fails the mandatory
+`source_garment_registration` check even if there is no transparent hole. Registered connection
+evidence checks all frames and rejects missing coverage or changed source/output pixels. It
+measures geometry; it cannot certify garment colours, painted cuts or anatomy. A manual pass
+must describe the source comparison, not infer it from a green numerical report.
+
 For an external/custom mesh, also inspect the source-point and runtime overlays from
 `audit_skin_binding.py` ([contract](skin-binding-audit.md)). The tool checks declared landmarks
 and shared boundaries only. It cannot identify every unmarked seam or judge all anatomy.

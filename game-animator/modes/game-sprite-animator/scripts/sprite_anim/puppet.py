@@ -88,6 +88,55 @@ def neck_blend_weights(head, torso, seat, waist):
                          overlap_pixels=int(overlap.sum()), method='registered_neck_overlap')
 
 
+def pelvis_blend_weights(child, parent, seat, distal):
+    """Attach a registered garment root to the original pelvis surface.
+
+    Only vertices move: no texture, alpha, waistband or patch is invented.
+    The whole proximal overlap is sampled, including its left/right edges.
+    """
+    seat, distal = np.asarray(seat, float), np.asarray(distal, float)
+    length = float(np.linalg.norm(distal-seat))
+    if length <= GRID:
+        raise ValueError('pelvis skin: degenerate proximal segment')
+    axis = (distal-seat)/length
+    y, x = np.nonzero(np.asarray(child.image)[..., 3] > 128)
+    points = np.column_stack((x, y))+child.offset
+    px, py = np.rint(points-parent.offset).astype(int).T
+    alpha = np.asarray(parent.image)[..., 3] > 128
+    inside = (px >= 0)&(py >= 0)&(px < alpha.shape[1])&(py < alpha.shape[0])
+    overlap = np.zeros(len(points), bool)
+    overlap[inside] = alpha[py[inside], px[inside]]
+    # Locate the actual proximal contour in every lateral slice. An opaque
+    # hidden overlap is not all one sewn surface: locking its entire depth
+    # would freeze the shorts around a moving thigh and invert their mesh.
+    along = (points-seat)@axis
+    across = (points-seat)@np.array([-axis[1], axis[0]])
+    overlap &= along <= (.65 if child.name == 'torso' else .2)*length
+    points = points[overlap]
+    if len(points) < 4:
+        raise ValueError(f'pelvis skin: {child.name} lacks registered pelvis overlap; repair source art')
+    along, across = along[overlap], across[overlap]
+    bins = np.floor(across/max(1., child.radius/6)).astype(int)
+    contour = np.zeros(len(points), bool)
+    for value in np.unique(bins):
+        group = bins == value
+        contour |= group & (along <= along[group].min()+max(1., .01*length))
+    points = points[contour]
+    attach = float(along[contour].max())+2*GRID
+    fade = max(.35*length, 2*child.radius)
+    grid = np.stack((child.vx, child.vy), -1)+child.offset
+    s = np.clip(((grid-seat)@axis-attach)/fade, 0, 1)
+    weights = 1-s*s*(3-2*s)
+    # Grid sampling plus extrema covers the full attachment, not only a centre seat.
+    points = points[np.lexsort((points[:, 0], points[:, 1]))]
+    sample = points[np.linspace(0, len(points)-1, min(96, len(points))).astype(int)]
+    extremes = points[[points[:, 0].argmin(), points[:, 0].argmax(), points[:, 1].argmin(), points[:, 1].argmax()]]
+    sample = np.unique(np.vstack((sample, extremes)), axis=0)
+    return weights, dict(method='registered_pelvis_overlap', parent=parent.name,
+                         source_points=sample.tolist(), overlap_pixels=len(points),
+                         attachment_start=attach, fade=fade)
+
+
 def corner_run(a, b, c, radius, reach):
     """How far along each bone the arc at corner b starts. A sharper corner needs a longer run to
     keep the same radius; a limb half as wide as that radius would otherwise pinch to a point."""
@@ -162,6 +211,7 @@ class Layer:
         self.foot = data.get("foot")
         self.anchor, self.follow = data.get("anchor"), data.get("follow")
         self.neck_skin = data.get('neck_skin')
+        self.pelvis_skin = data.get('pelvis_skin')
         im = Image.open(os.path.join(base, data["image"])).convert("RGBA")
         self.offset = np.array(data.get("offset", (0, 0)), dtype=np.float64)
         self.image = im
@@ -331,11 +381,41 @@ def flipped(verts, cells):
     return (one < 0) | (two < 0)
 
 
-def untangle(verts, cells):
+def untangle(verts, cells, pinned=None):
     """Relax only the mesh around cells that crossed themselves on the tight side of a sharp bend,
     until none do. Everywhere else the mesh stays exactly where the bend put it."""
     if not len(cells):
         return verts
+    if pinned is not None:
+        # Project signed triangle areas directly. Averaging neighbours cannot
+        # reliably untangle a boundary constrained to another body surface.
+        # Fixed source correspondences remain exact throughout the solve.
+        h, w = verts.shape[:2]
+        j, i = cells.T
+        a, b, c, d = j*w+i, j*w+i+1, (j+1)*w+i, (j+1)*w+i+1
+        triangles = np.concatenate((np.stack((a,b,c),1),np.stack((d,c,b),1)))
+        flat = verts.reshape(-1,2).copy()
+        free = (~pinned.reshape(-1)).astype(float)
+        for _ in range(UNTANGLE_PASSES):
+            points = flat[triangles]
+            x, y, z = points[:,0], points[:,1], points[:,2]
+            area = (y[:,0]-x[:,0])*(z[:,1]-x[:,1])-(y[:,1]-x[:,1])*(z[:,0]-x[:,0])
+            bad = area <= 1e-6
+            if not bad.any():
+                break
+            tri = triangles[bad];x,y,z = x[bad],y[bad],z[bad]
+            gradient = np.stack((np.stack((y[:,1]-z[:,1],z[:,0]-y[:,0]),1),
+                                 np.stack((z[:,1]-x[:,1],x[:,0]-z[:,0]),1),
+                                 np.stack((x[:,1]-y[:,1],y[:,0]-x[:,0]),1)),1)
+            movable = free[tri]
+            denom = (np.sum(gradient*gradient,2)*movable).sum(1)
+            amount = np.divide(1e-5-area[bad],denom,out=np.zeros_like(denom),where=denom>1e-12)
+            delta = gradient*(amount[:,None]*movable)[...,None]
+            correction = np.zeros_like(flat);count = np.zeros(len(flat))
+            np.add.at(correction,tri.reshape(-1),delta.reshape(-1,2))
+            np.add.at(count,tri.reshape(-1),movable.reshape(-1))
+            flat += correction/np.maximum(count[:,None],1)
+        return flat.reshape(verts.shape)
     v = verts.copy()
     h, w = v.shape[:2]
     for _ in range(UNTANGLE_PASSES):
@@ -473,6 +553,7 @@ class Puppet:
         self.layers = [Layer(n, d, base) for n, d in data["layers"].items()]
         self.mips = {}
         self.neck_bindings = {}
+        self.pelvis_bindings = {}
         indexed = {layer.name: layer for layer in self.layers}
         for layer in self.layers:
             if layer.neck_skin:
@@ -481,6 +562,13 @@ class Puppet:
                     raise ValueError('neck skin requires a rigid head and its tube torso')
                 weights, report = neck_blend_weights(layer, parent, self.joints['head_base'], self.joints['waist'])
                 self.neck_bindings[layer.name] = (parent, weights, report)
+            if layer.pelvis_skin:
+                parent = indexed.get(layer.pelvis_skin)
+                if parent is None or parent.kind != 'rigid' or parent.name != 'hips' or layer.kind != 'tube':
+                    raise ValueError('pelvis skin requires a tube child and registered rigid hips')
+                seat, distal = (self.joints['hip'], self.joints['waist']) if layer.name == 'torso' else layer.rest[:2]
+                weights, report = pelvis_blend_weights(layer, parent, seat, distal)
+                self.pelvis_bindings[layer.name] = (parent, weights, report)
 
     def palette(self):
         cols = set()
@@ -569,6 +657,21 @@ class Puppet:
                     source, weights = source[sel], weights[sel]
                 attached = mesh_points(parent, cached[parent.name], source)
                 verts = verts*(1-weights[..., None]) + attached*weights[..., None]
+            if layer.name in getattr(self, 'pelvis_bindings', {}):
+                parent, weights, _ = self.pelvis_bindings[layer.name]
+                source = np.stack((layer.vx, layer.vy), -1)+layer.offset
+                if sel is not None:
+                    source, weights = source[sel], weights[sel]
+                angle = parent.follow[1]
+                attached = rigid(source[..., 0], source[..., 1], parent.anchor,
+                                 self.carried(parent, sk, cv, scale),
+                                 math.radians(sk[angle]-self.rest_angles[angle]), scale)
+                verts = verts*(1-weights[..., None])+attached*weights[..., None]
+                if relax:
+                    pinned = weights >= 1-1e-12
+                    if layer.foot:
+                        pinned = pinned | (layer.foot_w >= 1-1e-12)
+                    verts = untangle(verts, layer.cells, pinned=pinned)
             if layer.name in parents:
                 cached[layer.name] = verts
             yield layer, verts[layer.used] if used_only and layer.name in parents else verts

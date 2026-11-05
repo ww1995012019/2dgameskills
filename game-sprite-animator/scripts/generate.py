@@ -24,7 +24,7 @@ from sprite_anim.motions import SEAMS, Gait, NaturalWalk, GroundedGaitHold, buil
 from sprite_anim.integrity import HUMANOID_BONES  # noqa: E402
 from sprite_anim.part_check import check_parts  # noqa: E402
 from sprite_anim.occlusion_review import clip_candidates, write_report as write_occlusion_report  # noqa: E402
-from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion, check_attachments, check_neck  # noqa: E402
+from sprite_anim.puppet_check import check_core, check_hands, check_layers, check_motion, check_attachments, check_neck, check_connections  # noqa: E402
 from sprite_anim.render import GROUND_FRAC, PRESETS, Renderer, frame_count, frame_time, playback_speed, walk_hold_phase, to_u8  # noqa: E402
 from sprite_anim.rig import Body  # noqa: E402
 from sprite_anim.rig import full_pose, heel_world, solve, toe_world  # noqa: E402
@@ -269,6 +269,8 @@ def main():
             problems += check_hands(r, spec, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
             problems += check_core(r, clips[nm], rendered[nm]["frames"], over.get(nm, fps))
             problems += check_neck(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
+            if spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v1':
+                problems += check_connections(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
             if spec.get('puppet', {}).get('attachment_checks', False):
                 problems += check_attachments(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
                 occlusion_candidates += clip_candidates(r, clips[nm], len(rendered[nm]['frames']), over.get(nm, fps))
@@ -277,6 +279,19 @@ def main():
                                                        {n:len(rendered[n]['frames']) for n in names})
             print(f"[review] {occlusion_summary['candidates']} occlusion candidates; {occlusion_summary['status']}")
             print(f"[review] {occlusion_summary['check_command']}")
+    connection_data = {}
+    if r.art.puppet and spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v1':
+        import hashlib
+        shutil.copyfile(os.path.join(spec['_dir'],spec['puppet']['source']),os.path.join(root,'binding_reference.png'))
+        with open(os.path.join(root,'binding_reference.png'),'rb') as source:
+            source_reference_sha256=hashlib.sha256(source.read()).hexdigest()
+        connection_data = dict(connection_review_required=True, connections=dict(
+            method='registered_pelvis_overlap',
+            source_reference_sha256=source_reference_sha256,
+            bindings={name: report for name, (_, _, report) in r.art.puppet.pelvis_bindings.items()},
+            clips=r.connection_checks,
+            frame_hashes={name: [hashlib.sha256(str((f.shape[1], f.shape[0])).encode()+f.tobytes()).hexdigest()
+                                  for f in rendered[name]['frames']] for name in names}))
     with open(os.path.join(root, "rig_trace.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(traces=traces, seams=seams, bones=HUMANOID_BONES,
                        **({'neck_skinning': dict(source_bindings={name:report for name, (_, _, report) in r.art.puppet.neck_bindings.items()},
@@ -284,7 +299,9 @@ def main():
                           if r.art.puppet and r.art.puppet.neck_bindings else {}),
                        **({'portrait_review_required': True} if r.art.puppet else {}),
                        **({"framing_scope": names} if a.fit_selected_clips else {}),
-                       part_problems=problems, **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
+                       part_problems=problems, **connection_data,
+                       **({'binding_profile':'basic-side-v1'} if connection_data else {}),
+                       **({"occlusion_review": occlusion_summary} if occlusion_summary is not None else {}),
                        bind_warnings=bind.get("warnings", []), bind_gaps=bind.get("gaps", {}), clips_total=len(clips),
                        head_size=r.art.body.head_size,
                        locomotion_required=[n for n in names if 'locomotion' in meta[n]],

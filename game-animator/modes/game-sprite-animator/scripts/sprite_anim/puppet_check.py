@@ -213,6 +213,42 @@ def check_neck(renderer, clip, n, fps):
     return []
 
 
+def check_connections(renderer, clip, n, fps, bindings=None):
+    """Every frame, across each complete registered pelvis attachment.
+
+    Unlike connected components, this never dilates a gap away. It measures
+    final triangle correspondence, including the attachment's outer edges.
+    Bindings may be supplied by a read-only audit of an older rigid export.
+    """
+    from .art import Canvas
+    from .puppet import mesh_points
+    from .render import GROUND_FRAC, frame_time
+    puppet = renderer.art.puppet
+    bindings = puppet.pelvis_bindings if bindings is None else bindings
+    required = {'torso', 'leg_near', 'leg_far'}
+    if set(bindings) != required:
+        return [f'connection: {clip.name} frame 0: missing full pelvis attachment evidence']
+    cv = Canvas(renderer.size, renderer.ss, renderer.unit, GROUND_FRAC, 1, False, (0, 0, 0))
+    values = {part: [] for part in required}
+    for i in range(n):
+        t = frame_time(clip, i, n, fps)
+        pose = full_pose(clip.sample(t)); sk = solve(pose, renderer.art.body)
+        cv.set_squash(pose['squash'], 0.)
+        meshes = {layer.name: (layer, vertices) for layer, vertices in
+                  puppet.meshes(cv, sk, renderer.cloth_at(clip, t), 'ground' in clip.tags)}
+        for name, (parent, _, report) in bindings.items():
+            source = np.asarray(report['source_points'], float)
+            child, verts = meshes[name]
+            error = np.linalg.norm(mesh_points(child, verts, source)-
+                                   mesh_points(parent, meshes[parent.name][1], source), axis=-1)
+            values[name].append(round(float(error.max())/renderer.ss, 5))
+    if not hasattr(renderer, 'connection_checks'):
+        renderer.connection_checks = {}
+    renderer.connection_checks[clip.name] = dict(frames=n, parts=values)
+    return [f'connection: {name}: {clip.name} frame {i}: registered attachment separates by {error:.3f}px'
+            for name, errors in values.items() for i, error in enumerate(errors) if error > 1.0]
+
+
 def attachment_faults(alpha, parent_alpha, root, next_joint, radius):
     """Isolated layer continuity and local parent contact, never composite coverage.
 

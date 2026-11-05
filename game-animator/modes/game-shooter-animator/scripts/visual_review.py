@@ -36,7 +36,7 @@ JOINTS = (("kn_n", "hip_n", "an_n"), ("kn_f", "hip_f", "an_f"), ("el_n", "sh_n",
 GROUND = (240, 184, 74, 255)
 BG = (58, 62, 74, 255)
 PELVIS_JOINTS = ("waist", "neck", "hip_n", "hip_f", "kn_n", "kn_f", "an_n", "an_f")
-PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity")
+PELVIS_CHECKS = ("rig_alignment", "pelvis_continuity", "source_garment_registration")
 NECK_CHECKS = ("neck_continuity", "head_motion_naturalness")
 HAND_CHECKS = ("hand_pose_naturalness", "wrist_continuity")
 POSE_CHECKS = PELVIS_CHECKS + NECK_CHECKS + HAND_CHECKS
@@ -444,6 +444,8 @@ def pelvic_rows(doc, trace):
     rows = []
     for name, sk in humanoid_scope(doc, trace).items():
         poses = pelvic_frames(sk, doc["clips"][name], trace.get("traces", {}).get(name, {}))
+        if trace.get('connection_review_required'):
+            poses = [dict(frame=i, reasons=['complete garment connection review']) for i in range(len(sk['waist']))]
         for start in range(0, len(poses), MAX_POSES):
             rows.append((name, sk, poses[start:start + MAX_POSES]))
     return rows
@@ -453,8 +455,9 @@ def pelvic_sheets(root, doc, trace, out):
     """Enlarged waist/hip/inner-thigh art followed by the exact rendered bones."""
     files, rows = [], pelvic_rows(doc, trace)
     unit = float(trace.get("unit_px", 1))
-    for start in range(0, len(rows), PER_SHEET):
-        group = rows[start:start + PER_SHEET]
+    per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
+    for start in range(0, len(rows), per_sheet):
+        group = rows[start:start + per_sheet]
         sheet = Image.new("RGBA", (PELVIS_CELL * MAX_POSES, (28 + 2 * PELVIS_CELL) * len(group)), BG)
         draw = ImageDraw.Draw(sheet)
         evidence = []
@@ -544,7 +547,8 @@ def expected_sheets(doc, trace, qa, root=None):
                     for name, tr in traces.items() for sk in [tr.get("skeleton", {})])
         expected.update(f"{prefix}_{i:02d}.png" for i in range((count + PER_SHEET - 1) // PER_SHEET))
     rows = pelvic_rows(doc, trace)
-    expected.update(f"hips_{i:02d}.png" for i in range((len(rows) + PER_SHEET - 1) // PER_SHEET))
+    pelvis_per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
+    expected.update(f"hips_{i:02d}.png" for i in range((len(rows) + pelvis_per_sheet - 1) // pelvis_per_sheet))
     for kind in ('neck', 'hands'):
         count = len(detail_rows(doc, trace, kind))
         expected.update(f'{kind}_{i:02d}.png' for i in range((count + DETAIL_PER_SHEET - 1) // DETAIL_PER_SHEET))
@@ -662,7 +666,7 @@ def review_assets(root):
     paths = []
     for pattern in ("frames/*/*.png", "review/*.png", "review/*_motion_*.gif", "review/index.json", "animations.json", "rig_trace.json", "qa_report.json",
                     "atlas*.png", "atlas*.json", "sheets/*.png", "preview.html", "fx*.png", "fx*.json", "engine/**/*",
-                    "binding_audit.json", "binding_review_*.png", "occlusion_review.json", "occlusion_decisions.json"):
+                    "binding_audit.json", "binding_reference.png", "binding_review_*.png", "occlusion_review.json", "occlusion_decisions.json"):
         paths.extend(glob.glob(os.path.join(root, pattern), recursive=True))
     # Follow declared page names too, including nested/custom atlas filenames.
     # A missing required page must fail closed, even when it was absent before
@@ -717,10 +721,11 @@ def validate_index(root, index):
         if not os.path.isfile(sheet_file(root, name)):
             raise ValueError(f"missing required review sheet: {name}")
     rows = pelvic_rows(doc, trace)
-    for start in range(0, len(rows), PER_SHEET):
-        name = f"hips_{start // PER_SHEET:02d}.png"
+    per_sheet = 2 if trace.get('connection_review_required') else PER_SHEET
+    for start in range(0, len(rows), per_sheet):
+        name = f"hips_{start // per_sheet:02d}.png"
         entry = next(row for row in entries if row["sheet"] == name)
-        want = [(clip, pose["frame"], pose["reasons"]) for clip, _, poses in rows[start:start + PER_SHEET] for pose in poses]
+        want = [(clip, pose["frame"], pose["reasons"]) for clip, _, poses in rows[start:start + per_sheet] for pose in poses]
         got = [(pose["clip"], pose["frame"], pose["reasons"]) for pose in entry.get("poses", [])]
         if got != want:
             raise ValueError(f"{name}: missing or altered required pelvis pose coverage")
@@ -788,6 +793,13 @@ def binding_gate(root):
         if os.path.isfile(trace_path):
             with open(trace_path, encoding="utf-8") as source:
                 trace = json.load(source)
+        if trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1':
+            from sprite_anim.integrity import connection_report_faults
+            with open(os.path.join(root, 'animations.json'), encoding='utf-8') as source:
+                connections = connection_report_faults(root, json.load(source), trace)
+            if connections:
+                print('connection audit: missing, stale or failed registered garment attachments')
+                return 1
         if not os.path.isfile(path):
             if trace.get("binding_audit_required") is True:
                 print("binding audit: missing required report for this external skin binding")

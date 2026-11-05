@@ -261,7 +261,7 @@ def bind_job(folder):
     layers = {name: lp.key_out(root/'layers'/f'{name}.png') for name in (*slots(job), *HAND_HINTS)}
     state = {}
     try:
-        out, spec, report = lp.bind(ref, layers, str(root/'fit_cache'), state)
+        out, spec, report = lp.bind(ref, layers, str(root/'fit_cache'), state, registered_connections=True)
     except lp.Rejected:
         lp.save_diagnostics(root/'rig', ref, state)
         raise
@@ -287,6 +287,10 @@ def check_bound_rig(root, job):
     bound = read_json(root/'rig/bind_report.json')
     if bound.get('layer_review', {}).get('assets') != layer_assets(root, job) or bound.get('status') != 'accepted':
         raise lp.Rejected('rig is stale; bind the current reviewed layers again')
+    spec = read_json(root/'rig/character.json')
+    if (spec.get('puppet', {}).get('connection_skinning') != 'registered_pelvis_v1'
+            or spec['puppet'].get('attachment_checks') is not True):
+        raise lp.Rejected('basic-side-v1 requires current registered pelvis and full attachment checks; rebind')
 
 
 def check_render_input(character):

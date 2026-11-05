@@ -53,6 +53,19 @@ cut edge, background slit, doubled trouser panel or bone emerging from the wrong
 a blocker. Mandatory `rig_alignment` and `pelvis_continuity` observations must name the actual
 clip/frame. Missing trace or missing close-up evidence cannot become a pass.
 
+Basic jobs now require `registered_pelvis_v1`: the complete proximal garment contour follows
+one registered pelvis surface, while distal limbs articulate. Every exported frame must have
+measured torso/hip and both thigh-root correspondence, isolated limb attachment checks, and
+RGBA-bound evidence in `rig_trace.json`. Missing frames, missing parts, changed pixels, or a
+separation over one output pixel block QA and visual acceptance. Rebind old basic rigs.
+Do not treat a dilated connected component, a covered centre strip, or a single joint contact as
+proof that a whole waist is closed. Inspect ALL generated waist frames on the new hips sheets,
+including both outer edges, on the checkerboard and a light background. Compare the waistband,
+jacket hem and crotch with `binding_reference.png`; connected pixels can still be the wrong
+garment height. Fill the separate `source_garment_registration` check. The hidden core must not
+be lifted or enlarged to fill pixels outside the registered source silhouette. Numeric geometry
+still does not identify a wrong opaque material, painted cut line, hand anatomy or naturalness.
+
 For an external/custom atlas skin, export its **actual** source points, skin weights, per-frame
 matrices and isolated RGBA frames to a binding manifest, then run
 `python scripts/audit_skin_binding.py binding_manifest.json --out out/c/binding_audit.json`.

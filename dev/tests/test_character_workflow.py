@@ -355,7 +355,8 @@ class CharacterWorkflow(unittest.TestCase):
         self.prepare()
         root, job = cw.load_job(self.job)
         (root/'rig').mkdir()
-        cw.write_json(root/'rig/character.json', {'fixture':True})
+        cw.write_json(root/'rig/character.json', {'fixture':True, 'puppet':{
+            'connection_skinning':'registered_pelvis_v1', 'attachment_checks':True}})
         job.update(phase='bound', rig_assets={'character.json':cw.vr.file_hash(root/'rig/character.json')})
         cw.write_json(root/'job.json',job)
         cw.write_json(root/'rig/bind_report.json', {'status':'accepted','layer_review':{'assets':{'fixture':'hash'}}})

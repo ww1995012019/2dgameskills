@@ -870,17 +870,17 @@ def rear_appendage_binding(mask, parent, hip, leg_px):
     return layer, contact
 
 
-def bind(ref, layers, fit_cache=None, diagnostics=None):
+def bind(ref, layers, fit_cache=None, diagnostics=None, registered_connections=False):
     """Keep the current partial registration available even when acceptance fails."""
     state = diagnostics if diagnostics is not None else {}
     try:
-        return _bind(ref, layers, fit_cache, state)
+        return _bind(ref, layers, fit_cache, state, registered_connections)
     except Rejected as exc:
         state.update(status="rejected", reason=str(exc))
         raise
 
 
-def _bind(ref, layers, fit_cache, diagnostics):
+def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False):
     """Places every layer and works out the rig. Returns (placed layers, spec's puppet + body, report)."""
     size = (ref.shape[1], ref.shape[0])
     missing = [n for n, s in SLOTS.items() if s[2] and n not in layers]
@@ -997,12 +997,26 @@ def _bind(ref, layers, fit_cache, diagnostics):
     # The robe around the hips can split and swing clear, so what's behind it has to be solid.
     waist_half = waist_half_width(masks["torso"], waist)
     core_px = CORE_SHARE * waist_half
+    if registered_connections:
+        # The old constant-width strip could extend OUTSIDE a fitted waist.
+        # Filling those background pixels by lifting the trouser core invents
+        # a higher waistband. Keep a source-valid interior strip; the complete
+        # attachment edges are audited separately by triangle correspondence.
+        candidate = core_mask(size, waist, hip, core_px)
+        yy, xx = np.indices(seen.shape)
+        axis = hip-waist
+        lateral = np.abs((xx-waist[0])*axis[1]-(yy-waist[1])*axis[0])/np.linalg.norm(axis)
+        outside = candidate & ~seen
+        if outside.any():
+            core_px = max(1., min(core_px, float(lateral[outside].min())-1.))
+        diagnostics['registered_core'] = dict(method='source_silhouette_interior', radius_px=core_px,
+                                               excluded_reference_background=int(outside.sum()))
     out["hips"] = trimmed(out["hips"], waist, hip, HIPS_WIDTH * waist_half)
     masks["hips"] = out["hips"][..., 3] > 128
     solid = masks["torso"] | masks["hips"] | masks["leg_near"] | masks["leg_far"]
     core = core_mask(size, waist, hip, core_px)
     open_share = float((~solid[core]).mean())
-    if open_share > HOLE_SHARE:
+    if open_share > HOLE_SHARE and not registered_connections:
         aligned, fit = align_hips(layers["hips"], waist, hip)
         if fit is not None:
             out["hips"] = trimmed(aligned, waist, hip, HIPS_WIDTH * waist_half)
@@ -1097,6 +1111,9 @@ def _bind(ref, layers, fit_cache, diagnostics):
     if front_mask.any():
         diagnostics['neck_front_mask']=front_mask.astype(np.uint8)*255
     data["hips"] = dict(kind="rigid", follow=["hip", "body_rot"], anchor=[round(float(v), 2) for v in hip])
+    if registered_connections:
+        for name in ('torso', 'leg_near', 'leg_far'):
+            data[name].update(source_frame=True, pelvis_skin='hips')
     if "appendage_back" in out:
         data["appendage_back"], contact = rear_appendage_binding(
             masks["appendage_back"], masks["hips"] | masks["torso"], hip, (near_px + far_px) / 2)
@@ -1180,6 +1197,8 @@ def _bind(ref, layers, fit_cache, diagnostics):
                   rest_arm={"n": [[round(float(v), 2) for v in an["wrist"]], [round(float(v), 2) for v in an["elbow"]]],
                             "f": [[round(float(v), 2) for v in af["wrist"]], [round(float(v), 2) for v in af["elbow"]]]},
                   layers=ordered, chains=chains, source="source.png")
+    if registered_connections:
+        puppet.update(connection_skinning='registered_pelvis_v1', attachment_checks=True)
     if "robe" in masks:
         puppet["robe_len"] = round(float(robe_len / ppu), 3)
     if weapon_len:
@@ -1233,6 +1252,14 @@ def write_binding(out_dir, character_name, ref, out, spec, report, state):
             spec['puppet']['layers'][name]['front_mask']='layers/torso-neck-front.png'
     Image.fromarray(ref, "RGBA").save(os.path.join(out_dir, "source.png"))
     spec.update(name=character_name, weapon="sword" if "weapon" in out else "none", cloth=[], style={"speed": 1.0, "bounce": 0.8})
+    if spec.get('puppet', {}).get('connection_skinning') == 'registered_pelvis_v1':
+        from sprite_anim.puppet import Puppet
+        try:
+            Puppet(dict(spec, _dir=os.path.abspath(out_dir)))
+        except ValueError as exc:
+            state.update(status='rejected', connection_error=str(exc))
+            save_diagnostics(out_dir, ref, state)
+            raise Rejected(str(exc)) from exc
     with open(os.path.join(out_dir, "character.json"), "w", encoding="utf-8") as fh:
         json.dump(spec, fh, ensure_ascii=False, indent=1)
     print(f"[bind] {len(out)} layers, {report['px_per_unit']} px/unit, covers {report['cover']:.0%} of the reference, {report['spill']:.0%} outside -> {out_dir}")

@@ -142,6 +142,19 @@ requires the owning job's accepted layers and unchanged `rig/character.json`; a 
 directory cannot bypass those checks. A successful numeric report is not a visual verdict, and
 calling a failed output a prototype does not authorize delivery or publication.
 
+Current basic bindings preserve registered hip-core placement and use `registered_pelvis_v1`
+to join the lower torso and both proximal trouser/shorts roots to the same pelvis surface.
+The transition follows the source garment contour; locking a whole opaque overlap would freeze
+a thigh's clothing. The constrained triangle solver preserves that seam and rejects inverted
+fabric. It moves geometry, never paints a seam cover. All limb attachment checks are mandatory.
+The source-valid interior core check excludes reference background instead of pulling pants
+upward to fill an imaginary constant-width body. Missing true source fabric still fails binding.
+
+`qa_motion.py` and the visual delivery gate independently require all frames/parts and the exact
+registered-source and RGBA hashes. Read every hips sheet: current basic exports include every
+frame rather than only extrema. Compare garment height and both waist edges against
+`binding_reference.png`; complete `source_garment_registration` as well as continuity/alignment.
+
 ## 4. Bounded repairs
 
 Every first generation counts as attempt 1. BEFORE any replacement image, log a retry:
