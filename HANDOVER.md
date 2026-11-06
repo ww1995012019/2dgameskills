@@ -25,7 +25,25 @@
 
 ## 本轮：工作流优化（2026-11-06）
 
-（本轮结束时填写）
+用户要求优化开发流程，不改角色、动作曲线、阈值或质检规则。分支从 `2303b59`（PR #10 合并后）开始。
+
+- **单一源码**：`dev/build_standalone.py` 取代 `shared/`、`sync_shared.py`、`sync_modes.py`。切换前先用新脚本从
+  `game-animator/modes/` 生成四个旧文件夹，除加了弃用说明的 SKILL.md 外与原文件逐字节一致；PR #10 新增的
+  `review_support.py` 已加入共用清单。已有代码文件唯一的改动是开头那行“去哪里改”的注释。回归改跑统一包。
+- **返修先给用户看**：新增 `scripts/compare_clips.py`（固定地面、同比例、按周期相位对齐的新旧 GIF 和相位图，
+  附头顶起伏像素数）与 `references/repair-loop.md`；`CLAUDE.md` 改为用户认可后才跑全量验证和发布。
+- **真实角色回归**：新增 `dev/real_characters.py`（add / approve / check --compare），锁定用户认可帧的 RGBA 哈希，
+  只用 `cutout_demo` 测过。用户发来的柯南、士兵 zip 只有导出成品，没有 job.json / layers / rig，无法重新渲染，
+  用户决定这次先不接入。**目前没有任何真实角色进入回归。**
+- **文档**：HANDOVER 旧节、路线图顶部状态日志原样归档到 `docs/handover/history-2026-10-30-to-2026-11-05.md`
+  （逐行核对 0 丢失）；横版 SKILL.md 开头 95 行规则原样移到 `references/release-gates.md`，入口留 5 行摘要。
+- **验证**（2 核云端容器，无外网）：
+  - 完整单测 772 项：首跑 3 项 CSS 播放失败，原因是验证脚本把 TEMP 指向尚不存在的目录、浏览器无法建临时目录；
+    正常环境单独重跑 3 项全部通过。其余 0 failure/error，9 项原有 expectedFailure，6 项引擎测试因无法下载
+    Godot/npm 包而跳过——Godot、Phaser、PixiJS **本轮未重新实测**。
+  - 26 套回归 exit 0，全部 0 FAIL；`cutout_demo` HD 8 / pixel 7 WARN 保留。`baseline.py` 和 `--strict`
+    均为 0 regressions、0 changed、0 drifted。
+  - `.skill` 在本地重建用于测试，按用户约定未提交。
 
 ## 2026-11-05 普通横版生产链路的等价重构
 
