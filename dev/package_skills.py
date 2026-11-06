@@ -6,7 +6,8 @@
 
 A .skill is a zip of the skill folder. It holds exactly the git-tracked files of that folder, read
 from the working tree, with a fixed timestamp so the package only changes when its content does.
-Refuses to build while shared files or unified mode snapshots are out of sync.
+Refuses to build while the generated standalone folders are stale (dev/build_standalone.py).
+The four standalone packages are deprecated; game-animator.skill is the package to install.
 """
 import argparse
 import io
@@ -65,10 +66,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="compare instead of writing")
     a = ap.parse_args()
-    if subprocess.run([sys.executable, os.path.join(ROOT, "dev", "sync_shared.py"), "--check"]).returncode:
-        sys.exit(1)
-    if subprocess.run([sys.executable, os.path.join(ROOT, "dev", "sync_modes.py"), "--check"]).returncode:
-        sys.exit("unified modes out of sync; run dev/sync_modes.py and register new paths")
+    if subprocess.run([sys.executable, os.path.join(ROOT, "dev", "build_standalone.py"), "--check"]).returncode:
+        sys.exit("standalone folders are stale; edit game-animator/, run dev/build_standalone.py and register new paths")
     stale = []
     for skill in SKILLS:
         check_frontmatter(skill)

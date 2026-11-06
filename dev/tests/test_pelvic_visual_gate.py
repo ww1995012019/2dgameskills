@@ -15,7 +15,7 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('pelvic_review_gate', ROOT/'shared/scripts/visual_review.py')
+spec = importlib.util.spec_from_file_location('pelvic_review_gate', ROOT/'game-animator/modes/game-sprite-animator/scripts/visual_review.py')
 review = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(review)
 

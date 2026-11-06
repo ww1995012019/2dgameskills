@@ -1,7 +1,11 @@
 ---
 name: game-topdown-animator
-description: Generate eight-direction 3/4 top-down humanoid game sprites for free movement, including idle, walk, run, attack, hurt and death. Use for 俯视角色、八方向、自由移动、top-down RPG sprites. Exports PNG frames, atlases and engine animation files.
+description: (Deprecated: use game-animator.) Generate eight-direction 3/4 top-down humanoid game sprites for free movement, including idle, walk, run, attack, hurt and death. Use for 俯视角色、八方向、自由移动、top-down RPG sprites. Exports PNG frames, atlases and engine animation files.
 ---
+
+> **Deprecated standalone package.** Install `game-animator` instead; it contains this mode
+> unchanged. This folder is generated from `game-animator/modes/game-topdown-animator/` and is kept only for
+> existing installs.
 
 # Top-down animator
 

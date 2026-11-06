@@ -1,4 +1,4 @@
-# Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
+# Shared by several modes. Edit only this copy (game-animator/modes/game-sprite-animator/), then run dev/build_standalone.py.
 """Joint limits and clipping checks, shared by the rig (enforcement) and QA (measurement).
 
 Limits are soft: a pose inside the range is untouched, one past it eases into the limit along a

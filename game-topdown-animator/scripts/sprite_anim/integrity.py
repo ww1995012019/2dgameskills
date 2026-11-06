@@ -1,4 +1,4 @@
-# Shared by every mode. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
+# Shared by every mode. Edit only this copy (game-animator/modes/game-sprite-animator/), then run dev/build_standalone.py.
 """Is the whole skeleton in the picture? Measured on pixels, so it holds for any art.
 
 Joint numbers can be perfect while the art is broken: the rig still solves a forearm whose image

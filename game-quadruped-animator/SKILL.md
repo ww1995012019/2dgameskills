@@ -1,7 +1,11 @@
 ---
 name: game-quadruped-animator
-description: Generate side-view wolf animations with a four-legged canine rig: idle, walk, diagonal-pair trot, gallop, bite, hurt and death. Use for 四足动物、狼、四足步态、quadruped sprites. Includes four-paw ground-contact QA, simulated tail and game-engine exports.
+description: (Deprecated: use game-animator.) Generate side-view wolf animations with a four-legged canine rig: idle, walk, diagonal-pair trot, gallop, bite, hurt and death. Use for 四足动物、狼、四足步态、quadruped sprites. Includes four-paw ground-contact QA, simulated tail and game-engine exports.
 ---
+
+> **Deprecated standalone package.** Install `game-animator` instead; it contains this mode
+> unchanged. This folder is generated from `game-animator/modes/game-quadruped-animator/` and is kept only for
+> existing installs.
 
 # Quadruped animator
 
