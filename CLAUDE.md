@@ -56,12 +56,15 @@ python3 -m unittest discover -s dev/tests -v      # 故障注入、CSS 回放、
 bash dev/regress_all.sh                          # 26 套全量回归，放后台并检查各套真实退出码
 python3 dev/baseline.py                          # 和 dev/baseline.json 比较：状态变差就失败
 python3 dev/baseline.py --strict                 # 重构时用：任何像素变化都算失败
+python3 dev/real_characters.py check --compare    # 真实角色：用户认可过的帧有任何变化就失败，并出对照 GIF
 ```
 
 - 用户要求源码提交不包含重新打包的 `.skill` 文件。仍须在本地重建并验证包；提交前恢复这些
   产物、显式排除 `.skill`，检查暂存区。仓库内旧包可能落后于源码，安装最新版本请使用源码目录
   或本地重建的包；不通过跳过打包/隔离安装测试来适应这项提交约定。
 - 有意改动画面后，确认没有回退，再 `python3 dev/baseline.py --update`，把 `dev/baseline.json` 和改动一起提交。
+- 真实角色（`dev/fixtures/characters/`）的帧变了，先把 `check --compare` 的 GIF 给用户看；用户认可后才
+  `python3 dev/real_characters.py approve <名字> --build <输出> --by "<谁、在哪认可>"`。不准未经用户认可重新锁定。
 - `dev/verify_exports_*.py <结果目录>` 校验导出文件，`node dev/test_shooter_demo.js all/<套>` 跑射击试玩页。
 
 ## 规则
