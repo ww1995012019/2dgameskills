@@ -16,7 +16,7 @@ import math
 from .constraints import LIMITS, face_circle, low_points
 from .mathx import Curve, hermite, lerp, rot
 from .rifle_carry import apply_carry, validate_carry
-from .rig import LAG, REST, Body, full_pose, solve, ankle_with_roll, FOOT_HEEL, FOOT_BALL
+from .rig import LAG, REST, Body, full_pose, solve, ankle_with_roll, FOOT_HEEL, FOOT_BALL, heel_world, toe_world
 
 CH = list(REST)
 STANCE_REACH = 0.968   # a standing leg stops short of the soft end of its reach (Body.leg_soft)
@@ -82,6 +82,72 @@ class Proc(Clip):
 
     def sample(self, t):
         return self.fn(t)
+
+
+class SkateboardGlide(Clip):
+    """An in-place ride with the soles registered to a flat skateboard deck.
+
+    This profile is currently for procedural, empty-handed side-view characters.
+    The board moves with the sprite, so its speed is supplied by the game rather
+    than the walking contact model.
+    """
+
+    DECK_HEIGHT = 7.0
+    DEFAULT_COLORS = dict(deck='#14378f', grip='#252b37', accent='#ffd000',
+                          wheels='#ffd41a', metal='#9ba7b7')
+
+    def __init__(self, body, options, time_scale=1.0):
+        if not isinstance(options, dict):
+            raise ValueError('gait.skateboard: expected an object')
+        unknown = set(options) - {'profile', 'width', 'colors'}
+        if unknown or options.get('profile') != 'glide_v1':
+            raise ValueError('gait.skateboard: expected profile glide_v1 and known options')
+        width = options.get('width', 64.0)
+        if (isinstance(width, bool) or not isinstance(width, (int, float)) or
+                not math.isfinite(width) or not 52.0 <= width <= 84.0):
+            raise ValueError('gait.skateboard.width: expected a finite number between 52 and 84')
+        supplied = options.get('colors', {})
+        if not isinstance(supplied, dict) or set(supplied) - set(self.DEFAULT_COLORS):
+            raise ValueError('gait.skateboard.colors: unknown color or not an object')
+        for key, value in supplied.items():
+            if (not isinstance(value, str) or len(value) != 7 or value[0] != '#' or
+                    any(c not in '0123456789abcdefABCDEF' for c in value[1:])):
+                raise ValueError(f'gait.skateboard.colors.{key}: expected #RRGGBB')
+        super().__init__('skateboard', 1.2 * time_scale, True,
+                         tags=('ground', 'hold_feet', 'skateboard'))
+        self.board = dict(width=float(width), colors={**self.DEFAULT_COLORS, **supplied})
+        self.body = body
+        # Find a support envelope in which both painted-sole proxies remain flat
+        # throughout the crouch. The generic ankle constraint can otherwise
+        # silently lift the rear heel despite an unchanged foot target.
+        shortest = min(sum(body.leg_bones(side)) for side in 'nf')
+        low = self.DECK_HEIGHT + 5.0 + .70 * shortest
+        high = self.DECK_HEIGHT + 5.0 + .99 * shortest
+        count = max(1, math.ceil((high - low) / .05))
+        for index in range(count + 1):
+            self.hip_y = low + (high - low) * index / count
+            points = [fn(solve(self.sample(self.duration * phase / 16), body), side)
+                      for phase in range(17) for side in 'nf' for fn in (heel_world, toe_world)]
+            if all(abs(y - self.DECK_HEIGHT) < 1e-5 and abs(x) < width / 2 - 1
+                   for x, y in points):
+                break
+        else:
+            raise ValueError('gait.skateboard: body and board cannot keep both soles flat on the deck')
+
+    def sample(self, t):
+        phase = 2.0 * math.pi * t / self.duration
+        bend = 0.5 - 0.5 * math.cos(phase)
+        sway = math.sin(phase)
+        return P(root_y=self.hip_y - self.body.hip_h - 2.2 * bend,
+                 root_x=0.0, pelvis=8.0 + 3.0 * bend, spine=12.0 + 3.0 * bend,
+                 head=-18.0 - 5.0 * bend,
+                 arm_n_up=62.0 + 4.0 * sway, arm_n_lo=24.0,
+                 arm_f_up=-53.0 - 4.0 * sway, arm_f_lo=26.0,
+                 foot_n_x=self.board['width'] * .16,
+                 foot_f_x=-self.board['width'] * .16,
+                 foot_n_y=self.DECK_HEIGHT + 5.0 - self.body.ankle_h,
+                 foot_f_y=self.DECK_HEIGHT + 5.0 - self.body.ankle_h,
+                 foot_n_p=0.0, foot_f_p=0.0, squash=1.0)
 
 
 class GroundedGaitHold(Clip):
@@ -1088,8 +1154,13 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
             raise ValueError('gait.roll: requires ordinary_roll_v1 without a two-handed source carry')
         from .ordinary_roll import build_ordinary_roll
         out['roll'] = build_ordinary_roll(body,idle0,tm)
+    skateboard_profile = (gait or {}).get('skateboard')
+    if 'skateboard' in (gait or {}):
+        if source_carry is not None or (custom and 'skateboard' in custom):
+            raise ValueError('gait.skateboard: cannot combine with source carry or override skateboard')
+        out['skateboard'] = SkateboardGlide(body, skateboard_profile, tm)
     for name, pose in (gait or {}).items():
-        if name in ("carry", "jump", "roll"):
+        if name in ("carry", "jump", "roll", "skateboard"):
             continue
         if name == "idle":  # already applied before the shared seam poses were built
             continue

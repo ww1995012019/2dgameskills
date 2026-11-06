@@ -29,8 +29,9 @@ For complete aligned layers with known joints, prefer the [zero-generation bindi
 When the user rejects what they saw, follow the [repair loop](references/repair-loop.md): render only
 the affected clips, show `compare_clips.py` GIFs, and run the full verification once they approve.
 
-Frames are computed from a skeleton; a look is described through a character spec or supplied as
-layered art (reference images can't be traced). Requires Python 3 with `pillow` and `numpy`.
+Procedural and bound frames are computed from a skeleton; a look is described through a character spec or supplied as
+layered art (reference images can't be traced). An independently drawn frame sheet can also be packaged
+without binding. Requires Python 3 with `pillow` and `numpy`.
 Scripts are in `scripts/`, run from the skill root.
 
 
@@ -64,6 +65,23 @@ coordinates, pixel patches or threshold changes. The general layered binder desc
 `references/layered-art.md` remains experimental for older/advanced work; never use it to bypass a
 basic profile refusal. Show the running walk preview and wait for the user's approval before adding
 clips. The basic route has no full-set or attack switch. `cut_parts.py` remains a quick-test route.
+
+## Skateboard and independently drawn frames
+
+For a **procedural empty-handed** character, set `gait.skateboard.profile` to `glide_v1` and export
+`idle,skateboard`. The in-place loop renders the board behind the rider, keeps both sole proxies on
+the deck, and adds `board` evidence to motion QA. It does not animate mount/dismount or advance the
+game world. Board width and colors are configurable; see `references/character-spec.md`. This
+profile rejects puppet and cut-out art until those inputs have a separately validated board workflow.
+Inspect the actual shoes and board in all frames; numeric checks do not establish painted contact.
+
+To package an independently created, complete transparent frame sheet, use `scripts/import_frames.py`
+as documented in `references/character-spec.md`. Its output uses the normal atlas, manifest, engine
+adapters and preview, and records `source.kind: precomposed_frames` and `skeleton_binding: false`.
+The source sheet already contains the whole character and prop; import does not create or verify a
+rig, feet, joints, cloth, or transitions. The owner of a basic-side or rifle-carry job may not use
+this route to sidestep its stage gates, and the importer rejects assets inside those jobs. Inspect
+each frame and playback; report the absence of rig/contact evidence.
 
 ## Existing programmatic and custom-action workflow
 

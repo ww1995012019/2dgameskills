@@ -128,6 +128,35 @@ def analyse_rig(clip, tr, speed, tags):
     return res
 
 
+def skateboard_contact(clip, tr):
+    """Check both sole proxies against the exported board; this is not visual approval."""
+    problems = []
+    max_gap = 0.0
+    try:
+        board = clip['skateboard']
+        deck, half = board['deck_height_px'], board['half_width_px']
+        if (any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                for v in (deck, half)) or deck <= 0 or half <= 0):
+            raise ValueError('invalid deck coordinates')
+        count = len(clip['frames'])
+        for side in 'nf':
+            for part in ('heel', 'ball'):
+                points = tr['feet'][side][part]
+                if len(points) != count:
+                    raise ValueError('missing sole positions')
+                for frame, (x, y) in enumerate(points):
+                    if not math.isfinite(x) or not math.isfinite(y):
+                        raise ValueError('invalid sole position')
+                    gap = abs(y - deck)
+                    max_gap = max(max_gap, gap)
+                    if gap > .1 or abs(x) > half:
+                        problems.append(dict(frame=frame, side=side, point=part, gap_px=round(gap, 3)))
+    except (KeyError, TypeError, ValueError) as exc:
+        problems.append(dict(frame=0, problem=str(exc)))
+    return dict(status=FAIL if problems else PASS, max_gap_px=round(max_gap, 3), problems=problems,
+                scope='skeletal sole points relative to deck; visual review still required')
+
+
 def joint_positions(tr):
     """Frames x joints x xy, in the same output-pixel space as the trace."""
     return np.stack([tr["joints"][j] for j in sorted(tr["joints"])], axis=1)
@@ -256,6 +285,10 @@ def run_set(root):
             # sidecar stored the authored interval rather than 1 / output FPS.
             runtime_trace = dict(trace["traces"][name], frame_dt=1.0 / c["fps"])
             r.update(analyse_rig(name, runtime_trace, c["speed_px_s"], c["tags"]))
+            if 'skateboard' in c or 'skateboard' in c['tags']:
+                board = skateboard_contact(c, runtime_trace)
+                r['board'] = board['status']
+                r['board_evidence'] = board
             geo, flags = summarize(runtime_trace["metrics"], c["tags"], runtime_trace["frame_dt"])
             r.update(geo)
             tr = trace["traces"][name]
@@ -268,6 +301,9 @@ def run_set(root):
                         flags.setdefault(i, []).append("joint loop seam: last -> first pose")
             for i in r["cut_frames"]:
                 flags.setdefault(i, []).append("cut off by the frame edge")
+            if 'board_evidence' in r:
+                for issue in r['board_evidence']['problems']:
+                    flags.setdefault(issue['frame'], []).append('foot not supported by skateboard deck')
             skeleton_flags(r, seqs[name], tr, trace["unit_px"], trace.get("bones", []), flags)
             r["flags"] = {str(k): v for k, v in sorted(flags.items())}
             # Painted hair, boots and weapons extend past the bone proxies, so every
@@ -282,6 +318,8 @@ def run_set(root):
                 r['painted_floor_evidence'] = floor
                 for index in floor['bad_frames']:
                     r.setdefault('flags',{}).setdefault(str(index),[]).append('painted art below ground')
+        elif 'skateboard' in c or 'skateboard' in c['tags']:
+            r['board'] = WARN
         report[name] = r
     trans = []
     if trace:
@@ -306,7 +344,7 @@ def run_set(root):
                     for clip, frame in ((a, transition["a_frame"]), (b, b_frame)):
                         report[clip]["flags"].setdefault(str(frame), []).append(f"joint transition: {a} -> {b}")
             trans.append(transition)
-    cols = ["hold", "seam", "spike", "slide", "jitter", "limits", "clip", "float", "bones", "bounds", "painted_floor"]
+    cols = ["hold", "seam", "spike", "slide", "jitter", "limits", "clip", "float", "bones", "bounds", "board", "painted_floor"]
     print(f"{'clip':<14}{'frm':>4}  " + "".join(f"{c:<7}" for c in cols) + "detail")
     failed = 0
     for name, r in report.items():

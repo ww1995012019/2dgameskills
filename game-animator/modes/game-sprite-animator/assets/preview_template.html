@@ -81,7 +81,7 @@ const SIZE = doc.frame_size;
 const PIXEL = SIZE < 128;
 const loadAll = (urls) => Promise.all(urls.map((u) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i); i.src = u; })));
 
-const CN = {idle:"待机",idle_look:"待机·张望",walk:"走路",run:"奔跑",skid:"急停",jump_start:"起跳",jump_rise:"上升",jump_apex:"滞空",fall:"下落",land:"落地",double_jump:"二段跳",crouch_enter:"下蹲",crouch_idle:"蹲姿",crouch_exit:"起身",crouch_walk:"蹲行",roll:"翻滚",dash:"冲刺",wall_slide:"贴墙下滑",attack_1:"攻击 1",attack_2:"攻击 2",attack_3:"攻击 3",air_attack:"空中攻击",cast:"施法",block:"格挡",block_hit:"格挡受击",hurt:"受击",death:"死亡"};
+const CN = {idle:"待机",idle_look:"待机·张望",walk:"走路",run:"奔跑",skateboard:"滑板滑行",skid:"急停",jump_start:"起跳",jump_rise:"上升",jump_apex:"滞空",fall:"下落",land:"落地",double_jump:"二段跳",crouch_enter:"下蹲",crouch_idle:"蹲姿",crouch_exit:"起身",crouch_walk:"蹲行",roll:"翻滚",dash:"冲刺",wall_slide:"贴墙下滑",attack_1:"攻击 1",attack_2:"攻击 2",attack_3:"攻击 3",air_attack:"空中攻击",cast:"施法",block:"格挡",block_hit:"格挡受击",hurt:"受击",death:"死亡"};
 
 loadAll(DATA.images).then((imgs) => loadAll(DATA.fx_images).then((fxImgs) => start(imgs, fxImgs)));
 
@@ -167,10 +167,10 @@ function start(imgs, fxImgs) {
   const missing = demoActions.filter((name) => !doc.clips[name]);
   if (missing.length) $("missing-actions").textContent = "未导出的动作无法在试玩中使用：" + missing.map((name) => CN[name] || name).join("、");
   const banks = new Set((doc.clips.walk?.locomotion?.settle_banks || []).map(bank => bank.clip));
-  const customNames = names.filter((name) => !banks.has(name) && !Object.prototype.hasOwnProperty.call(CN, name));
+  const customNames = names.filter((name) => !banks.has(name) && (name === "skateboard" || !Object.prototype.hasOwnProperty.call(CN, name)));
   if (customNames.length && doc.clips.idle) {
     const customSelect = $("custom-action");
-    customNames.forEach((name) => { const option = document.createElement("option"); option.value = name; option.textContent = name; customSelect.append(option); });
+    customNames.forEach((name) => { const option = document.createElement("option"); option.value = name; option.textContent = CN[name] || name; customSelect.append(option); });
     customSelect.value = customNames[0];
     $("custom-controls").classList.remove("hidden");
   } else if (customNames.length) {

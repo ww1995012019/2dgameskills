@@ -71,6 +71,49 @@ switches still cut between clips; use GroundedWalkController for this policy.
 
 ## Custom clips
 
+### Skateboard glide for procedural art
+
+Add the following to an empty-handed procedural character spec. This is an opt-in extra loop and
+does not change the built-in idle, walk or run clips:
+
+```json
+"weapon": "none",
+"gait": { "skateboard": {
+  "profile": "glide_v1",
+  "width": 64,
+  "colors": { "deck": "#14378f", "grip": "#252b37", "accent": "#ffd000",
+              "wheels": "#ffd41a", "metal": "#9ba7b7" }
+}}
+```
+
+Width is 52–84 rig units; colors are optional `#RRGGBB`. Generate with
+`python scripts/generate.py --character rider.json --clips idle,skateboard --fit-selected-clips --out out/rider`
+and run `python scripts/qa_motion.py out/rider`. The `board` check measures both heel/ball proxies
+against the deck on every exported frame, and the visual review must still check the actual shoes.
+Select the action in the preview and press Q. The loop is stationary; the game controls world
+movement. This profile has no mounting/dismounting transition and does not accept puppet/cut-out
+characters or held weapons.
+
+### Packaging an independently drawn frame sheet
+
+If the complete character and prop have already been drawn in every frame, import an evenly spaced
+grid of square transparent cells into a **new** output directory:
+
+```bash
+python scripts/import_frames.py --sheet artwork.png --columns 4 --rows 2 --count 8 \
+  --fps 8 --clip skateboard --name rider --pivot 222,415 --pad 2 --out out/rider-frames
+```
+
+The pivot uses source-cell pixels; padding adds transparent pixels without altering the source.
+Use an actual pivot appropriate for the source. The importer rejects empty, visibly cropped or
+nontransparent frames and won't overwrite an existing output directory. It emits the standard
+`preview.html`, frames, sheets, atlas and engine files, but no `rig_trace.json`: QA correctly
+reports missing rig evidence, and import does not establish anatomy or foot contact. Inspect all
+frames and playback. Do not use this to repackage material from an owned basic workflow or bypass
+its review gates; the importer rejects sheets inside such a job.
+
+### Other custom actions
+
 For a character whose proportions make a built-in keyed action awkward, an optional
 `clip_key_overrides` object can replace individual pose channels at existing zero-based key indices.
 For example, `"clip_key_overrides": {"attack_3": {"1": {"arm_n_up": 120}}}` changes only that

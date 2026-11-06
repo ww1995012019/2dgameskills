@@ -43,6 +43,13 @@ does not expand the basic profile's weapon scope or reset an existing task's att
 For other side-view custom art and actions, use its `references/ai-art.md` and
 `references/character-spec.md`; test custom actions in the preview and inspect joints visually.
 
+The side-view mode has an opt-in skateboard glide for procedural empty-handed characters. Its
+normal renderer draws the board and measures both soles against its deck; mounting, dismounting and
+layered-art skateboard rigs are not supported. A complete independently drawn animation sheet can
+also be packaged with `modes/game-sprite-animator/scripts/import_frames.py`; it stays precomposed,
+with no skeleton or automatic anatomy/contact evidence. Never use frame import to bypass a failed
+or pending basic workflow. Review the actual artwork and playback before delivery.
+
 ## Shared character identity: side and top-down
 
 `assets/shared_character_example.json` demonstrates one manifest for a side-view humanoid and a
