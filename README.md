@@ -13,7 +13,7 @@
 
 用于制作、绑定、审查与导出 2D 游戏角色动画的 skill。能否交付取决于输入素材、实际动作和当前版本的审核证据。
 
-现在可试用统一入口 [game-animator](game-animator/SKILL.md)：安装 `game-animator.skill` 后按角色与视角选择下面四种模式。横版与俯视人形可通过一份角色描述共享名称、基础配色，并分别指定视角配置；俯视尚不支持分层 PNG 或共享身体比例。另有实验性配置驱动飞行流程，支持刚性 PNG 部件和基础动作，但示例只是骨架占位，尚未完成生物美术和引擎实测。旧的四个包仍可单独使用。
+现在可试用统一入口 [game-animator](game-animator/SKILL.md)：安装 `game-animator.skill` 后按角色与视角选择下面四种模式。横版与俯视人形可通过一份角色描述共享名称、基础配色，并分别指定视角配置；俯视尚不支持分层 PNG 或共享身体比例。另有实验性配置驱动飞行流程，支持刚性 PNG 部件和基础动作，但示例只是骨架占位，尚未完成生物美术和引擎实测。旧的四个独立包已弃用，内容由统一包生成。
 
 | Skill | 适合 |
 |---|---|
@@ -110,15 +110,17 @@ python scripts/visual_review.py out/wolf
 
 ## 安装
 
+安装统一包 [`game-animator.skill`](game-animator.skill)，它包含下面四种模式。
 源码提交不随附更新 `.skill` 打包文件，因此仓库中的预打包文件可能落后于源码。
-要使用最新代码，可以直接安装下述源码目录，或先在仓库根目录运行
-`python3 dev/package_skills.py`，再安装本地生成的包。
+要使用最新代码，可以直接安装源码目录 `game-animator/`，或先在仓库根目录运行
+`python3 dev/build_standalone.py && python3 dev/package_skills.py`，再安装本地生成的包。
 
-四个 skill 互相独立，按需安装。四足包为 [`game-quadruped-animator.skill`](game-quadruped-animator.skill)。俯视包为 [`game-topdown-animator.skill`](game-topdown-animator.skill)。
+**Claude 桌面版：** 下载 `game-animator.skill`，在 Claude 中打开文件并保存为 skill。
 
-**Claude 桌面版：** 下载 [`game-sprite-animator.skill`](game-sprite-animator.skill) 或 [`game-shooter-animator.skill`](game-shooter-animator.skill)，在 Claude 中打开文件并保存为 skill。
+**Claude Code：** 把 [`game-animator/`](game-animator) 文件夹复制到 `~/.claude/skills/`。
 
-**Claude Code：** 把 [`game-sprite-animator/`](game-sprite-animator)、[`game-shooter-animator/`](game-shooter-animator) 、[`game-topdown-animator/`](game-topdown-animator) 或 [`game-quadruped-animator/`](game-quadruped-animator) 文件夹复制到 `~/.claude/skills/`。
+旧的四个独立包（`game-sprite-animator.skill`、`game-shooter-animator.skill`、`game-topdown-animator.skill`、
+`game-quadruped-animator.skill`）已弃用，只为已安装的用户保留。它们由统一包自动生成，内容与对应模式一致。
 
 需要 Python 3，以及 `pillow` 和 `numpy`：
 

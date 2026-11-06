@@ -5,24 +5,16 @@ description: Generate and inspect 2D game character sprite animations for side-v
 
 # Game Animator
 
-For humanoid art and animation, also enforce the selected mode's
-[head, neck and hand review](modes/game-sprite-animator/references/visual-review.md).
-Inspect the original head/torso and both complete hands before binding. Exposed neck cuts,
-a pasted-on head, rigid head/torso motion, unnatural finger splaying and broken wrists are blockers.
-Every applicable clip needs `neck_*.png`, `hands_*.png` and their complete motion playback,
-with current frame-specific and temporal observations. Pixel contact or a nonzero head angle
-cannot certify natural anatomy or motion. Do not carry forward older visual passes.
+This is the package to install; the four former standalone skills are deprecated copies of its modes.
 
-For complete aligned layers with known joints, prefer the [zero-generation binding entry](modes/game-sprite-animator/references/known-joint-binding.md). Reuse existing pixels and joint metadata; hand-hint generation is unnecessary for this entry. Visual review remains required.
-
-For humanoid binding, read the selected mode's
-[skin and garment audit](modes/game-sprite-animator/references/skin-binding-audit.md).
-Source-preserving pixels and valid bone lengths do not prove a connected waist/crotch or correct
-painted joint placement. Do not split trousers into independent half-images without a pelvis
-bridge or shared boundary constraint. Full-body clips need current hip close-ups and explicit
-alignment/continuity findings. Custom game renderers must supply their actual weights, matrices,
-rendered frames and review evidence; the skill cannot inherit a pass from game unit tests.
-
+For humanoid art, the side-view mode's
+[release gates](modes/game-sprite-animator/references/release-gates.md) apply before binding and
+before delivering any clip: neck, hands, waist/garment continuity and run rhythm are checked on the
+actual pixels and in playback, and numeric QA never clears them. For complete aligned layers with
+known joints, prefer the [zero-generation binding entry](modes/game-sprite-animator/references/known-joint-binding.md).
+When the user rejects a result, follow the [repair loop](modes/game-sprite-animator/references/repair-loop.md):
+show quick before/after GIFs from `scripts/compare_clips.py` first and run full verification only
+after they approve.
 
 Choose a mode using the character, camera and movement. Read only that mode's `SKILL.md`, and run
 its scripts from that mode's directory. Each mode is bundled here and requires Python with Pillow

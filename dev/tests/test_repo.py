@@ -1,4 +1,4 @@
-"""Repo hygiene: shared files match their copies, packages match the tracked files."""
+"""Repo hygiene: generated standalone folders match game-animator, packages match tracked files."""
 import os
 import subprocess
 import sys
@@ -12,8 +12,8 @@ def run(script, *args):
 
 
 class TestRepo(unittest.TestCase):
-    def test_shared_files_in_sync(self):
-        p = run("sync_shared.py", "--check")
+    def test_standalone_folders_generated_from_unified(self):
+        p = run("build_standalone.py", "--check")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
     def test_packages_up_to_date(self):
