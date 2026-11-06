@@ -201,6 +201,10 @@ joint registration and all garment limits remain unchanged. It currently rejects
 and two-handed rifle carry. Like the original roll it emits `invincible_on` / `invincible_off`
 (at the start of the tuck and the end of the full turn). The original roll remains for rigs
 without this explicit profile. Engine-facing timings are in `animation-principles.md`.
+
+New basic bindings record each boot's measured toe end, so walk, run and roll pivot on the
+painted toe instead of a generic point inside a long boot (see `release-gates.md`, "Painted toe
+contact"). Rebind an existing basic job to apply it; its idle and walk hip height do not change.
 Review the entire forward rotation and recovery, not just the tuck extrema. A pose that passes
 geometry but looks like a straight-body turn is not a satisfactory roll.
 

@@ -270,7 +270,9 @@ def run_set(root):
                 flags.setdefault(i, []).append("cut off by the frame edge")
             skeleton_flags(r, seqs[name], tr, trace["unit_px"], trace.get("bones", []), flags)
             r["flags"] = {str(k): v for k, v in sorted(flags.items())}
-            if {'ground','tumble'}<=set(c['tags']) and (trace.get('portrait_review_required')
+            # Painted hair, boots and weapons extend past the bone proxies, so every
+            # exported clip of a layered character gets the native-pixel floor check.
+            if (trace.get('portrait_review_required')
                     or trace.get('binding_profile') in ('basic-side-v1','side-rifle-carry-v1')
                     or source_carry_required(trace)):
                 from sprite_anim.painted_ground import painted_floor

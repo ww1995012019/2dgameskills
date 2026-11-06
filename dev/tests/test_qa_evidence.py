@@ -125,6 +125,29 @@ class EvidenceReporting(unittest.TestCase):
         self.assertEqual(clip['painted_floor_evidence']['bad_frames'],[1])
         self.assertIn('painted art below ground',clip['flags']['1'])
 
+    def test_floor_fault_in_any_clip_of_a_layered_character_is_located(self):
+        # Walk/run boots and landing crouches, not only tumbles: the bone proxy
+        # reported no contact fault while painted boot toes sank 2-3 px.
+        for tags in (('ground',), ('ground', 'hold_feet'), ()):
+            with self.subTest(tags=tags):
+                trace=self.trace();trace['binding_profile']='basic-side-v1'
+                failed,report,_=self.run_case(trace,tags=tags,floor_fault=2)
+                self.assertGreater(failed,0)
+                clip=report['clips']['run']
+                self.assertEqual(clip['painted_floor'],'FAIL')
+                self.assertEqual(clip['painted_floor_evidence']['bad_frames'],[2])
+                self.assertIn('painted art below ground',clip['flags']['2'])
+
+    def test_clean_layered_frames_pass_and_procedural_sets_report_not_applicable(self):
+        trace=self.trace();trace['portrait_review_required']=True
+        failed,report,_=self.run_case(trace,tags=('ground',))
+        self.assertEqual(failed,0)
+        self.assertEqual(report['clips']['run']['painted_floor'],'PASS')
+        # Procedural templates have no painted source; their floor column is
+        # not run and must not read as a pass.
+        _,report,_=self.run_case(self.trace(),tags=('ground',),floor_fault=1)
+        self.assertEqual(report['clips']['run']['painted_floor'],'n/a')
+
 
 if __name__ == '__main__':
     unittest.main()
