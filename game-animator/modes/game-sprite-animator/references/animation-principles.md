@@ -32,6 +32,23 @@ Jump is split so physics controls height: play `jump_start`, fire the jump at `t
 `jump_rise` while moving up, play `jump_apex` near zero vertical speed, loop `fall`, then `land`
 on contact.
 
+**Fitted profiles on new basic (AI layered art) bindings.** A rig whose `gait` selects
+`ordinary_jump_v1` / `ordinary_roll_v1` changes this contract. Read `loop`, `next` and
+`events` from `animations.json`, never from this table:
+
+| Clip | Length | Loop | Prev → Next | Key events |
+|---|---|---|---|---|
+| `jump_start` | 0.24 s | no | idle → jump_rise | takeoff |
+| `jump_rise` | 0.30 s | **no** | jump_start → jump_apex | |
+| `jump_apex` | 0.24 s | no | jump_rise → fall | |
+| `fall` | 0.30 s | **no** | jump_apex → land | |
+| `land` | 0.30 s | no | fall → idle | land_dust |
+| `roll` | 1.14 s | no | **idle** → idle | invincible_on (0.12 s), invincible_off (0.78 s) |
+
+The fitted jump is one fixed flight (1.1 × leg length) rather than a physics-held loop. For a
+variable-height jump or a long drop, hold the last frame of `jump_rise` / `fall` until the
+apex / contact instead of looping them. The fitted roll starts from `idle`, not `run`.
+
 `attack_*` have a `chain_frame`. If the next attack was pressed, jump to the next clip at that frame:
 each attack starts from the previous one's follow-through pose, so the combo flows.
 

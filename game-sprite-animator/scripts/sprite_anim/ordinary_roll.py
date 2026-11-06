@@ -81,8 +81,11 @@ def build_ordinary_roll(body, base, time_scale=1.):
     speed = 3.*legs/time_scale
     timed = [(t*time_scale,p) for t,p in keys]
     timed[-1] = (max(timed[-1][0],timed[-2][0]+max(LAG.values())+.005),timed[-1][1])
+    # Same gameplay contract as the original roll: invulnerability starts when
+    # the body leaves the stance and ends when the full turn is complete.
+    events = [(.12*time_scale,'invincible_on'),(.78*time_scale,'invincible_off')]
     result = Keyed('roll',timed,add=contact,
-                   prev='idle',next='idle',tags=('ground','tumble'),speed=speed,
+                   prev='idle',next='idle',tags=('ground','tumble'),speed=speed,events=events,
                    vel=[(0.,0.,0.),(.12*time_scale,0.,0.),(.24*time_scale,speed,0.),
                         (.78*time_scale,speed,0.),(1.08*time_scale,0.,0.),(1.14*time_scale,0.,0.)])
     result.motion_profile = 'ordinary_roll_v1'

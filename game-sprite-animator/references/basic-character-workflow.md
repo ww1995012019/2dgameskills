@@ -198,7 +198,9 @@ into the pelvis. The fitted source roll resolves floor contact for the complete 
 head hair and boot silhouettes can extend beyond the generic skeleton proxies. Contact uses the
 current opaque source boundary mapped through the same final mesh triangles; source textures,
 joint registration and all garment limits remain unchanged. It currently rejects cloth chains
-and two-handed rifle carry. The original roll remains for rigs without this explicit profile.
+and two-handed rifle carry. Like the original roll it emits `invincible_on` / `invincible_off`
+(at the start of the tuck and the end of the full turn). The original roll remains for rigs
+without this explicit profile. Engine-facing timings are in `animation-principles.md`.
 Review the entire forward rotation and recovery, not just the tuck extrema. A pose that passes
 geometry but looks like a straight-body turn is not a satisfactory roll.
 

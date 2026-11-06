@@ -68,6 +68,17 @@ class OrdinaryRoll(unittest.TestCase):
             distances.append(np.sum((velocity[:-1,0]+velocity[1:,0])*.5*np.diff(ts)))
         np.testing.assert_allclose(distances,distances[0],atol=1e-3)
 
+    def test_keeps_the_original_roll_invulnerability_events_at_every_speed(self):
+        for speed in (1.,1.6,3.):
+            fitted=self.clips(Body(),{'speed':speed})['roll']
+            legacy=build_clips(body=Body(),style={'speed':speed})['roll']
+            self.assertEqual([e for _,e in fitted.events],[e for _,e in legacy.events])
+            (on,_),(off,_)=fitted.events
+            self.assertLess(0.,on);self.assertLess(on,off);self.assertLess(off,fitted.duration)
+            # Invulnerable while the body spins: the turn has begun by `on` and is complete by `off`.
+            self.assertEqual(fitted.sample(off)['root_rot'],360.)
+            self.assertLess(fitted.sample(on)['root_rot'],1e-9)
+
     def test_opt_in_preserves_other_clips_and_rejects_unknown_profiles(self):
         legacy=build_clips(body=Body());fitted=self.clips(Body())
         self.assertFalse(hasattr(legacy['roll'],'motion_profile'))
