@@ -271,10 +271,33 @@ class Gait(Clip):
         self.wep_sway = 4.0
         self.head_response = None
         self.head_lever = 10.0
-        d = duty
+        self._pitch_keys = heel, toe, swing_pitch
+        self._set_pitch(toe)
+
+    def _set_pitch(self, toe):
+        heel, _, swing_pitch = self._pitch_keys
+        d = self.duty
         self.pitch = Curve(
             [0, 0.17 * d, 0.5 * d, d, d + 0.3 * (1 - d), d + 0.72 * (1 - d)],
             [[heel], [0], [0], [-toe], [swing_pitch], [heel * 0.7]], loop=True, period=1.0)
+
+    def fit_toe(self, body):
+        """Keep the authored toe-off ankle rise on a measured toe.
+
+        The toe-off angle was authored for the generic ball 6.5 units ahead of
+        the ankle. A longer painted boot pivots on its own, farther toe end, so
+        the same angle would lift the ankle (and with it the hip) much higher.
+        Choose the angle that gives the generic foot's ankle rise instead.
+        """
+        toe = self._pitch_keys[1]
+        theta = math.radians(toe)
+        rise = FOOT_BALL[0]*math.sin(theta) - FOOT_BALL[1]*math.cos(theta)
+        angles = []
+        for side in 'nf':
+            reach, height = (getattr(body, 'foot_'+side+'_ball') or FOOT_BALL)
+            lever = math.hypot(reach, height)
+            angles.append(math.degrees(math.asin(min(1., rise/lever)) - math.atan2(-height, reach)))
+        self._set_pitch(min(toe, max(0., min(angles))))
 
     def stride(self, L):
         self.L, self.speed = L, L / (self.duty * self.T)
@@ -803,6 +826,8 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
                 events=[(0.0, "footstep"), (0.42 * tm, "footstep")])
     if all(getattr(body,'foot_'+s+'_'+end) is not None for s in 'nf' for end in ('heel','ball')):
         walk.contact_body=body
+    elif any(getattr(body,'foot_'+s+'_ball') is not None for s in 'nf'):
+        walk.fit_toe(body)
     walk_profile = (gait or {}).get('walk', {}).get('profile')
     if walk_profile is not None:
         if walk_profile != 'natural_walk_v1':

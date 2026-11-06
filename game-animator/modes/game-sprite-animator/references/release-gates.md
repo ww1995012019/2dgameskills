@@ -107,10 +107,13 @@ limping rhythm are blockers even when every foot touches the ground and the loop
 head/foot proxies are retained as diagnostic measurements; the authoritative body-ground metric
 uses actual opaque source boundaries through the rendered mesh. Source rolls disable the competing
 individual-foot floor correction only while this whole-body source constraint is active.
-Independent QA also inspects each native RGBA frame of a grounded layered tumble, so a producer
-claim that bones clear the floor cannot hide painted hair or boots penetrating it. This uses
-the existing one-rig-unit ground limit, with a one-output-pixel minimum for raster quantization;
-the check reports exact failing frame indices. Other clips keep their existing contact checks.
+Independent QA also inspects each native RGBA frame of every exported clip of a layered
+character (`painted_floor`), so a producer claim that bones clear the floor cannot hide painted
+hair, boots or a sword tip penetrating it. This uses the existing one-rig-unit ground limit, with a
+one-output-pixel minimum for raster quantization; the check reports exact failing frame indices.
+Procedural templates have no painted source and report `n/a`. It was first limited to tumbles;
+extending it found boots 2-3 px under the floor in a synthetic walk/run whose bone proxy measured
+no contact fault (see "Painted toe contact").
 Inspect actual ground contact during the entire turn and recovery. The check does not certify
 a natural roll, hand support or the absence of hovering; those still need native-frame and playback
 review. Do not move a final PNG, crop it or add a cover to conceal a failed contact.
@@ -130,3 +133,15 @@ If the runtime cannot export those data, state that the custom binding is unveri
 Rebuild and record the current review after any change to art, trace, atlas, sprite sheets or
 runtime preview. Old/unversioned passes do not carry forward. Never claim the complete set is
 approved when only a few sampled poses or the skeleton math have been checked.
+
+## Painted toe contact
+
+Basic bindings measure each boot's toe end (`body.foot_n_ball` / `foot_f_ball`, in the foot's
+rest frame). The generic ball sits 6.5 units ahead of the ankle; a longer boot pivoting on that
+interior point sinks its painted toe under the floor at heel-off. The heel needs no measurement:
+`read_leg` places the ankle from the measured heel, so the generic heel is the painted heel.
+Measuring only the toe deliberately keeps the authored walk hip height and idle; measuring both
+ends would switch on the measured-sole hip height (`measured_walk_height`), which changed idle
+stance and made the walk hip jump at toe-off on the same fixtures. The walk scales its toe-off
+angle (`Gait.fit_toe`) so a longer lever gives the authored ankle rise, not a higher one.
+

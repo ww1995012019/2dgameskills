@@ -1171,6 +1171,19 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False, ret
         mid = REACH_MID*legs
         low = math.sqrt(max((REACH_END*legs)**2-(CONTACT_AHEAD*STRIDE*legs)**2,0.0))
         body['hip_h'] = round(ANKLE_UP+GAIT_DROP+(mid+low)/2-seat_up,3)
+        # Roll each foot on its own painted toe. The generic ball contact sits
+        # 6.5 units ahead of the ankle; a longer boot then pivots on a point
+        # inside its sole and drives the painted toe below the floor at
+        # heel-off. read_leg places the ankle HEEL_BACK/ANKLE_UP from the
+        # measured heel, so the generic heel already is the painted heel; only
+        # the toe end is measured. (Measuring both would also switch on the
+        # measured-sole hip height of walk/idle, which basic does not use.)
+        for side, leg in (('n', ln), ('f', lf)):
+            sole = leg['toe']-leg['heel']
+            angle = math.atan2(sole[1], sole[0])
+            c, s = math.cos(-angle), math.sin(-angle)
+            dx, dy = (leg['toe']-leg['ankle'])/ppu
+            body[f'foot_{side}_ball'] = [round(c*dx-s*dy, 3), round(-(s*dx+c*dy), 3)]
 
     joints = dict(hip=hip, waist=waist, neck=neck, head_base=head_base, wr_n=an["wrist"], el_n=an["elbow"])
     def half(name):
