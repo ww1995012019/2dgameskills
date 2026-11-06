@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('shared_review_gate', ROOT/'shared/scripts/visual_review.py')
+spec = importlib.util.spec_from_file_location('shared_review_gate', ROOT/'game-animator/modes/game-sprite-animator/scripts/visual_review.py')
 vr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vr)
 sys.path.insert(0, str(ROOT/'game-sprite-animator/scripts'))

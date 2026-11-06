@@ -11,7 +11,7 @@ import unittest
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "shared/scripts/audit_skin_binding.py"
+SCRIPT = ROOT / "game-animator/modes/game-sprite-animator/scripts/audit_skin_binding.py"
 SPEC = importlib.util.spec_from_file_location("skin_binding_audit_tests", SCRIPT)
 audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)

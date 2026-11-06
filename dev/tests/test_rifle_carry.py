@@ -218,7 +218,7 @@ class ActualDrawOwner(unittest.TestCase):
         self.assertEqual(np.array(arm.image)[10,10,3],255)
 
     def test_new_carry_review_requires_all_frames_and_complete_playback(self):
-        module=importlib.util.spec_from_file_location('rifle_visual_review',ROOT/'shared/scripts/visual_review.py')
+        module=importlib.util.spec_from_file_location('rifle_visual_review',ROOT/'game-animator/modes/game-sprite-animator/scripts/visual_review.py')
         review=importlib.util.module_from_spec(module);module.loader.exec_module(review)
         doc={'clips':{'run':{'frames':list(range(22)),'fps':30,'loop':True,'frame_multiple':2}}}
         entry=review.carry_entries(doc,{'binding_profile':RIFLE_PROFILE})[0]
@@ -232,7 +232,7 @@ class ActualDrawOwner(unittest.TestCase):
             review.validate_checklist(entry['sheet'],row,entry)
 
     def test_visual_carry_requirement_survives_a_missing_presentation_flag(self):
-        module=importlib.util.spec_from_file_location('rifle_required_review',ROOT/'shared/scripts/visual_review.py')
+        module=importlib.util.spec_from_file_location('rifle_required_review',ROOT/'game-animator/modes/game-sprite-animator/scripts/visual_review.py')
         review=importlib.util.module_from_spec(module);module.loader.exec_module(review)
         doc={'clips':{'idle':{'frames':[0,1],'fps':30,'loop':True}}}
         trace={'connections':{'bindings':{'torso':{'source_upper_carry':{'profile':'source_upper_rifle_v1'}}}}}

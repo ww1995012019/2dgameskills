@@ -21,7 +21,7 @@ from sprite_anim import puppet_check
 import numpy as np
 from test_pelvic_visual_gate import fixture, accepted
 
-module = importlib.util.spec_from_file_location('neck_hand_review', ROOT/'shared/scripts/visual_review.py')
+module = importlib.util.spec_from_file_location('neck_hand_review', ROOT/'game-animator/modes/game-sprite-animator/scripts/visual_review.py')
 review = importlib.util.module_from_spec(module)
 module.loader.exec_module(review)
 

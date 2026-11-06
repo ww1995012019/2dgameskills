@@ -1,7 +1,7 @@
 ---
 name: game-sprite-animator
 description: >
-  Generate and review supported 2D game character animation sets and export them as sprite sheets,
+  (Deprecated: use game-animator.) Generate and review supported 2D game character animation sets and export them as sprite sheets,
   atlases and engine-ready files. Covers idle, walk, run, skid, the full jump chain (start, rise,
   apex, fall, land, double jump), crouch, roll, dash, wall slide, three-hit combos, air attack, cast,
   block, hurt and death, in HD or pixel-art style. Use this skill whenever the user wants game sprites,
@@ -12,6 +12,10 @@ description: >
   and for Unity, Godot, Cocos, Phaser, PixiJS or H5/mini-game animation assets. Not for 3D models or
   rigs, video editing, or static illustrations with no animation.
 ---
+
+> **Deprecated standalone package.** Install `game-animator` instead; it contains this mode
+> unchanged. This folder is generated from `game-animator/modes/game-sprite-animator/` and is kept only for
+> existing installs.
 
 # Game Sprite Animator
 

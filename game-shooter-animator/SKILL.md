@@ -1,7 +1,7 @@
 ---
 name: game-shooter-animator
 description: >
-  Generate side-scrolling 2D shooter character animation sets: soldiers with pistol, SMG, rifle,
+  (Deprecated: use game-animator.) Generate side-scrolling 2D shooter character animation sets: soldiers with pistol, SMG, rifle,
   shotgun, sniper and rocket launcher, 9-direction aiming, firing with recoil and muzzle flash, weapon
   specific reloads, grenades, melee, run-and-gun, roll, slide, hurt and death, in HD or pixel-art style.
   Exports layered upper and lower body sprites plus baked full-body clips, muzzle positions per frame,
@@ -11,6 +11,10 @@ description: >
   with a character that shoots, even if they never say "sprite". For a sword or magic character
   with no guns, use game-sprite-animator. Not for top-down shooters, first-person weapon views or 3D.
 ---
+
+> **Deprecated standalone package.** Install `game-animator` instead; it contains this mode
+> unchanged. This folder is generated from `game-animator/modes/game-shooter-animator/` and is kept only for
+> existing installs.
 
 # Game Shooter Animator
 

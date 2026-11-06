@@ -1,4 +1,4 @@
-# Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
+# Shared by several modes. Edit only this copy (game-animator/modes/game-sprite-animator/), then run dev/build_standalone.py.
 """Frames -> sheets, trimmed atlas pages, manifests and engine import files."""
 import base64
 import hashlib

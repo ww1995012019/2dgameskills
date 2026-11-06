@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Shared by both skills. Edit the copy in the repo's shared/ folder, then run dev/sync_shared.py.
+# Shared by several modes. Edit only this copy (game-animator/modes/game-sprite-animator/), then run dev/build_standalone.py.
 """AI visual QA: build review sheets, then record the reviewer's verdict.
 
 Numbers catch what can be measured. Whether a pose looks right can't be, so the agent running this

@@ -12,7 +12,7 @@ import unittest
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-TOOL = ROOT / 'shared/scripts/audit_skin_binding.py'
+TOOL = ROOT / 'game-animator/modes/game-sprite-animator/scripts/audit_skin_binding.py'
 FIXTURES = ROOT / 'dev/fixtures/split_pants'
 spec = importlib.util.spec_from_file_location('split_pants_binding_audit', TOOL)
 audit = importlib.util.module_from_spec(spec)
