@@ -1,27 +1,24 @@
 # 2dgameskills 工作规范
 
-四个独立安装的 Claude skill：`game-sprite-animator`（横版 RPG）、`game-shooter-animator`（横版射击）、`game-topdown-animator`（3/4 俯视八方向自由移动）、`game-quadruped-animator`（侧视狼）。
+一个 Claude skill `game-animator`，含四个模式：`game-sprite-animator`（横版 RPG）、`game-shooter-animator`（横版射击）、`game-topdown-animator`（3/4 俯视八方向自由移动）、`game-quadruped-animator`（侧视狼），另有实验性飞行生物流程。
 进度、决定和环境坑见 `HANDOVER.md`，后续计划见 `docs/roadmap.md`，动手前先读。
 
 **方向（2026-10-31）：** 外观用 AI 生图，我们负责绑定、动作、质检、导出；四个 skill 要合并成一个；生物用配置描述，动作按运动方式写。不要再为单个物种新开 skill 或写专门代码。每个阶段要用户看过效果、认可后再往下做。详见 `docs/roadmap.md` 第 3 节。
 
 ## 代码布局
 
-- 统一入口是 `game-animator/`，包含四个模式的代码快照；导出器、骨骼完整性校验与数学模块在包内
-  只保留人形模式的一份，其他需要它们的模式使用同步脚本生成的适配器。改了原模式后运行 `python dev/sync_modes.py`
-  更新，再重新打包；`--check` 检查同步和适配器。统一包目前
-  支持横版和俯视共享角色名称、基础配色的 manifest（`scripts/generate_character.py`）；
-  俯视仍不支持自定义 PNG 或统一身体比例。实验性飞行流程的限制见 `game-animator/references/creature-rig.md`，
-  原四个 skill 仍保留。
-
-- 每个 skill 文件夹必须能单独复制、单独打包使用，所以两边共用的文件在两个 skill 里各存一份。
-- **共用文件只改 `shared/`**，然后运行 `python dev/sync_shared.py` 复制到两边。直接改 skill 里的副本，`--check` 会报不一致。
-  目前共用：`sprite_anim/` 下的 `constraints.py`、`cloth.py`、`mathx.py`、`export.py`，以及 `visual_review.py`、
-  `SpriteSetImporter.cs`、`references/visual-review.md`。
-- `rig.py`、`motions.py`、`render.py`、`art.py`、`fx.py`、`qa_motion.py`、`generate.py` 两边已经分开演化，各改各的。
-  要把它们合进 `shared/`，先证明两边输出不变（见下面的 `--strict`）。
+- **源码只改 `game-animator/`。** 四个模式在 `game-animator/modes/<模式>/`。多个模式共用的文件只改
+  `game-animator/modes/game-sprite-animator/` 里那一份，清单见 `dev/build_standalone.py` 的 `SHARED`；
+  `export.py`、`integrity.py`、`mathx.py` 在统一包里通过适配器加载这一份。
+- 根目录的 `game-sprite-animator/` 等四个文件夹及其 `.skill` 是**生成的弃用副本**，只为已安装用户保留，
+  不要直接改。改完源码运行 `python dev/build_standalone.py`（`--check` 只检查），再 `python dev/package_skills.py`。
+  `dev/` 里的旧测试仍有不少按旧文件夹路径读文件，内容与统一包一致；新测试请用 `game-animator/modes/...` 路径。
+- 统一包支持横版和俯视共享角色名称、基础配色的 manifest（`scripts/generate_character.py`）；俯视仍不支持自定义 PNG
+  或统一身体比例。实验性飞行流程的限制见 `game-animator/references/creature-rig.md`。
+- `rig.py`、`motions.py`、`render.py`、`art.py`、`fx.py`、`qa_motion.py`、`generate.py` 横版和射击两边已经分开演化，各改各的。
+  要合成一份，先证明两边输出不变（见下面的 `--strict`）。
 - 俯视模块的绘制、2.5D 骨骼、QA 和播放器独立实现；只复用共用 `export.py` 和 Unity 导入器，
-  由 `sync_shared.py` 的文件列表选择同步。不要把侧视 rig、地面线检查或整套无关共用文件复制过去。
+  由 `build_standalone.py` 的 `SHARED` 清单分发。不要把侧视 rig、地面线检查或整套无关共用文件复制过去。
 - 四足仅复用 exporter、Unity importer、mathx、cloth 和 rig_data。尾巴给共用 `simulate` 传
   `state_at(t)`，人形保留原路径。`JointRecorder` 接收命名二维关节映射，人形与四足共用记录格式；
   骨骼求解和接触规则仍按解剖分别实现，不要把这个小接口描述成完整通用骨骼框架。
@@ -29,7 +26,7 @@
   用户 2026-11-01 明确要求：这是商用产品，只能固定输入条件和通用流程，不准为单张图手调；一张图只是测试数据，修问题要改通用规则并用两个不同角色验收；
   新角色默认走 `references/basic-character-workflow.md` 的 basic-side-v1：固定提示词，短发、短款/贴身服装、空手或单手简单剑，双手提示图必需，先待机/走路。用户审核后才考虑扩展；不自动承诺 27 动作。数值规则和绑定到图片哈希的语义复核共同把关；不能宣称代码自动识别全部不合规美术。
   动作适配角色身材的规则集中在 `layered-art.md` 的“How the clips fit a character”，遇到新问题加规则，不改单个角色数据。
-- AI 美术流程（阶段 A，现仅用于贴身角色的快速测试）：`game-sprite-animator/scripts/cut_parts.py`（template / cut / check），流程见该 skill 的
+- AI 美术流程（阶段 A，现仅用于贴身角色的快速测试）：`modes/game-sprite-animator/scripts/cut_parts.py`（template / cut / check），流程见该 skill 的
   `references/ai-art.md`。剪纸模式的武器挂在 `art.hand_grip`，和程序画法共用，改它要跑严格基准。
   示例 `assets/characters/cutout_demo/` 必须是工具对 `source.png` + `joints.json` 的当前输出（测试会比对），
   改了 `cut_parts.py` 就重新生成它。`dev/cutout_match.py` 量切块后和原版的相似度。
@@ -38,17 +35,23 @@
 
 ## 已有完整图层的免生图绑定
 
-有共同画布（或裁剪偏移）和已知关节时，优先用 `game-sprite-animator/scripts/bind_known_joints.py`，
+有共同画布（或裁剪偏移）和已知关节时，优先用 `modes/game-sprite-animator/scripts/bind_known_joints.py`，
 见 `references/known-joint-binding.md`。复用已有像素与关节，不重新生成参考图或双手提示图。
 该入口只做数值绑定，不重开旧生成任务或替代美术/用户动态验收。开发模板也调用正式的
 `known_joint_rig.build_spec`，不要再复制绑定算法。具体改动和验证边界见 `docs/rigging-optimization.md`。
 
 ## 改完要跑的
 
+**用户否决画面后的返修，先给用户看，再跑全量。** 按 `modes/game-sprite-animator/references/repair-loop.md`：
+只重新渲染受影响角色的受影响动作，跑这些输出的 `qa_motion.py` 和改动模块的单测，用
+`scripts/compare_clips.py` 出新旧对照 GIF 发给用户；用户认可后，再一次性跑下面的全量验证、更新视觉记录、
+打包、发布网页和提交。认可前不发布网页版本、不写“已修复”。用户认可和数值通过分开汇报。
+
+全量验证（合并、发布或交付前必须全过）：
+
 ```bash
 bash dev/engines/get_godot.sh && npm install --prefix dev/engines   # 引擎测试要的 Godot、Phaser、PixiJS，装一次
-python3 dev/sync_shared.py && python3 dev/sync_modes.py
-python3 dev/package_skills.py                    # 先本地重建，归档隔离安装测试使用这些包
+python3 dev/build_standalone.py && python3 dev/package_skills.py   # 生成弃用副本，先本地重建包，归档隔离安装测试使用这些包
 python3 -m unittest discover -s dev/tests -v      # 故障注入、CSS 回放、引擎实测、同步和打包检查
 bash dev/regress_all.sh                          # 26 套全量回归，放后台并检查各套真实退出码
 python3 dev/baseline.py                          # 和 dev/baseline.json 比较：状态变差就失败
@@ -76,7 +79,7 @@ python3 dev/baseline.py --strict                 # 重构时用：任何像素�
 ## 骨骼完整性 QA
 
 关节数字正确不代表画面正确：部件丢了中段，rig 照样解得出来。所以五个模式都在像素上检查，规则和阈值见
-`shared/references/skeleton-qa.md`，共用代码是 `shared/scripts/sprite_anim/integrity.py`。
+`game-animator/modes/game-sprite-animator/references/skeleton-qa.md`，共用代码是同目录 `scripts/sprite_anim/integrity.py`。
 
 - `float`（逐帧，碎块脱离身体）、`bones`（逐帧，骨段上没有画面）、`parts`（整套一次，切块部件缺失、骨段断裂、
   有孤块、枢轴不在图上，以及部件贴回原图后超出轮廓、头的像素进了躯干）。`part_check.py` 只在横版 RPG 里。
