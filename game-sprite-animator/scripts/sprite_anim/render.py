@@ -2,7 +2,7 @@
 import math
 import numpy as np
 
-from .art import Canvas, CharacterArt, chain_defs
+from .art import Canvas, CharacterArt, chain_defs, ramp
 from .cloth import bake_all
 from .constraints import bake_weapon_contacts
 from .mathx import catmull_open, rot
@@ -70,6 +70,9 @@ def walk_hold_phase(clip, n):
 
 class Renderer:
     def __init__(self, spec, size, pixel=False, motion_blur=1, clips=None, fit_clips=None):
+        if 'skateboard' in spec.get('gait', {}):
+            if spec.get('parts') or spec.get('puppet') or spec.get('weapon', 'sword') != 'none':
+                raise ValueError('skateboard glide currently requires a procedural, empty-handed character')
         self.art = CharacterArt(spec)
         self.size, self.pixel = size, pixel
         self.motion_blur = motion_blur
@@ -99,6 +102,11 @@ class Renderer:
         self.fit = self.fit_scale()
         self.unit = size * UNIT_PX * self.fit
         self.pal = np.array(self.art.palette(), dtype=np.float32) if pixel else None
+        if pixel:
+            colors = [rgb for clip in clips.values() if hasattr(clip, 'board')
+                      for color in clip.board['colors'].values() for rgb in ramp(color)]
+            if colors:
+                self.pal = np.concatenate((self.pal, np.asarray(colors, dtype=np.float32)))
         self.ss = 2 if self.art.puppet else 4 if size >= 128 else 5     # a puppet is resampled art, not drawn edges
         if pixel:
             self.stroke = 0.62
@@ -112,6 +120,9 @@ class Renderer:
         half, up, down = 0.0, 0.0, 0.0
         mesh_canvas = Canvas(2, 1, 1.0, 0.0, 1.0, False, self.art.ink) if self.art.puppet else None
         for clip in self.fit_clips.values():
+            if hasattr(clip, 'board'):
+                half = max(half, clip.board['width'] / 2 + 1)
+                up = max(up, 13.0)
             # 120 Hz: a fast swing crosses its widest point between 30 Hz samples, and
             # hd60 frames or the smear land right on it.
             n = max(8, int(clip.duration * 120))
@@ -197,9 +208,38 @@ class Renderer:
         sk = solve(pose, self.art.body)
         cv = Canvas(self.size, self.ss, self.unit, GROUND_FRAC, self.stroke,
                     self.pixel, self.art.ink)
+        if hasattr(clip, 'board'):
+            self.draw_skateboard(cv, clip, t)
         self.art.draw(cv, sk, pose, self.cloth_at(clip, t), self.smear_history(clip, t, pose, dt),
                       ground_contact='ground' in clip.tags)
         return cv.resolve()
+
+    @staticmethod
+    def draw_skateboard(cv, clip, t):
+        """Draw the board behind the rider; y=7 is the shoe-supporting deck."""
+        width = clip.board['width']
+        colors = {name: ramp(value) for name, value in clip.board['colors'].items()}
+        half = width / 2
+
+        def disk(cx, cy, radius):
+            return [(cx + radius * math.cos(i * math.tau / 20),
+                     cy + radius * math.sin(i * math.tau / 20)) for i in range(20)]
+
+        for x in (-width * .32, width * .32):
+            cv.group([(disk(x, 2.5, 2.5), colors['wheels'])])
+            cv.group([(disk(x, 2.5, 1.05), colors['metal'])], stroke_scale=.45)
+            a = math.tau * t / clip.duration
+            p = (x + .55 * math.cos(a), 2.5 + .55 * math.sin(a))
+            cv.group([(disk(p[0], p[1], .22), colors['grip'])], stroke=False, shade=0)
+        cv.group([([(-half, 6.6), (-half + 2, 4.5), (half - 2, 4.5),
+                    (half, 6.6), (half - 2, 7.0), (-half + 2, 7.0)], colors['deck'])])
+        cv.group([([(-half + 2, 5.1), (half - 2, 5.1), (half - 1, 5.8),
+                    (-half + 1, 5.8)], colors['accent'])], stroke=False, shade=0)
+        cv.group([([(-half + 3, 6.75), (half - 3, 6.75),
+                    (half - 4, 7.0), (-half + 4, 7.0)], colors['grip'])],
+                 stroke=False, shade=0)
+        cv.group([([(half - 9, 7.0), (half - 7, 10.3), (half - 3, 11.2),
+                    (half, 8.0), (half - 1, 7.0)], colors['metal'])], stroke_scale=.65)
 
     def render(self, clip, t, dt=0.0):
         """Returns float RGBA in [0,1], straight alpha."""

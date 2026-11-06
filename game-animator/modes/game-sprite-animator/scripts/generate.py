@@ -106,6 +106,10 @@ def render_clips(root, r, clips, names, fps, over, settle_banks, write_frames=Tr
             next=c.next if not c.loop else None, prev=c.prev,
             chain_frame=int(round(c.chain_at / step)) if c.chain_at else None,
             tags=sorted(c.tags))
+        if hasattr(c, 'board'):
+            meta[nm]['skateboard'] = dict(deck_height_px=c.DECK_HEIGHT * unit_px,
+                                          half_width_px=c.board['width'] * unit_px / 2,
+                                          support='fixed_to_deck', motion='in_place')
         if getattr(c,'frame_multiple',1)>1:
             meta[nm]['frame_multiple'] = c.frame_multiple
         if isinstance(c, Gait) and nm == 'walk':
@@ -215,7 +219,8 @@ def main():
     name = spec.get("name", "character")
 
     clips = build_clips(spec.get("style"), spec.get("custom_clips"), spec.get("clip_key_overrides"), spec.get("gait"),
-                        Body.from_spec(spec["body"]) if spec.get("puppet") else None)
+                        Body.from_spec(spec.get("body")) if spec.get("puppet") or
+                        spec.get("gait", {}).get("skateboard") is not None else None)
     names = list(clips) if a.clips == "all" else [c for c in a.clips.split(",") if c]
     if spec.get('gait', {}).get('carry') and not set(names) <= {'idle', 'run'}:
         sys.exit('source rifle carry is limited to reviewed idle/run; other actions require separate motion work')
