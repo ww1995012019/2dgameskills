@@ -89,6 +89,13 @@ class Renderer:
         contact_chains = ({layer.chain for layer in self.art.puppet.layers if layer.kind == 'cloth'}
                           if self.art.puppet else ())
         self.bakes = bake_all(clips, self.art.body, self.defs, grounded_chains=contact_chains)
+        if self.art.puppet:
+            from .painted_ground import PaintedGround
+            for clip in clips.values():
+                if getattr(clip,'motion_profile',None)=='ordinary_roll_v1':
+                    # This fitted profile rejects cloth chains. Attach its source
+                    # contact after the empty cloth bake, before fitting/rendering.
+                    clip.ground_probe = PaintedGround(self.art.puppet,self.art.body)
         self.fit = self.fit_scale()
         self.unit = size * UNIT_PX * self.fit
         self.pal = np.array(self.art.palette(), dtype=np.float32) if pixel else None

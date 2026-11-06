@@ -67,7 +67,13 @@ def rig_trace(clip, n, fps, art, unit_px, size):
         for j, track in skeleton.items():
             track.append([round(v, 2) for v in cv.T(sk[j])])
         smear.append(pose["smear"] > 0.02)
-        metrics.append(frame_metrics(sk, body, art.weapon_span(sk)))
+        metric = frame_metrics(sk, body, art.weapon_span(sk))
+        if getattr(clip,'ground_probe',None) is not None:
+            metric['proxy_body_ground'] = metric['body_ground']
+            metric['body_ground'] = round(max(0.,-clip.ground_probe(pose)),4)
+            metric['body_part'] = 'painted source'
+            metric['body_ground_method'] = clip.ground_probe.method
+        metrics.append(metric)
         c = clip.contacts(t)
         for s in "nf":
             for key, pt in (("heel", heel_world(sk, s)), ("ball", toe_world(sk, s))):
@@ -293,9 +299,9 @@ def main():
     fx_doc = None if a.no_fx else export_fx(root, spec, size, fps, pixel, pivot, name)
 
     seams = [s for s in SEAMS if s[0] in names and s[1] in names]
-    # Custom clips declare their own neighbors; include them in the same transition QA.
-    for name in spec.get("custom_clips", {}):
-        if name not in names:
+    # Custom and measured finite profiles declare their own neighbors.
+    for name in names:
+        if name not in spec.get("custom_clips", {}) and not getattr(clips[name], 'motion_profile', None):
             continue
         clip = clips[name]
         for pair in ((clip.prev, name), (name, clip.next)):

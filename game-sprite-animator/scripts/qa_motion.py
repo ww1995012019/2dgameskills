@@ -33,7 +33,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sprite_anim.constraints import summarize  # noqa: E402
-from sprite_anim.integrity import frame_problems, connection_report_faults  # noqa: E402
+from sprite_anim.integrity import frame_problems, connection_report_faults, source_carry_required  # noqa: E402
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 RANK = {PASS: 0, WARN: 1, FAIL: 2}
@@ -270,6 +270,16 @@ def run_set(root):
                 flags.setdefault(i, []).append("cut off by the frame edge")
             skeleton_flags(r, seqs[name], tr, trace["unit_px"], trace.get("bones", []), flags)
             r["flags"] = {str(k): v for k, v in sorted(flags.items())}
+            if {'ground','tumble'}<=set(c['tags']) and (trace.get('portrait_review_required')
+                    or trace.get('binding_profile') in ('basic-side-v1','side-rifle-carry-v1')
+                    or source_carry_required(trace)):
+                from sprite_anim.painted_ground import painted_floor
+                ground_y = doc.get('pivot',[0,doc.get('frame_size',512)*.86])[1]
+                floor = painted_floor(seqs[name],ground_y,trace['unit_px'])
+                r['painted_floor'] = floor['status']
+                r['painted_floor_evidence'] = floor
+                for index in floor['bad_frames']:
+                    r.setdefault('flags',{}).setdefault(str(index),[]).append('painted art below ground')
         report[name] = r
     trans = []
     if trace:
@@ -294,11 +304,13 @@ def run_set(root):
                     for clip, frame in ((a, transition["a_frame"]), (b, b_frame)):
                         report[clip]["flags"].setdefault(str(frame), []).append(f"joint transition: {a} -> {b}")
             trans.append(transition)
-    cols = ["hold", "seam", "spike", "slide", "jitter", "limits", "clip", "float", "bones", "bounds"]
+    cols = ["hold", "seam", "spike", "slide", "jitter", "limits", "clip", "float", "bones", "bounds", "painted_floor"]
     print(f"{'clip':<14}{'frm':>4}  " + "".join(f"{c:<7}" for c in cols) + "detail")
     failed = 0
     for name, r in report.items():
-        st = [r.get(c, PASS) for c in cols]
+        for column in cols:
+            r.setdefault(column, 'n/a')
+        st = [r.get(c, 'n/a') for c in cols]
         failed += sum(1 for s in st if s == FAIL)
         detail = " ".join(f"{k}={r[k]}" for k in ("seam_ratio", "joint_seam_ratio", "spike_ratio", "slide_px", "hover_px", "foot_wobble_px", "excess_deg", "weapon_head", "weapon_ground", "body_ground") if k in r)
         print(f"{name:<14}{r['frames']:>4}  " + "".join(f"{s:<7}" for s in st) + detail)
@@ -307,13 +319,22 @@ def run_set(root):
         for t in trans:
             failed += t["status"] == FAIL
             print(f"  {t['a']:>13} -> {t['b']:<13} {t['status']:<5} ratio={t['ratio']} joints/height={t.get('joint_distance_height', 'unavailable')}")
-    problems = trace.get("part_problems", []) if trace else []
+    parts_checked = bool(trace) and isinstance(trace.get('part_problems'), list)
+    bind_checked = bool(trace) and isinstance(trace.get('bind_warnings'), list) and isinstance(trace.get('bind_gaps'), dict)
+    missing = []
+    if not trace:
+        missing.append('rig_trace.json')
+    else:
+        for key, kind in (('part_problems', list), ('bind_warnings', list), ('bind_gaps', dict)):
+            if not isinstance(trace.get(key), kind):
+                missing.append(key)
+    problems = trace['part_problems'] if parts_checked else []
     if problems:
         print("\nbroken parts (every clip is affected)")
         for p in problems:
             print("  " + p)
-    bind_warnings = trace.get("bind_warnings", []) if trace else []
-    bind_gaps = trace.get("bind_gaps", {}) if trace else {}
+    bind_warnings = trace['bind_warnings'] if trace and isinstance(trace.get('bind_warnings'), list) else []
+    bind_gaps = trace['bind_gaps'] if trace and isinstance(trace.get('bind_gaps'), dict) else {}
     if bind_warnings or bind_gaps:
         print("\nfrom the cut (bind_report.json)")
         for w in bind_warnings:
@@ -322,10 +343,15 @@ def run_set(root):
             print(f"  gap: {clip}: {joints}")
     visibility = occlusion_status(root, trace, report)
     locomotion = locomotion_status(doc, trace, report)
-    out = dict(clips=report, transitions=trans, parts=dict(status=FAIL if problems else PASS, problems=problems),
-               bind=dict(status=FAIL if bind_gaps else WARN if bind_warnings else PASS, warnings=bind_warnings, gaps=bind_gaps))
+    out = dict(clips=report, transitions=trans,
+               parts=dict(status=(FAIL if problems else PASS) if parts_checked else 'n/a', problems=problems),
+               bind=dict(status=FAIL if bind_gaps else WARN if bind_warnings else PASS if bind_checked else 'n/a',
+                         warnings=bind_warnings, gaps=bind_gaps),
+               evidence=dict(status=WARN if missing else PASS, missing=missing,
+                             scope='rig trace and part/binding evidence availability; not visual approval'))
     failed += len(problems) + len(bind_gaps)
-    if trace and (trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1'):
+    if trace and (trace.get('connection_review_required') or trace.get('binding_profile') == 'basic-side-v1'
+                  or source_carry_required(trace)):
         faults = connection_report_faults(root, doc, trace)
         out['connections'] = dict(status=FAIL if faults else PASS, problems=faults,
                                   scope='all exported frames; full registered garment attachment')
@@ -340,13 +366,16 @@ def run_set(root):
         print(f"locomotion: {locomotion['status']}; phase clock and displayed stop supports")
     warns = sum(1 for r in report.values() for c in cols if r.get(c) == WARN) + sum(t["status"] == WARN for t in trans)
     warns += len(bind_warnings)
+    if missing:
+        warns += 1
+        print('evidence: WARN; unavailable checks are n/a, not PASS; missing '+', '.join(missing))
     if visibility is not None:
         out['occlusion'] = visibility
         warns += int(visibility['review_required'])
         print(f"occlusion: {visibility['status']}, {visibility['candidates']} visual-review candidates; "
               f"review_required={visibility['review_required']}")
     total = trace.get("clips_total", len(report)) if trace else len(report)
-    out["scope"] = dict(clips_checked=len(report), clips_total=total)
+    out["scope"] = dict(clips_checked=len(report), clips_total=total, rig_trace_available=bool(trace))
     with open(os.path.join(root, "qa_report.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, indent=1)
     print(f"\nresult: {failed} FAIL, {warns} WARN")

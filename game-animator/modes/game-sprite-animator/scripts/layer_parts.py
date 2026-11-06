@@ -640,6 +640,47 @@ def trimmed(layer, waist, hip, half):
     return out
 
 
+def registered_hip_level(roots, parent, children, up):
+    """Seat both hips at one level of actual registered pelvic material.
+
+    Hidden thigh caps can start at different heights. Their average is not
+    necessarily a joint in the opaque hip backing. Preserve the measured
+    lateral seats and choose the nearest common depth supported by that
+    backing AND each complete leg; never move or invent artwork.
+    """
+    from sprite_anim.puppet import mask_interior
+    roots = {name: np.asarray(point, float).copy() for name, point in roots.items()}
+    up = np.asarray(up, float)
+    up = up / np.linalg.norm(up)
+    parent = np.asarray(parent, bool)
+    def covered(points, support, limbs):
+        for name, point in points.items():
+            x, y = np.rint(point).astype(int)
+            if not (0 <= y < support.shape[0] and 0 <= x < support.shape[1]
+                    and support[y, x] and limbs[name][y, x]):
+                return False
+        return True
+    if covered(roots, parent, children):
+        return roots, dict(method='registered_opaque_hip_level_v1', shift_px=0.)
+    # Existing valid registrations stay unchanged. A newly inferred seat
+    # needs one source pixel of interior support so quantizing the exported
+    # body coordinates cannot move it across the material boundary.
+    support = mask_interior(parent)
+    limbs = {name: mask_interior(np.asarray(mask, bool)) for name, mask in children.items()}
+    y, x = np.nonzero(support)
+    if len(x):
+        center = np.mean(list(roots.values()), axis=0)
+        depth = (np.column_stack((x,y))-center)@up
+        shifts = np.arange(math.floor(float(depth.min()))-1, math.ceil(float(depth.max()))+2, dtype=float)
+        for shift in shifts[np.argsort(np.abs(shifts), kind='stable')]:
+            points = {name: point+up*shift for name, point in roots.items()}
+            if covered(points, support, limbs):
+                return points, dict(method='registered_opaque_hip_level_v1',shift_px=float(shift),
+                                    original_points={n:p.tolist() for n,p in roots.items()},
+                                    source_points={n:p.tolist() for n,p in points.items()})
+    raise Rejected('hips: no common registered opaque hip level for both legs; repair the hidden source material')
+
+
 def align_hips(layer, waist, hip):
     """Place a hidden undergarment from the measured waist/crotch, not colour.
 
@@ -1108,11 +1149,18 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False, ret
         # large patch of thigh onto the pelvis to conceal mismatched seats.
         up = (waist-hip)/np.linalg.norm(waist-hip)
         forward = np.array([-up[1], up[0]])
+        roots = {name: hip+ppu*(forward*body['hip_'+side+'_at'][0]+up*body['hip_'+side+'_at'][1])
+                 for side,name in (('n','leg_near'),('f','leg_far'))}
+        roots, level = registered_hip_level(roots,masks['hips'],
+                                           {name:masks[name] for name in roots},up)
+        diagnostics['registered_hip_level'] = level
         for side, leg in (('n', ln), ('f', lf)):
-            local = body['hip_'+side+'_at']
-            leg['hip'] = hip+ppu*(forward*local[0]+up*local[1])
+            leg['hip'] = roots['leg_near' if side == 'n' else 'leg_far']
+            body['hip_'+side+'_at'][1] = round(float((leg['hip']-hip)@up/ppu),3)
+            diagnostics['joint_chains']['leg_near' if side == 'n' else 'leg_far'][0] = leg['hip'].tolist()
             if side == 'n':
                 body['thigh'] = round(float(np.linalg.norm(leg['knee']-leg['hip'])/ppu), 3)
+        seat_up = (body['hip_n_at'][1]+body['hip_f_at'][1])*.5
         # Refit support height/stride after correcting the actual joints.
         # Keeping the old cap-to-ankle height makes the shorter leg hover.
         # A generated side view can foreshorten the far leg. As in the
@@ -1274,6 +1322,9 @@ def _bind(ref, layers, fit_cache, diagnostics, registered_connections=False, ret
     if registered_connections:
         gait['walk']['planar_hips'] = True
         gait['run']['profile'] = 'ordinary_run_v2'
+        if not retained_upper:
+            gait['jump'] = dict(profile='ordinary_jump_v1')
+            gait['roll'] = dict(profile='ordinary_roll_v1')
     puppet = dict(px_per_unit=round(float(ppu), 4), joints={k: [round(float(x), 2) for x in v] for k, v in joints.items()},
                   rest_angles={k: round(float(v), 3) for k, v in rest_angles.items()}, skirt_len=round(float(skirt_len / ppu), 3),
                   core_radius=round(core_px / ppu, 3),

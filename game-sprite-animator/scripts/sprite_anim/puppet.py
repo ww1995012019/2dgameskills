@@ -252,9 +252,23 @@ class GarmentBand:
         self.movable = np.zeros(self.count,bool)
         self.movable[self.free] = True
 
-    def solve(self, vertices, scale):
+    def solve(self, vertices, scale, *, rotation_limits=None):
         if not len(self.free):
             return vertices
+        # Unconstrained ARAP can curl a boundary through almost 180 degrees
+        # without violating area/stretch limits. Bound its local rotations by
+        # the two actual attachment owners, keeping source pixels and both
+        # fixed boundaries intact. Independent final-mesh QA rejects an
+        # infeasible band rather than treating this iteration as a pass.
+        def bounded(angle):
+            if rotation_limits is None:
+                return angle
+            root, distal = rotation_limits
+            distal = root+(distal-root+math.pi)%math.tau-math.pi
+            lo, hi = min(root,distal), max(root,distal)
+            center = (lo+hi)*.5
+            angle = center+(angle-center+math.pi)%math.tau-math.pi
+            return np.clip(angle,lo,hi)
         flat = vertices.reshape(-1,2).copy()
         fixed = np.zeros((len(self.free),2))
         np.add.at(fixed,self.boundary_free,flat[self.boundary_fixed])
@@ -264,7 +278,7 @@ class GarmentBand:
             dot,cross = np.zeros(self.count),np.zeros(self.count)
             np.add.at(dot,self.i,np.sum(delta*edge,axis=1))
             np.add.at(cross,self.i,delta[:,1]*edge[:,0]-delta[:,0]*edge[:,1])
-            angle = np.arctan2(cross,dot)
+            angle = bounded(np.arctan2(cross,dot))
             co,si = np.cos(angle),np.sin(angle)
             c,s = (co[self.i]+co[self.j])*.5,(si[self.i]+si[self.j])*.5
             target = np.stack((c*edge[:,0]-s*edge[:,1],s*edge[:,0]+c*edge[:,1]),1)
@@ -291,6 +305,11 @@ class GarmentBand:
                     u,s,vh = np.linalg.svd(jac)
                     reflected = np.linalg.det(u@vh)<0
                     bad = reflected|(s[:,1]<lower)|(s[:,0]>upper)
+                    if rotation_limits is not None:
+                        polar = u@vh
+                        angles = np.arctan2(polar[:,1,0],polar[:,0,0])
+                        limited = bounded(angles)
+                        bad |= np.abs((angles-limited+math.pi)%math.tau-math.pi)>1e-6
                     if area_floor:
                         area = np.linalg.det(jac)
                         bad |= (area<area_floor)|(area>upper)
@@ -300,6 +319,12 @@ class GarmentBand:
                     u,s,vh = u[bad],s[bad],vh[bad]
                     u[reflected[bad],:,-1] *= -1
                     corrected = (u*np.clip(s,target_floor,1.6)[:,None,:])@vh
+                    if rotation_limits is not None:
+                        angle = limited[bad]
+                        c,sine = np.cos(angle),np.sin(angle)
+                        rotation = np.stack((np.stack((c,-sine),-1),np.stack((sine,c),-1)),1)
+                        stretch = (vh.transpose(0,2,1)*np.clip(s,target_floor,1.6)[:,None,:])@vh
+                        corrected = rotation@stretch
                     source = self.triangle_source[group[bad]]
                     target = ((source-source.mean(1,keepdims=True))*scale)@corrected.transpose(0,2,1)
                     target += points[bad].mean(1,keepdims=True)
@@ -945,7 +970,12 @@ class Puppet:
                                  math.radians(sk[parent.follow[1]]-self.rest_angles[parent.follow[1]]),scale)
                 verts = verts*(1-weights[...,None])+attached*weights[...,None]
                 if relax:
-                    verts = band.solve(verts,scale)
+                    points = self.tube_points(layer,sk,cv)
+                    rest_axis = layer.rest[1]-layer.rest[0]
+                    axis = points[1]-points[0]
+                    thigh_turn = math.atan2(axis[1],axis[0])-math.atan2(rest_axis[1],rest_axis[0])
+                    pelvis_turn = math.radians(sk[parent.follow[1]]-self.rest_angles[parent.follow[1]])
+                    verts = band.solve(verts,scale,rotation_limits=(pelvis_turn,thigh_turn))
             if layer.name in parents:
                 cached[layer.name] = verts
             yield layer, verts[layer.used] if used_only and layer.name in parents else verts

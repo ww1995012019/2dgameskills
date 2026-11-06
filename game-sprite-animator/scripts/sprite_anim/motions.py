@@ -1051,8 +1051,20 @@ def build_clips(style=None, custom=None, key_overrides=None, gait=None, body=Non
              wall_slide, attack_1, attack_2, attack_3, air_attack, cast, block, block_hit, hurt,
              death]
     out = {c.name: c for c in clips}
+    jump_profile = (gait or {}).get('jump')
+    if jump_profile is not None:
+        if jump_profile != {'profile':'ordinary_jump_v1'} or source_carry is not None:
+            raise ValueError('gait.jump: requires ordinary_jump_v1 without a two-handed source carry')
+        from .ordinary_jump import build_ordinary_jump
+        out.update(build_ordinary_jump(body,idle0,tm))
+    roll_profile = (gait or {}).get('roll')
+    if roll_profile is not None:
+        if roll_profile != {'profile':'ordinary_roll_v1'} or source_carry is not None:
+            raise ValueError('gait.roll: requires ordinary_roll_v1 without a two-handed source carry')
+        from .ordinary_roll import build_ordinary_roll
+        out['roll'] = build_ordinary_roll(body,idle0,tm)
     for name, pose in (gait or {}).items():
-        if name == "carry":
+        if name in ("carry", "jump", "roll"):
             continue
         if name == "idle":  # already applied before the shared seam poses were built
             continue

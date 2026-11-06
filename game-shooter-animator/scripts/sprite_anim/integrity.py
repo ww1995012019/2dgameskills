@@ -17,7 +17,8 @@ import numpy as np
 
 THIGH_DEFORMATION_LIMITS = dict(min_scale=.25,max_scale=3.,min_area=.15,max_area=3.,max_bad_share=.01,
                                 root_start=.15,knee_exclusion_radii=2.)
-GARMENT_EDGE_LIMITS = dict(contact_radius_px=1.,occluder_alpha=.9)
+GARMENT_EDGE_LIMITS = dict(contact_radius_px=1.,occluder_alpha=.9,
+                          material_sampling='opaque_pixel_footprints_v2',max_turn_error_px=1.)
 ORDINARY_RUN_LIMITS = dict(max_stride_ratio=1.,max_lift_ratio=.3,max_foot_span_ratio=1.,
                            max_thigh_deg=65.,max_lean_deg=15.,max_bob_ratio=.05,
                            max_pelvis_range_ratio=.05,max_head_range_ratio=.065,
@@ -240,6 +241,20 @@ def connection_report_faults(root, doc, trace):
                         if measured['bad_share'] > THIGH_DEFORMATION_LIMITS['max_bad_share']:
                             out.append(dict(clip=clip,frame=frame,part=name,
                                             what=f"{label} material collapses or stretches over {measured['bad_share']:.1%}"))
+                        if field == 'garment_shapes':
+                            samples,bad = measured.get('boundary_samples'),measured.get('boundary_bad')
+                            turn = measured.get('max_turn_error_px')
+                            if (type(samples) is not int or samples<1 or samples>measured['samples']
+                                    or type(bad) is not int or bad<0 or bad>samples
+                                    or isinstance(turn,bool) or not isinstance(turn,(int,float))
+                                    or not math.isfinite(turn) or turn<0):
+                                raise ValueError(f'{clip}/{name}: missing or invalid opaque garment contour measurements')
+                            if bad:
+                                out.append(dict(clip=clip,frame=frame,part=name,
+                                                what=f'{bad} opaque garment boundary triangles collapse or stretch'))
+                            if turn>GARMENT_EDGE_LIMITS['max_turn_error_px']:
+                                out.append(dict(clip=clip,frame=frame,part=name,
+                                                what=f'garment material turns beyond its pelvis/thigh owners by {turn:.3f}px'))
             if set(row['edge_visibility']) != {'leg_near','leg_far'}:
                 raise ValueError(f'{clip}: missing both hidden garment-edge checks')
             for name,measurements in row['edge_visibility'].items():

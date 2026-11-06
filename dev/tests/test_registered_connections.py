@@ -138,7 +138,8 @@ class ConnectionEvidence(unittest.TestCase):
             hashes.append(hashlib.sha256(str(image.size).encode()+image.tobytes()).hexdigest())
         parts=('torso','leg_near','leg_far')
         self.doc={'clips':{'idle':{'frames':[0,1]}}}
-        good=dict(samples=30,bad_share=0.,min_scale=1.,max_scale=1.,min_area=1.,max_area=1.)
+        good=dict(samples=30,bad_share=0.,min_scale=1.,max_scale=1.,min_area=1.,max_area=1.,
+                  boundary_samples=10,boundary_bad=0,max_turn_error_px=0.)
         self.trace={'connection_review_required':True,'connections':dict(method='registered_garment_surfaces_v3',shape_limits=THIGH_DEFORMATION_LIMITS.copy(),edge_limits=GARMENT_EDGE_LIMITS.copy(),
             bindings={n:{'source_points':[[2,2],[4,2],[2,5],[4,5]],'parent':'hips',
                          'method':'registered_pelvis_overlap' if n=='torso' else 'registered_garment_rim_v1',
@@ -180,6 +181,35 @@ class ConnectionEvidence(unittest.TestCase):
         self.assertTrue(any(f['frame']==1 and 'waist garment' in f['what'] for f in self.faults()))
         del row['garment_shapes']
         self.assertTrue(self.faults())
+
+    def test_boundary_fault_cannot_be_averaged_away_or_replaced_with_old_evidence(self):
+        row=self.trace['connections']['clips']['idle']['garment_shapes']['leg_near'][1]
+        row.update(boundary_bad=1,bad_share=.001)
+        faults=self.faults()
+        self.assertTrue(any(f['clip']=='idle' and f['frame']==1 and f['part']=='leg_near'
+                            and 'boundary' in f['what'] for f in faults),faults)
+        row['boundary_bad']=0
+        for field in ('boundary_samples','boundary_bad','max_turn_error_px'):
+            value=row.pop(field)
+            with self.subTest(missing=field):self.assertTrue(self.faults())
+            row[field]=value
+
+    def test_positive_areas_and_zero_drift_cannot_clear_a_backwards_waist_turn(self):
+        row=self.trace['connections']['clips']['idle']['garment_shapes']['leg_far'][1]
+        row['max_turn_error_px']=2.5
+        faults=self.faults()
+        self.assertEqual([(f['clip'],f['frame'],f['part']) for f in faults],[('idle',1,'leg_far')])
+        self.assertIn('turns beyond',faults[0]['what'])
+
+    def test_invalid_boundary_and_turn_measurements_fail_closed(self):
+        row=self.trace['connections']['clips']['idle']['garment_shapes']['leg_near'][0]
+        original=row.copy()
+        for field,value in (('boundary_samples',True),('boundary_samples',0),
+                            ('boundary_samples',31),('boundary_bad',-1),('boundary_bad',11),
+                            ('max_turn_error_px',float('nan')),('max_turn_error_px',True),
+                            ('max_turn_error_px',-1.)):
+            row.update(original);row[field]=value
+            with self.subTest(field=field,value=value):self.assertTrue(self.faults())
 
     def test_a_shared_surface_cannot_be_mislabelled_as_a_rotating_thigh(self):
         self.trace['connections']['bindings']['leg_near']['method']='registered_pelvis_overlap'
