@@ -36,6 +36,12 @@ Inspect rest, deepest crouch, maximum leg separation, landings and source-pose s
 cut edge, background slit, doubled trouser panel or bone emerging from the wrong painted joint is
 a blocker. Mandatory `rig_alignment` and `pelvis_continuity` observations must name the actual
 clip/frame. Missing trace or missing close-up evidence cannot become a pass.
+The numeric report marks unavailable rig/part/binding checks `n/a` and emits an evidence warning
+when the trace or part/binding results are missing. Existing faults still fail even if other
+evidence is incomplete. Source-carry garment checks are required by the rifle profile OR actual
+source drawing owner; deleting the presentation flag cannot skip that gate. These are evidence
+and dispatch protections, not an automatic recognition of every visible waist defect. An export-only
+archive without its trace, source and visual report cannot establish full artwork acceptance.
 
 ## Waist band and hidden garment edges
 
@@ -54,6 +60,13 @@ thickness, stretch and area, independently of the joint rotation. Missing shape 
 blocks acceptance. Inspect complete thighs AND knees at native size and during playback; a
 pinched root, flattened leg, C-shaped thigh or displaced shorts hem is a blocker, even if a
 numeric connection check passes. Compare the same clip/frame with the pre-change rendering.
+Material checks include triangles touched by opaque pixel footprints, even when their centres
+are transparent. An opaque waist-boundary triangle outside the existing strain limits is a
+blocker on its own; the 1% interior allowance cannot hide a small curled corner. Cloth rotations
+are constrained by the pelvis and thigh owners. Final-mesh polar rotations are checked independently:
+turning outside that interval by more than one native output pixel over a source mesh edge blocks
+acceptance. Missing boundary or turn measurements, including older reports, require regeneration.
+These checks cannot recognize a bad fold already painted into the source or certify natural cloth.
 Do not treat a dilated connected component, a covered centre strip, or a single joint contact as
 proof that a whole waist is closed. Inspect ALL generated waist frames on the new hips sheets,
 including both outer edges, on the checkerboard and a light background. Compare the waistband,
@@ -87,6 +100,20 @@ is fitted over the complete cycle. Export an even frame count and quantize both 
 identically. Inspect `run_support_00.png` and its complete fixed-canvas playback against a fixed
 head/ground reference; fill every `support_rhythm` observation. Abrupt drops, unequal support or
 limping rhythm are blockers even when every foot touches the ground and the loop closes.
+
+## Grounded source rolls
+
+`ordinary_roll_v1` fits the complete source silhouette to the floor as one body. Its generic
+head/foot proxies are retained as diagnostic measurements; the authoritative body-ground metric
+uses actual opaque source boundaries through the rendered mesh. Source rolls disable the competing
+individual-foot floor correction only while this whole-body source constraint is active.
+Independent QA also inspects each native RGBA frame of a grounded layered tumble, so a producer
+claim that bones clear the floor cannot hide painted hair or boots penetrating it. This uses
+the existing one-rig-unit ground limit, with a one-output-pixel minimum for raster quantization;
+the check reports exact failing frame indices. Other clips keep their existing contact checks.
+Inspect actual ground contact during the entire turn and recovery. The check does not certify
+a natural roll, hand support or the absence of hovering; those still need native-frame and playback
+review. Do not move a final PNG, crop it or add a cover to conceal a failed contact.
 
 ## External or custom skins
 

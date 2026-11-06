@@ -153,6 +153,10 @@ source-hidden proximal boundary, actual final occluder alpha, waist-band AND thi
 hip registration and isolated limb support. No source texture is repainted or covered with a patch.
 The source-valid interior core check excludes reference background instead of pulling pants
 upward to fill an imaginary constant-width body. Missing true source fabric still fails binding.
+If staggered hidden leg roots put the inferred shared hip level outside existing cloth, the
+binder finds the nearest common level along the measured pelvis axis inside BOTH the hip backing
+and each leg. It preserves the lateral seats and already-valid points; no shared opaque level
+still rejects the art. This uses existing material rather than extending a layer or moving pixels.
 
 `qa_motion.py` and the visual delivery gate independently require all frames/parts and the exact
 registered-source and RGBA hashes. Read every hips sheet: current basic exports include every
@@ -176,6 +180,27 @@ v1 method produced large, asymmetric vertical drops despite a small declared bob
 evidence now measures actual height and its derivatives plus the native PNG silhouette, uses
 paired frame sampling, and quantizes equal GIF step timings. Review the full fixed-canvas
 `run_support` plot/playback and every `support_rhythm` observation before release.
+
+For an explicitly requested ordinary jump extension, new basic bindings select
+`gait.jump.profile = ordinary_jump_v1`. It fits crouch, tuck and landing to measured leg length
+and the accepted arm pose. `jump_start -> jump_rise -> jump_apex -> fall -> land -> idle` is a
+finite chain with shared seam poses; rise and fall do not loop under this profile. The vertical
+velocity curves form one flight returning to the same ground height. Pose PNGs keep their fixed
+registration pivot: a complete flight preview applies the integral of those curves as whole-body
+translation. Keep that trajectory alongside the frames. Existing rigs without this explicit
+profile retain their previous clips. This does not expand the default idle/walk promise, and the
+complete jump still needs deformation, transition, source-garment and playback review.
+
+An explicitly requested roll uses `gait.roll.profile = ordinary_roll_v1` on new basic bindings.
+It is a finite idle → roll → idle action. Fit the knee fold from the measured accepted stance,
+preserving the thigh-root direction and ankle articulation rather than pulling the whole thigh
+into the pelvis. The fitted source roll resolves floor contact for the complete painted body:
+head hair and boot silhouettes can extend beyond the generic skeleton proxies. Contact uses the
+current opaque source boundary mapped through the same final mesh triangles; source textures,
+joint registration and all garment limits remain unchanged. It currently rejects cloth chains
+and two-handed rifle carry. The original roll remains for rigs without this explicit profile.
+Review the entire forward rotation and recovery, not just the tuck extrema. A pose that passes
+geometry but looks like a straight-body turn is not a satisfactory roll.
 
 ## 4. Bounded repairs
 

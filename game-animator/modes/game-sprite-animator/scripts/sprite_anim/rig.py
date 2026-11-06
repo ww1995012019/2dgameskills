@@ -236,7 +236,7 @@ def solve(pose, b: Body):
                 break
             fp -= tight * 1.15
             knee, ank, foot_rot = reach(fp)
-        if k > 0:
+        if k > 0 and not g('_whole_body_floor',False):
             # A foot turning with the body would swing its heel or ball under the floor.
             sole = min(ank[1] + rot(p, foot_rot)[1] for p in (heel, ball))
             if sole < 0.3:

@@ -261,34 +261,75 @@ def check_neck(renderer, clip, n, fps, *, context=None):
     return []
 
 
-def material_triangles(layer, vertices):
-    """Actual source/final triangles and opaque material sample locations."""
+def material_coverage(layer):
+    """Triangles touched by opaque pixel footprints, including thin alpha edges.
+
+    A triangle centre can be transparent while the same triangle deforms a
+    visible trouser corner. Assign complete opaque pixel footprints to their
+    source triangles instead of testing a single point per triangle.
+    """
+    from .puppet import mask_interior
+    gx, gy = layer.vx[0], layer.vy[:, 0]
+    alpha = layer.image.getchannel('A').tobytes()
+    key = layer.image.size, gx.tobytes(), gy.tobytes(), layer.cells.tobytes()
+    cached = getattr(layer, '_material_coverage', None)
+    if cached is not None and cached[0] == key and cached[1] == alpha:
+        return cached[2:]
+    mask = np.frombuffer(alpha, dtype=np.uint8).reshape(layer.image.height,layer.image.width) > 200
+    boundary = mask & ~mask_interior(mask)
+    y, x = np.nonzero(mask)
+    on_edge = boundary[y, x]
+    lookup = np.full((len(gy)-1, len(gx)-1), -1, dtype=int)
+    lookup[tuple(layer.cells.T)] = np.arange(len(layer.cells))
+    solid = np.zeros(2*len(layer.cells), bool)
+    edge = solid.copy()
+    for dx, dy in ((-.499, -.499), (.499, -.499), (-.499, .499), (.499, .499)):
+        px, py = x+dx, y+dy
+        i = np.clip(np.searchsorted(gx, px, side='right')-1, 0, len(gx)-2)
+        j = np.clip(np.searchsorted(gy, py, side='right')-1, 0, len(gy)-2)
+        u, v = (px-gx[i])/(gx[i+1]-gx[i]), (py-gy[j])/(gy[j+1]-gy[j])
+        cells = lookup[j, i]
+        valid = cells >= 0
+        ids = cells + (u+v > 1)*len(layer.cells)
+        solid[ids[valid]] = True
+        edge[ids[valid & on_edge]] = True
+    solid.flags.writeable = edge.flags.writeable = False
+    # One current alpha/grid snapshot per layer. In-place image or mesh edits
+    # invalidate it; no verdict or deformed geometry is cached here.
+    layer._material_coverage = key, alpha, solid, edge
+    return solid, edge
+
+
+def material_triangles(layer, vertices, *, include_boundary=False):
+    """Actual source/final triangles and complete opaque material coverage."""
     j,i = layer.cells.T;w = vertices.shape[1]
     triangles = np.concatenate((np.stack((j*w+i,j*w+i+1,(j+1)*w+i),-1),
         np.stack(((j+1)*w+i+1,(j+1)*w+i,j*w+i+1),-1)))
     source = (np.stack((layer.vx,layer.vy),-1)+layer.offset).reshape(-1,2)[triangles]
     dest = vertices.reshape(-1,2)[triangles]
     centers = source.mean(1)
-    local = np.rint(centers-layer.offset).astype(int);alpha = np.asarray(layer.image)[...,3]
-    inside = ((local[:,0]>=0)&(local[:,1]>=0)&(local[:,0]<alpha.shape[1])&(local[:,1]<alpha.shape[0]))
-    solid = np.zeros(len(local),bool);solid[inside] = alpha[local[inside,1],local[inside,0]]>200
-    return source,dest,centers,solid
+    solid, boundary = material_coverage(layer)
+    result = source,dest,centers,solid
+    return result+(boundary,) if include_boundary else result
 
 
-def material_strain(source, dest, chosen, scale):
+def material_strain(source, dest, chosen, scale, *, boundary=None):
     """Orientation-independent strain; positive winding alone is insufficient."""
     from .integrity import THIGH_DEFORMATION_LIMITS as limits
     if not chosen.any():
-        return dict(samples=0,bad_share=1.,min_scale=0.,max_scale=0.,min_area=0.,max_area=0.)
+        return dict(samples=0,bad_share=1.,min_scale=0.,max_scale=0.,min_area=0.,max_area=0.,
+                    **(dict(boundary_samples=0,boundary_bad=0) if boundary is not None else {}))
     se = np.stack((source[:,1]-source[:,0],source[:,2]-source[:,0]),-1)
     de = np.stack((dest[:,1]-dest[:,0],dest[:,2]-dest[:,0]),-1)
     jac = de[chosen]@np.linalg.inv(se[chosen])/scale
     singular = np.linalg.svd(jac,compute_uv=False);area = np.linalg.det(jac)
     bad = ((singular[:,1]<limits['min_scale'])|(singular[:,0]>limits['max_scale'])
            |(area<limits['min_area'])|(area>limits['max_area']))
+    edges = {} if boundary is None else dict(boundary_samples=int(boundary[chosen].sum()),
+                                            boundary_bad=int((bad & boundary[chosen]).sum()))
     return dict(samples=int(chosen.sum()),bad_share=round(float(bad.mean()),6),
                 min_scale=round(float(singular[:,1].min()),6),max_scale=round(float(singular[:,0].max()),6),
-                min_area=round(float(area.min()),6),max_area=round(float(area.max()),6))
+                min_area=round(float(area.min()),6),max_area=round(float(area.max()),6),**edges)
 
 
 def thigh_strain(layer, vertices, scale):
@@ -304,14 +345,33 @@ def thigh_strain(layer, vertices, scale):
     return material_strain(source,dest,chosen,scale)
 
 
-def garment_strain(layer, vertices, scale, report):
+def garment_strain(layer, vertices, scale, report, *, rotation_limits=None, pixel_scale=1.):
     """Also inspect the waist transition that the thigh-only ROI excluded."""
     from .puppet import GRID
-    source,dest,centers,solid = material_triangles(layer,vertices)
+    source,dest,centers,solid,boundary = material_triangles(layer,vertices,include_boundary=True)
     depth = (centers-np.asarray(report['origin']))@(-np.asarray(report['up']))
     start = report['attachment_depth']
     chosen = solid&(depth>=start-GRID)&(depth<=start+report['fade']+GRID)
-    return material_strain(source,dest,chosen,scale)
+    measured = material_strain(source,dest,chosen,scale,boundary=boundary)
+    measured['max_turn_error_px'] = 0.
+    if rotation_limits is not None and chosen.any():
+        # A positive, almost isometric triangle can still turn backwards into
+        # a hook. Check its polar rotation independently of the cloth solver.
+        se = np.stack((source[:,1]-source[:,0],source[:,2]-source[:,0]),-1)[chosen]
+        de = np.stack((dest[:,1]-dest[:,0],dest[:,2]-dest[:,0]),-1)[chosen]
+        u,_,vh = np.linalg.svd(de@np.linalg.inv(se)/scale)
+        rotation = u@vh
+        angles = np.arctan2(rotation[:,1,0],rotation[:,0,0])
+        root,distal = rotation_limits
+        distal = root+(distal-root+math.pi)%math.tau-math.pi
+        lo,hi = min(root,distal),max(root,distal)
+        center = (lo+hi)*.5
+        angles = center+(angles-center+math.pi)%math.tau-math.pi
+        difference = angles-np.clip(angles,lo,hi)
+        span = np.linalg.norm(se,axis=1).min(1)*scale*pixel_scale
+        error = 2*np.abs(np.sin(difference*.5))*span
+        measured['max_turn_error_px'] = round(float(error.max()),5)
+    return measured
 
 
 def garment_visibility(puppet, meshes, cv):
@@ -452,7 +512,12 @@ def check_connections(renderer, clip, n, fps, bindings=None, *, context=None):
                     at = mesh_points(child,verts,joint)[0]
                     worst = max(worst,float(np.linalg.norm(at-np.asarray(cv.T(sk['hip_'+side])))))
                     shapes[name].append(thigh_strain(child,verts,cv.s/puppet.px_per_unit))
-                    garment_shapes[name].append(garment_strain(child,verts,cv.s/puppet.px_per_unit,report))
+                    rest_axis = child.rest[1]-child.rest[0]
+                    axis = np.asarray(cv.T(sk[child.bones[1]]))-np.asarray(cv.T(sk[child.bones[0]]))
+                    turns = (math.radians(sk[parent.follow[1]]-puppet.rest_angles[parent.follow[1]]),
+                             math.atan2(axis[1],axis[0])-math.atan2(rest_axis[1],rest_axis[0]))
+                    garment_shapes[name].append(garment_strain(child,verts,cv.s/puppet.px_per_unit,report,
+                                                               rotation_limits=turns,pixel_scale=1/renderer.ss))
             values[name].append(round(worst/renderer.ss, 5))
         if garment:
             for name,row in garment_visibility(puppet,meshes,cv).items():
@@ -470,6 +535,12 @@ def check_connections(renderer, clip, n, fps, bindings=None, *, context=None):
     faults += [f'garment shape: {name}: {clip.name} frame {i}: {row["bad_share"]:.1%} of waist material collapses or stretches'
                for name,rows in garment_shapes.items() for i,row in enumerate(rows)
                if not row['samples'] or row['bad_share']>THIGH_DEFORMATION_LIMITS['max_bad_share']]
+    faults += [f'garment contour: {name}: {clip.name} frame {i}: {row["boundary_bad"]} opaque boundary triangles collapse or stretch'
+               for name,rows in garment_shapes.items() for i,row in enumerate(rows)
+               if not row['boundary_samples'] or row['boundary_bad']]
+    faults += [f'garment turn: {name}: {clip.name} frame {i}: material turns beyond its pelvis/thigh owners by {row["max_turn_error_px"]:.3f}px'
+               for name,rows in garment_shapes.items() for i,row in enumerate(rows)
+               if row['max_turn_error_px'] > 1.]
     faults += [f'garment edge: {name}: {clip.name} frame {i}: {row["exposed"]} originally hidden cut-edge samples exposed'
                for name,rows in edges.items() for i,row in enumerate(rows) if row['exposed']]
     faults += [f'carry: {clip.name} frame {i}: source upper-body/rifle/hand surface drifts {row["max_error_px"]:.3f}px'
